@@ -47,31 +47,44 @@ def read_register_names_from_csv(csv_file):
                     accuracy = 1
                 
                 for addr in range(start_address, end_address + 1):
-                    if "PV" in base_name and "-- 16" in base_name:
-                        pv_number = ((addr - start_address) // 4) + 1
-                        if "Voltage" in base_name:
+                    name = base_name  # Default name assignment
+                    
+                    if 0x0584 <= addr <= 0x0589:
+                        pv_number = 1 if addr <= 0x0586 else 2
+                        if addr % 3 == 0:
                             name = f"Voltage_PV{pv_number}"
                             unit = "V"
-                        elif "Current" in base_name:
+                            accuracy = 10
+                        elif addr % 3 == 1:
                             name = f"Current_PV{pv_number}"
                             unit = "A"
-                        elif "Power" in base_name:
+                            accuracy = 100
+                        else:
                             name = f"Power_PV{pv_number}"
                             unit = "W"
-                        else:
-                            name = f"{base_name} (PV{pv_number})"
-                    else:
-                        name = base_name
+                            accuracy = 10
 
-                    # Assign specific units for certain registers
+                    # Assign specific units and accuracies for certain registers
                     if addr == 0x05C4:
+                        name = "Power_PV_Total"
                         unit = "W"
+                        accuracy = 10
                     elif addr in [0x0684, 0x0686, 0x069C, 0x069E]:
                         unit = "kWh"
-                    
+                        accuracy = 10
+                    elif addr in range(0x0688, 0x069B, 2):  # Energy statistics
+                        unit = "Wh"
+                        accuracy = 1
+                    elif addr in [0x0696, 0x0698, 0x069A]:  # Battery statistics
+                        unit = "Wh"
+                        accuracy = 1
+                    elif addr == 0x1106:  # Active_Power_Export_Limit
+                        name = "Active_Power_Export_Limit"
+                        unit = "%"
+                        accuracy = 10  # 0.1% increments
+
                     register_names[addr] = (name, reg_type, unit, accuracy)
     return register_names
-
 
 def read_register_block(start_address, count):
     try:
@@ -107,6 +120,9 @@ sections = [
 
 MAX_BLOCK_SIZE = 32
 
+# Define a set of register addresses that should always be reported, even if zero
+always_report = {0x05C4, 0x0684, 0x0686, 0x069C, 0x069E, 0x1106}
+
 # Main loop to read and display registers
 for section_name, start, end in sections:
     print(f"\n## {section_name} (0x{start:04X}-0x{end:04X})")
@@ -130,7 +146,7 @@ for section_name, start, end in sections:
                     i += 1
 
                 adjusted_value = value / accuracy
-                if adjusted_value != 0 or "PV" in name:
+                if adjusted_value != 0 or register_address in always_report:
                     print(format_register_info(register_address, name, adjusted_value, unit, reg_type))
 
         else:
