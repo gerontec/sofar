@@ -1,1155 +1,1155 @@
-"Function name";"register address";"fields";"type";"accuracy";"units"
-"I General（0x0040-0x007F）";;;;;
+Function name;register address;fields;type;accuracy;units
+I General（0x0040-0x007F）;;;;;
 """
 Masked Area
-This 64 contiguous address """;"0040";"AddressMask_General1";"U64";;
-;"0041";;;;
-;"0042";;;;
-;"0043";;;;
-"Version number of this agreement";"0044";"Modbus_Protocol_Version";"BCD16";;
+This 64 contiguous address """;0040;AddressMask_General1;U64;;Data for 0040
+;0041;;;;Data for 0041
+;0042;;;;Data for 0042
+;0043;;;;Data for 0043
+Version number of this agreement;0044;Modbus_Protocol_Version;BCD16;;Data for 0044
 "Chip Code
-(not available to the public)";"0045";"COMM_MCU_Code";"ASCII";;
-;"0046";"CTRL1_MCU_Code";"ASCII";;
-;"0047";"CTRL2_MCU_Code";"ASCII";;
-;"0048 -- 0051";"MCU_Code_Rsvd1 -- 10";;;
-"Internal communication protocol-Version number";"0052";"Protocol_ARM-DSPM";;;
-;"0053";"Protocol_ARM-DSPS";;;
-;"0054";"Protocol_DSPM-DSPS";;;
-;"0055 -- 0065";"Protocol_Version_Rsvd4 -- 20";;;
-;"0066 -- 007D";;;;
-"Customer ID";"007E -- 0007F";"客户ID_0 -- 1";;;
+(not available to the public)";0045;COMM_MCU_Code;ASCII;;Data for 0045
+;0046;CTRL1_MCU_Code;ASCII;;Data for 0046
+;0047;CTRL2_MCU_Code;ASCII;;Data for 0047
+;0048____0051;MCU_Code_Rsvd1 -- 10;;;Data for 0048____0051
+Internal communication protocol-Version number;0052;Protocol_ARM-DSPM;;;Data for 0052
+;0053;Protocol_ARM-DSPS;;;Data for 0053
+;0054;Protocol_DSPM-DSPS;;;Data for 0054
+;0055____0065;Protocol_Version_Rsvd4 -- 20;;;Data for 0055____0065
+;0066____007D;;;;Data for 0066____007D
+Customer ID;007E____0007F;客户ID_0 -- 1;;;Data for 007E____0007F
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"0400 -- 0403";"AddressMask_Realtime_SysInfo1";"U64";;
-"Operational status";"0404";"SysState";"U16";;
+;0400____0403;AddressMask_Realtime_SysInfo1;U64;;Data for 0400____0403
+Operational status;0404;SysState;U16;;Data for 0404
 "Fault Information Sheet
-2-1";"0405 -- 0416";"Fault1 -- 18";"U16";;
-"Grid connection waiting time";"0417";"Countdown";"U16";1;"秒"
-"Temperature";"0418 -- 0419";"Temperature_Env1 -- 2";"I16";1;"℃"
-;"041A -- 041F";"Temperature_HeatSink1 -- 6";"I16";1;"℃"
-;"0420 -- 0422";"Temperature_Inv1 -- 3";"I16";1;"℃"
-;"0423 -- 0425";"Temp_Rsvd1 -- 3";"I16";1;"℃"
-"Power generation, running time";"0426";"GenerationTime_Today";"U16";1;"分钟"
-;"0427 -- 0428";"GenerationTime_Total";"U32";1;"分钟"
-;"0429 -- 042A";"ServiceTime_Total";"U32";1;"分钟"
-"Insulation impedance";"042B";"InsulationResistance";"U16";1;"kΩ"
+2-1";0405____0416;Fault1 -- 18;U16;;Data for 0405____0416
+Grid connection waiting time;0417;Countdown;U16;1;秒
+Temperature;0418____0419;Temperature_Env1 -- 2;I16;1;℃
+;041A____041F;Temperature_HeatSink1 -- 6;I16;1;℃
+;0420____0422;Temperature_Inv1 -- 3;I16;1;℃
+;0423____0425;Temp_Rsvd1 -- 3;I16;1;℃
+Power generation, running time;0426;GenerationTime_Today;U16;1;分钟
+;0427____0428;GenerationTime_Total;U32;1;分钟
+;0429____042A;ServiceTime_Total;U32;1;分钟
+Insulation impedance;042B;InsulationResistance;U16;1;kΩ
 "System time
-2-1";"042C";"SysTime_Year";"U16";;
-;"042D";"SysTime_Month";"U16";;
-;"042E";"SysTime_Date";"U16";;
-;"042F";"SysTime_Hour";"U16";;
-;"0430";"SysTime_Minute";"U16";;
-;"0431";"SysTime_Second";"U16";;
+2-1";042C;SysTime_Year;U16;;Data for 042C
+;042D;SysTime_Month;U16;;Data for 042D
+;042E;SysTime_Date;U16;;Data for 042E
+;042F;SysTime_Hour;U16;;Data for 042F
+;0430;SysTime_Minute;U16;;Data for 0430
+;0431;SysTime_Second;U16;;Data for 0431
 "Fault Information Sheet
-2-2";"0432 -- 043D";"Fault19 -- 30";"U16";;
-;"043E -- 043F";;;;
-;"0440 -- 0443";"AddressMask_Realtime_SysInfo2";"U64";;
-;"0444";"Production_Code";"U16";;
+2-2";0432____043D;Fault19 -- 30;U16;;Data for 0432____043D
+;043E____043F;;;;Data for 043E____043F
+;0440____0443;AddressMask_Realtime_SysInfo2;U64;;Data for 0440____0443
+;0444;Production_Code;U16;;Data for 0444
 "Machine serial number
-2-1";"0445 -- 044C";"Serial_Number0 -- 7";"ASCII";;
-"Hardware version number";"044D -- 044E";"Hardware_Version0 -- 1";"ASCII";;
+2-1";0445____044C;Serial_Number0 -- 7;ASCII;;Data for 0445____044C
+Hardware version number;044D____044E;Hardware_Version0 -- 1;ASCII;;Data for 044D____044E
 "Communication chip
-Software version number";"044F";"Software_Version_Stage_COM";"ASCII";;
-;"0450";"Software_Version_Major_COM";"ASCII";;
-;"0451";"Software_Version_Custom_COM";"ASCII";;
-;"0452";"Software_Version_Minor_COM";"ASCII";;
-"Main controller chip-Software version number";"0453";"Software_Version_Stage_Master";"ASCII";;
-;"0454";"Software_Version_Major_Master";"ASCII";;
-;"0455";"Software_Version_Custom_Master";"ASCII";;
-;"0456";"Software_Version_Minor_Master";"ASCII";;
-"Sub-controller chips-Software version number";"0457";"Software_Version_Stage_Slave";"ASCII";;
-;"0458";"Software_Version_Major_Slave";"ASCII";;
-;"0459";"Software_Version_Custom_Slave";"ASCII";;
-;"045A";"Software_Version_Minor_Slave";"ASCII";;
+Software version number";044F;Software_Version_Stage_COM;ASCII;;Data for 044F
+;0450;Software_Version_Major_COM;ASCII;;Data for 0450
+;0451;Software_Version_Custom_COM;ASCII;;Data for 0451
+;0452;Software_Version_Minor_COM;ASCII;;Data for 0452
+Main controller chip-Software version number;0453;Software_Version_Stage_Master;ASCII;;Data for 0453
+;0454;Software_Version_Major_Master;ASCII;;Data for 0454
+;0455;Software_Version_Custom_Master;ASCII;;Data for 0455
+;0456;Software_Version_Minor_Master;ASCII;;Data for 0456
+Sub-controller chips-Software version number;0457;Software_Version_Stage_Slave;ASCII;;Data for 0457
+;0458;Software_Version_Major_Slave;ASCII;;Data for 0458
+;0459;Software_Version_Custom_Slave;ASCII;;Data for 0459
+;045A;Software_Version_Minor_Slave;ASCII;;Data for 045A
 "Safety Library
-Version number";"045B";"Safety_Version_Major";"U16";;
-;"045C";"Safety_version_Minor";"U16";;
-"BOOT version number";"045D";"Boot_Version_COM";"U16";;
-;"045E";"Boot_Version_Master";"U16";;
-;"045F";"Boot_Version_Slave";"U16";;
-"Safety certification-Relevant version number";"0460";"Safety_Firmware_Version_Stage";"ASCII";;
-;"0461";"Safety_Firmware_Version_Major";"ASCII";;
-;"0462";"Safety_Firmware_Version_Custom";"ASCII";;
-;"0463";"Safety_Firmware_Version_Minor";"ASCII";;
-;"0464";"Safety_Hardware_Version0";"ASCII";;
-;"0465";"Safety_Hardware_Version1";"ASCII";;
-"AFCI version number";"0466";"Afci_Ver_Firmware";"ASCII";;
-;"0467";"Afci_Ver_Sft";"ASCII";;
-;"0468";"Afci_Ver_Hard";"ASCII";;
-;"0469";"Afci_Srs_Hard";"ASCII";;
-;"046A";"Afci_Ver_Com";"ASCII";;
-"Safety documentation package-Version number";"046B";"Safety_Package_Version0";"ASCII";;
-;"046C";"Safety_Package_Version1";"ASCII";;
-;"046D -- 046F";;;;
+Version number";045B;Safety_Version_Major;U16;;Data for 045B
+;045C;Safety_version_Minor;U16;;Data for 045C
+BOOT version number;045D;Boot_Version_COM;U16;;Data for 045D
+;045E;Boot_Version_Master;U16;;Data for 045E
+;045F;Boot_Version_Slave;U16;;Data for 045F
+Safety certification-Relevant version number;0460;Safety_Firmware_Version_Stage;ASCII;;Data for 0460
+;0461;Safety_Firmware_Version_Major;ASCII;;Data for 0461
+;0462;Safety_Firmware_Version_Custom;ASCII;;Data for 0462
+;0463;Safety_Firmware_Version_Minor;ASCII;;Data for 0463
+;0464;Safety_Hardware_Version0;ASCII;;Data for 0464
+;0465;Safety_Hardware_Version1;ASCII;;Data for 0465
+AFCI version number;0466;Afci_Ver_Firmware;ASCII;;Data for 0466
+;0467;Afci_Ver_Sft;ASCII;;Data for 0467
+;0468;Afci_Ver_Hard;ASCII;;Data for 0468
+;0469;Afci_Srs_Hard;ASCII;;Data for 0469
+;046A;Afci_Ver_Com;ASCII;;Data for 046A
+Safety documentation package-Version number;046B;Safety_Package_Version0;ASCII;;Data for 046B
+;046C;Safety_Package_Version1;ASCII;;Data for 046C
+;046D____046F;;;;Data for 046D____046F
 "Machine serial number
-2-2";"0470 -- 0471";"Serial_Number8 -- 9";"ASCII";;
-;"0472 -- 0476";"Serial_Number11_Rsvd0 -- 4";"ASCII";;
-"Status information sheet";"0477 -- 047F";"State1 -- 9";"U16";;
+2-2";0470____0471;Serial_Number8 -- 9;ASCII;;Data for 0470____0471
+;0472____0476;Serial_Number11_Rsvd0 -- 4;ASCII;;Data for 0472____0476
+Status information sheet;0477____047F;State1 -- 9;U16;;Data for 0477____047F
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"0480 -- 0483";"AddressMask_Realtime_GridOutput1";"U64";;
-"Grid frequency";"0484";"Frequency_Grid";"U16";0,01;"Hz"
-"Power data";"0485";"ActivePower_Output_Total";"I16";0,01;"kW"
-;"0486";"ReactivePower_Output_Total";"I16";0,01;"kW"
-;"0487";"ApparentPower_Output_Total";"I16";0,01;"kW"
-;"0488";"ActivePower_PCC_Total";"I16";0,01;"kW"
-;"0489";"ReactivePower_PCC_Total";"I16";0,01;"kW"
-;"048A";"ApparentPower_PCC_Total";"I16";0,01;"kW"
-;"048B -- 048C";"GridOutput_Rsvd1 -- 2";;;
+;0480____0483;AddressMask_Realtime_GridOutput1;U64;;Data for 0480____0483
+Grid frequency;0484;Frequency_Grid;U16;0,01;Hz
+Power data;0485;ActivePower_Output_Total;I16;0,01;kW
+;0486;ReactivePower_Output_Total;I16;0,01;kW
+;0487;ApparentPower_Output_Total;I16;0,01;kW
+;0488;ActivePower_PCC_Total;I16;0,01;kW
+;0489;ReactivePower_PCC_Total;I16;0,01;kW
+;048A;ApparentPower_PCC_Total;I16;0,01;kW
+;048B____048C;GridOutput_Rsvd1 -- 2;;;Data for 048B____048C
 "R-phase grid connection
-Real-time data";"048D";"Voltage_Phase_R";"U16";0,1;"V"
-;"048E";"Current_Output_R";"U16";0,01;"A"
-;"048F";"ActivePower_Output_R";"I16";0,01;"kW"
-;"0490";"ReactivePower_Output_R";"I16";0,01;"kW"
-;"0491";"PowerFactor_Output_R";"I16";0,001;"p.u."
-;"0492";"Current_PCC_R";"U16";0,01;"A"
-;"0493";"ActivePower_PCC_R";"I16";0,01;"kW"
-;"0494";"ReactivePower_PCC_R";"I16";0,01;"kW"
-;"0495";"PowerFactor_PCC_R";"I16";0,001;"p.u."
-;"0496 -- 0497";"R_Rsvd1 -- 2";;;
+Real-time data";048D;Voltage_Phase_R;U16;0,1;V
+;048E;Current_Output_R;U16;0,01;A
+;048F;ActivePower_Output_R;I16;0,01;kW
+;0490;ReactivePower_Output_R;I16;0,01;kW
+;0491;PowerFactor_Output_R;I16;0,001;p.u.
+;0492;Current_PCC_R;U16;0,01;A
+;0493;ActivePower_PCC_R;I16;0,01;kW
+;0494;ReactivePower_PCC_R;I16;0,01;kW
+;0495;PowerFactor_PCC_R;I16;0,001;p.u.
+;0496____0497;R_Rsvd1 -- 2;;;Data for 0496____0497
 "S-phase grid connection
-Real-time data";"0498";"Voltage_Phase_S";"U16";0,1;"V"
-;"0499";"Current_Output_S";"U16";0,01;"A"
-;"049A";"ActivePower_Output_S";"I16";0,01;"kW"
-;"049B";"ReactivePower_Output_S";"I16";0,01;"kW"
-;"049C";"PowerFactor_Output_S";"I16";0,001;"p.u."
-;"049D";"Current_PCC_S";"U16";0,01;"A"
-;"049E";"ActivePower_PCC_S";"I16";0,01;"kW"
-;"049F";"ReactivePower_PCC_S";"I16";0,01;"kW"
-;"04A0";"PowerFactor_PCC_S";"I16";0,001;"p.u."
-;"04A1 -- 04A2";"S_Rsvd1 -- 2";;;
+Real-time data";0498;Voltage_Phase_S;U16;0,1;V
+;0499;Current_Output_S;U16;0,01;A
+;049A;ActivePower_Output_S;I16;0,01;kW
+;049B;ReactivePower_Output_S;I16;0,01;kW
+;049C;PowerFactor_Output_S;I16;0,001;p.u.
+;049D;Current_PCC_S;U16;0,01;A
+;049E;ActivePower_PCC_S;I16;0,01;kW
+;049F;ReactivePower_PCC_S;I16;0,01;kW
+;04A0;PowerFactor_PCC_S;I16;0,001;p.u.
+;04A1____04A2;S_Rsvd1 -- 2;;;Data for 04A1____04A2
 "T-phase grid connection
-Real-time data";"04A3";"Voltage_Phase_T";"U16";0,1;"V"
-;"04A4";"Current_Output_T";"U16";0,01;"A"
-;"04A5";"ActivePower_Output_T";"I16";0,01;"kW"
-;"04A6";"ReactivePower_Output_T";"I16";0,01;"kW"
-;"04A7";"PowerFactor_Output_T";"I16";0,001;"p.u."
-;"04A8";"Current_PCC_T";"U16";0,01;"A"
-;"04A9";"ActivePower_PCC_T";"I16";0,01;"kW"
-;"04AA";"ReactivePower_PCC_T";"I16";0,01;"kW"
-;"04AB";"PowerFactor_PCC_T";"I16";0,001;"p.u."
-;"04AC -- 04AD";"T_Rsvd1 -- 2";;;
-"Other grid connections-Real-time data";"04AE";"ActivePower_PV_Ext";"U16";0,01;"kW"
-;"04AF";"ActivePower_Load_Sys";"U16";0,01;"kW"
-;"04B0";"Voltage_Phase_L1N";"U16";0,1;"V"
-;"04B1";"Current_Output_L1N";"U16";0,01;"A"
-;"04B2";"ActivePower_Output_L1N";"I16";0,01;"kW"
-;"04B3";"Current_PCC_L1N";"U16";0,01;"A"
-;"04B4";"ActivePower_PCC_L1N";"I16";0,01;"kW"
-;"04B5";"Voltage_Phase_L2N";"U16";0,1;"V"
-;"04B6";"Current_Output_L2N";"U16";0,01;"A"
-;"04B7";"ActivePower_Output_L2N";"I16";0,01;"kW"
-;"04B8";"Current_PCC_L2N";"U16";0,01;"A"
-;"04B9";"ActivePower_PCC_L2N";"I16";0,01;"kW"
-;"04BA";"Voltage_Line_L1";"U16";0,1;"V"
-;"04BB";"Voltage_Line_L2";"U16";0,1;"V"
-;"04BC";"Voltage_Line_L3";"U16";0,1;"V"
-;"04BD";"Power_Factor";"I16";0,001;"p.u."
+Real-time data";04A3;Voltage_Phase_T;U16;0,1;V
+;04A4;Current_Output_T;U16;0,01;A
+;04A5;ActivePower_Output_T;I16;0,01;kW
+;04A6;ReactivePower_Output_T;I16;0,01;kW
+;04A7;PowerFactor_Output_T;I16;0,001;p.u.
+;04A8;Current_PCC_T;U16;0,01;A
+;04A9;ActivePower_PCC_T;I16;0,01;kW
+;04AA;ReactivePower_PCC_T;I16;0,01;kW
+;04AB;PowerFactor_PCC_T;I16;0,001;p.u.
+;04AC____04AD;T_Rsvd1 -- 2;;;Data for 04AC____04AD
+Other grid connections-Real-time data;04AE;ActivePower_PV_Ext;U16;0,01;kW
+;04AF;ActivePower_Load_Sys;U16;0,01;kW
+;04B0;Voltage_Phase_L1N;U16;0,1;V
+;04B1;Current_Output_L1N;U16;0,01;A
+;04B2;ActivePower_Output_L1N;I16;0,01;kW
+;04B3;Current_PCC_L1N;U16;0,01;A
+;04B4;ActivePower_PCC_L1N;I16;0,01;kW
+;04B5;Voltage_Phase_L2N;U16;0,1;V
+;04B6;Current_Output_L2N;U16;0,01;A
+;04B7;ActivePower_Output_L2N;I16;0,01;kW
+;04B8;Current_PCC_L2N;U16;0,01;A
+;04B9;ActivePower_PCC_L2N;I16;0,01;kW
+;04BA;Voltage_Line_L1;U16;0,1;V
+;04BB;Voltage_Line_L2;U16;0,1;V
+;04BC;Voltage_Line_L3;U16;0,1;V
+;04BD;Power_Factor;I16;0,001;p.u.
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"0500 -- 0503";"AddressMask_Realtime_EmergencyOutput1";"U64";;
-"Load power";"0504";"ActivePower_Load_Total";"I16";0,01;"kW"
-;"0505";"ReactivePower_Load_Total";"I16";0,01;"kW"
-;"0506";"ApparentPower_Load_Total";"I16";0,01;"kW"
-"Output voltage frequency";"0507";"Frequency_Output";"U16";0,01;"Hz"
-;"0508 -- 0509";"ESOutput_Rsvd1 -- 2";;;
+;0500____0503;AddressMask_Realtime_EmergencyOutput1;U64;;Data for 0500____0503
+Load power;0504;ActivePower_Load_Total;I16;0,01;kW
+;0505;ReactivePower_Load_Total;I16;0,01;kW
+;0506;ApparentPower_Load_Total;I16;0,01;kW
+Output voltage frequency;0507;Frequency_Output;U16;0,01;Hz
+;0508____0509;ESOutput_Rsvd1 -- 2;;;Data for 0508____0509
 "R-phase off-grid
-Real-time data";"050A";"Voltage_Output_R";"U16";0,1;"V"
-;"050B";"Current_Load_R";"I16";0,01;"A"
-;"050C";"ActivePower_Load_R";"I16";0,01;"kW"
-;"050D";"ReactivePower_Load_R";"I16";0,01;"kW"
-;"050E";"ApparentPower_Load_R";"I16";0,01;"kVA"
-;"050F";"LoadPeakRatio_R";"U16";0,01;"p.u."
-;"0510";"Voltage_Load_R";"U16";0,1;"V"
-;"0511";"ESR_Rsvd2";;;
+Real-time data";050A;Voltage_Output_R;U16;0,1;V
+;050B;Current_Load_R;I16;0,01;A
+;050C;ActivePower_Load_R;I16;0,01;kW
+;050D;ReactivePower_Load_R;I16;0,01;kW
+;050E;ApparentPower_Load_R;I16;0,01;kVA
+;050F;LoadPeakRatio_R;U16;0,01;p.u.
+;0510;Voltage_Load_R;U16;0,1;V
+;0511;ESR_Rsvd2;;;Data for 0511
 "S-phase off-grid
-Real-time data";"0512";"Voltage_Output_S";"U16";0,1;"V"
-;"0513";"Current_Load_S";"I16";0,01;"A"
-;"0514";"ActivePower_Load_S";"I16";0,01;"kW"
-;"0515";"ReactivePower_Load_S";"I16";0,01;"kW"
-;"0516";"ApparentPower_Load_S";"I16";0,01;"kVA"
-;"0517";"LoadPeakRatio_S";"U16";0,01;"p.u."
-;"0518";"Voltage_Load_S";"U16";0,1;"V"
-;"0519";"ESS_Rsvd2";;;
+Real-time data";0512;Voltage_Output_S;U16;0,1;V
+;0513;Current_Load_S;I16;0,01;A
+;0514;ActivePower_Load_S;I16;0,01;kW
+;0515;ReactivePower_Load_S;I16;0,01;kW
+;0516;ApparentPower_Load_S;I16;0,01;kVA
+;0517;LoadPeakRatio_S;U16;0,01;p.u.
+;0518;Voltage_Load_S;U16;0,1;V
+;0519;ESS_Rsvd2;;;Data for 0519
 "T-phase off-grid
-Real-time data";"051A";"Voltage_Output_T";"U16";0,1;"V"
-;"051B";"Current_Load_T";"I16";0,01;"A"
-;"051C";"ActivePower_Load_T";"I16";0,01;"kW"
-;"051D";"ReactivePower_Load_T";"I16";0,01;"kW"
-;"051E";"ApparentPower_Load_T";"I16";0,01;"kVA"
-;"051F";"LoadPeakRatio_T";"U16";0,01;"p.u."
-;"0520";"Voltage_Load_T";"U16";0,1;"V"
-;"0521";"EST_Rsvd2";;;
+Real-time data";051A;Voltage_Output_T;U16;0,1;V
+;051B;Current_Load_T;I16;0,01;A
+;051C;ActivePower_Load_T;I16;0,01;kW
+;051D;ReactivePower_Load_T;I16;0,01;kW
+;051E;ApparentPower_Load_T;I16;0,01;kVA
+;051F;LoadPeakRatio_T;U16;0,01;p.u.
+;0520;Voltage_Load_T;U16;0,1;V
+;0521;EST_Rsvd2;;;Data for 0521
 """Other off-grid
-Real Time Data""";"0522";"Voltage_Output_L1N";"U16";0,1;"V"
-;"0523";"Current_Load_L1N";"I16";0,01;"A"
-;"0524";"ActivePower_Load_L1N";"I16";0,01;"kW"
-;"0525";"Voltage_Output_L2N";"U16";0,1;"V"
-;"0526";"Current_Load_L2N";"I16";0,01;"A"
-;"0527";"ActivePower_Load_L2N";"I16";0,01;"kW"
+Real Time Data""";0522;Voltage_Output_L1N;U16;0,1;V
+;0523;Current_Load_L1N;I16;0,01;A
+;0524;ActivePower_Load_L1N;I16;0,01;kW
+;0525;Voltage_Output_L2N;U16;0,1;V
+;0526;Current_Load_L2N;I16;0,01;A
+;0527;ActivePower_Load_L2N;I16;0,01;kW
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"0580 -- 0583";"AddressMask_Realtime_Input_PV1";"U64";;
+;0580____0583;AddressMask_Realtime_Input_PV1;U64;;Data for 0580____0583
 "PV1-16
 Voltage
 Current
 Power
-Data";"0584 -- 05B1";"Voltage_PV1 -- 16";"U16";0,1;"V"
-;"0585 -- 05B2";"Current_PV1 -- 16";"U16";0,01;"A"
-;"0586";"Power_PV1 -- 16";"U16";0,01;"kW"
-;"0587";"Voltage_PV2 -- 16";"U16";0,1;"V"
-;"0588";"Current_PV2 -- 16";"U16";0,01;"A"
-;"0589";"Power_PV2 -- 16";"U16";0,01;"kW"
-;"05B4 -- 05B6";;;;
-;"05C0 -- 05C3";"AddressMask_Realtime_Input_PV2";"U64";;
-"Total PV power";"05C4";"Power_PV_Total";"U16";0,1;"kW"
+Data";0584____05B1;Voltage_PV1 -- 16;U16;0,1;V
+;0585____05B2;Current_PV1 -- 16;U16;0,01;A
+;0586;Power_PV1 -- 16;U16;0,01;kW
+;0587;Voltage_PV2 -- 16;U16;0,1;V
+;0588;Current_PV2 -- 16;U16;0,01;A
+;0589;Power_PV2 -- 16;U16;0,01;kW
+;05B4____05B6;;;;Data for 05B4____05B6
+;05C0____05C3;AddressMask_Realtime_Input_PV2;U64;;Data for 05C0____05C3
+Total PV power;05C4;Power_PV_Total;U16;0,1;kW
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"0600 -- 0603";"AddressMask_Realtime_Input_Bat1";"U64";;
+;0600____0603;AddressMask_Realtime_Input_Bat1;U64;;Data for 0600____0603
 "Battery pack 1-8
-Data";"0604 -- 0635";"Voltage_Bat1 -- 8";"U16";0,1;"V"
-;"0605 -- 0636";"Current_Bat1 -- 8";"I16";0,01;"A"
-;"0606 -- 0637";"Power_Bat1 -- 8";"I16";0,01;"kW"
-;"0607 -- 0638";"Temperature_Env_Bat1 -- 8";"I16";1;"℃"
-;"0608 -- 0639";"SOC_Bat1 -- 8";"U16";1;"%"
-;"0609 -- 063A";"SOH_Bat1 -- 8";"U16";1;"%"
-;"060A -- 063B";"ChargeCycle_Bat1 -- 8";"U16";1;"cycle"
-;"063C -- 063F";;;;
-;"0640 -- 0643";"AddressMask_Realtime_Input_Bat2";"U64";;
+Data";0604____0635;Voltage_Bat1 -- 8;U16;0,1;V
+;0605____0636;Current_Bat1 -- 8;I16;0,01;A
+;0606____0637;Power_Bat1 -- 8;I16;0,01;kW
+;0607____0638;Temperature_Env_Bat1 -- 8;I16;1;℃
+;0608____0639;SOC_Bat1 -- 8;U16;1;%
+;0609____063A;SOH_Bat1 -- 8;U16;1;%
+;060A____063B;ChargeCycle_Bat1 -- 8;U16;1;cycle
+;063C____063F;;;;Data for 063C____063F
+;0640____0643;AddressMask_Realtime_Input_Bat2;U64;;Data for 0640____0643
 "Battery pack 9-12
-Data";"0644 -- 0659";"Voltage_Bat9 -- 12";"U16";0,1;"V"
-;"0645 -- 065A";"Current_Bat9 -- 12";"I16";0,01;"A"
-;"0646 -- 065B";"Power_Bat9 -- 12";"I16";0,01;"kW"
-;"0647 -- 065C";"Temperature_Env_Bat9 -- 12";"I16";1;"℃"
-;"0648 -- 065D";"SOC_Bat9 -- 12";"U16";1;"%"
-;"0649 -- 065E";"SOH_Bat9 -- 12";"U16";1;"%"
-;"064A --065F";"ChargeCycle_Bat9 -- 12";"U16";1;"cycle"
-;"0660 -- 0666";;;;
+Data";0644____0659;Voltage_Bat9 -- 12;U16;0,1;V
+;0645____065A;Current_Bat9 -- 12;I16;0,01;A
+;0646____065B;Power_Bat9 -- 12;I16;0,01;kW
+;0647____065C;Temperature_Env_Bat9 -- 12;I16;1;℃
+;0648____065D;SOC_Bat9 -- 12;U16;1;%
+;0649____065E;SOH_Bat9 -- 12;U16;1;%
+;064A___065F;ChargeCycle_Bat9 -- 12;U16;1;cycle
+;0660____0666;;;;Data for 0660____0666
 "Battery pack
-Other data";"0667";"Power_Bat_Total";"I16";0,1;"kW"
-;"0668";"SOC_Bat_Average";"U16";1;"%"
-;"0669";"SOH_Bat";"U16";1;"%"
-;"066A";"CurrentBattery_num";"U16";1;
+Other data";0667;Power_Bat_Total;I16;0,1;kW
+;0668;SOC_Bat_Average;U16;1;%
+;0669;SOH_Bat;U16;1;%
+;066A;CurrentBattery_num;U16;1;Data for 066A
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"0680 -- 0683";"AddressMask_Realtime_ElectricityStatistics1";"U64";;
-"Electricity data";"0684 -- 0685";"PV_Generation_Today";"U32";0,01;"kWh"
-;"0686 -- 0687";"PV_Generation_Total";"U32";0,1;"kWh"
-;"0688 -- 0689";"Load_Consumption_Today";"U32";0,01;"kWh"
-;"068A -- 068B";"Load_Consumption_Total";"U32";0,1;"kWh"
-;"068C -- 068D";"Energy_Purchase_Today";"U32";0,01;"kWh"
-;"068E -- 068F";"Energy_Purchase_Total";"U32";0,1;"kWh"
-;"0690 -- 0691";"Energy_Selling_Today";"U32";0,01;"kWh"
-;"0692 -- 0693";"Energy_Selling_Total";"U32";0,1;"kWh"
-;"0694 -- 0695";"Bat_Charge_Today";"U32";0,01;"kWh"
-;"0696 -- 0697";"Bat_Charge_Total";"U32";0,1;"kWh"
-;"0698 -- 0699";"Bat_Discharge_Today";"U32";0,01;"kWh"
-;"069A -- 069B";"Bat_Discharge_Total";"U32";0,1;"kWh"
+;0680____0683;AddressMask_Realtime_ElectricityStatistics1;U64;;Data for 0680____0683
+Electricity data;0684____0685;PV_Generation_Today;U32;0,01;kWh
+;0686____0687;PV_Generation_Total;U32;0,1;kWh
+;0688____0689;Load_Consumption_Today;U32;0,01;kWh
+;068A____068B;Load_Consumption_Total;U32;0,1;kWh
+;068C____068D;Energy_Purchase_Today;U32;0,01;kWh
+;068E____068F;Energy_Purchase_Total;U32;0,1;kWh
+;0690____0691;Energy_Selling_Today;U32;0,01;kWh
+;0692____0693;Energy_Selling_Total;U32;0,1;kWh
+;0694____0695;Bat_Charge_Today;U32;0,01;kWh
+;0696____0697;Bat_Charge_Total;U32;0,1;kWh
+;0698____0699;Bat_Discharge_Today;U32;0,01;kWh
+;069A____069B;Bat_Discharge_Total;U32;0,1;kWh
 "Current month of the year
-Electricity data";"069C -- 069D";"PV_Generation_Month";"U32";0,1;"kWh"
-;"069E -- 069F";"PV_Generation_Year";"U32";0,1;"kWh"
-;"06A0 -- 06A1";"Load_Consumption_Month";"U32";0,1;"kWh"
-;"06A2 -- 06A3";"Load_Consumption_Year";"U32";0,1;"kWh"
-;"06A4 -- 06A5";"Energy_Purchase_Month";"U32";0,1;"kWh"
-;"06A6 -- 06A7";"Energy_Purchase_Year";"U32";0,1;"kWh"
-;"06A8 -- 06A9";"Energy_Selling_Month";"U32";0,1;"kWh"
-;"06AA -- 06AB";"Energy_Selling_Year";"U32";0,1;"kWh"
-;"06AC -- 06AD";"Bat_Charge_Month";"U32";0,1;"kWh"
-;"06AE -- 06AF";"Bat_Charge_Year";"U32";0,1;"kWh"
-;"06B0 -- 06B1";"Bat_Discharge_Month";"U32";0,1;"kWh"
-;"06B2 -- 06B3";"Bat_Discharge_Year";"U32";0,1;"kWh"
+Electricity data";069C____069D;PV_Generation_Month;U32;0,1;kWh
+;069E____069F;PV_Generation_Year;U32;0,1;kWh
+;06A0____06A1;Load_Consumption_Month;U32;0,1;kWh
+;06A2____06A3;Load_Consumption_Year;U32;0,1;kWh
+;06A4____06A5;Energy_Purchase_Month;U32;0,1;kWh
+;06A6____06A7;Energy_Purchase_Year;U32;0,1;kWh
+;06A8____06A9;Energy_Selling_Month;U32;0,1;kWh
+;06AA____06AB;Energy_Selling_Year;U32;0,1;kWh
+;06AC____06AD;Bat_Charge_Month;U32;0,1;kWh
+;06AE____06AF;Bat_Charge_Year;U32;0,1;kWh
+;06B0____06B1;Bat_Discharge_Month;U32;0,1;kWh
+;06B2____06B3;Bat_Discharge_Year;U32;0,1;kWh
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"06C0 -- 06C3";"AddressMask_Realtime_ClassifiedInfo1";"U64";;
-"Leakage current";"06C4";"GFCI";"U16";1;"mA"
-"Balance current";"06C5";"Current_Bus_Balance";"I16";0,01;"A"
-"DC component";"06C6";"DCI_R";"I16";1;"mA"
-;"06C7";"DCI_S";"I16";1;"mA"
-;"06C8";"DCI_T";"I16";1;"mA"
-;"06C9";"DCV_R";"I16";1;"mV"
-;"06CA";"DCV_S";"I16";1;"mV"
-;"06CB";"DCV_T";"I16";1;"mV"
+;06C0____06C3;AddressMask_Realtime_ClassifiedInfo1;U64;;Data for 06C0____06C3
+Leakage current;06C4;GFCI;U16;1;mA
+Balance current;06C5;Current_Bus_Balance;I16;0,01;A
+DC component;06C6;DCI_R;I16;1;mA
+;06C7;DCI_S;I16;1;mA
+;06C8;DCI_T;I16;1;mA
+;06C9;DCV_R;I16;1;mV
+;06CA;DCV_S;I16;1;mV
+;06CB;DCV_T;I16;1;mV
 "BUS voltage information
-BuckBoost current";"06CC";"Voltage_Bus";"U16";0,1;"V"
-;"06CD";"Voltage_Bus_P";"U16";0,1;"V"
-;"06CE";"Voltage_Bus_N";"U16";0,1;"V"
-;"06CF";"Voltage_Bus_LLC";"U16";0,1;"V"
-;"06D0";"Current_BuckBoost";"I16";0,01;"A"
-;"06D1";"Voltage_Bus_P_Half";"U16";0,1;"V"
-;"06D2";"Voltage_Bus_N_Half";"U16";0,1;"V"
-"Fly across capacitor voltage";"06D3 -- 06E2";"FlyingCap_Voltage1 -- 16";"U16";0,1;"V"
-"Internal information";"06E3 -- 06EC";"Internal_Info1 -- 10";"U16";0,1;"V"
-"Inverter power rating";"06ED";"RatedPower_Inverter";"U16";"0.1kW";"kW"
-"IV curve scan";"06EE";"IVPoints_Effec_Num";"U16";1;
+BuckBoost current";06CC;Voltage_Bus;U16;0,1;V
+;06CD;Voltage_Bus_P;U16;0,1;V
+;06CE;Voltage_Bus_N;U16;0,1;V
+;06CF;Voltage_Bus_LLC;U16;0,1;V
+;06D0;Current_BuckBoost;I16;0,01;A
+;06D1;Voltage_Bus_P_Half;U16;0,1;V
+;06D2;Voltage_Bus_N_Half;U16;0,1;V
+Fly across capacitor voltage;06D3____06E2;FlyingCap_Voltage1 -- 16;U16;0,1;V
+Internal information;06E3____06EC;Internal_Info1 -- 10;U16;0,1;V
+Inverter power rating;06ED;RatedPower_Inverter;U16;0.1kW;kW
+IV curve scan;06EE;IVPoints_Effec_Num;U16;1;Data for 06EE
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"0700 -- 0703";"AddressMask_Realtime_CombinerInfo1";"U64";;
+;0700____0703;AddressMask_Realtime_CombinerInfo1;U64;;Data for 0700____0703
 "Group 1 - 16
 Convergence voltage
-String current";"0704 -- 0731";"Voltage_Group1 -- 16";"U16";0,1;"V"
-;"0705 -- 0732";"Current_Group1_Branch1 --
-Current_Group16_Branch1";"U16";0,01;"A"
-;"0706 -- 0733";"Current_Group1_Branch2 -- 
-Current_Group16_Branch2";"U16";0,01;"A"
-;"0734 -- 073F";;;;
-;"0740 -- 0743";"AddressMask_Realtime_CombinerInfo2";"U64";;
+String current";0704____0731;Voltage_Group1 -- 16;U16;0,1;V
+;0705____0732;"Current_Group1_Branch1 --
+Current_Group16_Branch1";U16;0,01;A
+;0706____0733;"Current_Group1_Branch2 -- 
+Current_Group16_Branch2";U16;0,01;A
+;0734____073F;;;;Data for 0734____073F
+;0740____0743;AddressMask_Realtime_CombinerInfo2;U64;;Data for 0740____0743
 "Group 1-16
 Sink current
-String current";"0744 -- 0762";"Current_Group1_Branch3 --
-Current_Group16_Branch3";"U16";0,01;"A"
-;"0745 -- 0763";"Current_Group1_Branch4 -- 
-Current_Group16_Branch4";"U16";0,01;"A"
-;"0764 -- 077F";;;;
+String current";0744____0762;"Current_Group1_Branch3 --
+Current_Group16_Branch3";U16;0,01;A
+;0745____0763;"Current_Group1_Branch4 -- 
+Current_Group16_Branch4";U16;0,01;A
+;0764____077F;;;;Data for 0764____077F
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"0780 -- 0783";"AddressMask_Realtime_ArcInfo3";"U64";;
-"Real-time arc intensity";"0784 -- 079B";"ArcStrength_MPPT_1 -- 24";"I16";1;
-;"079C -- 07A1";;;;
-"Arc intensity history";"07A2 -- 07B9";"ArcStrength_history_Channel1 -- 24";"I16";1;
-;"07BA -- 07BF";;;;
-;"07C0 -- 07C3";"AddressMask_Realtime_ArcInfo4";"U64";;
-"Arc polarity values";"07C4";"arc_peak_to_peak";"U16";1;
-;"07C5";"arc_variance";"U16";1;
-;"07C6";"arc_harmonic_energy";"U16";1;
-;"07C7";"arc_amplitude_variance";"U16";1;
-;;;;;
-;;;;;
-;;;;;
-;;;;;
-;;;;;
-;"0800";"ConnectWaitTime";"U16";1;"秒"
-;"0801";"PowerUpSpeed";"U16";1;"%Pn/min"
-;"0802";"ReconnectWaitTime";"U16";1;"秒"
-;"0803";"ReconnectPowerUpSpeed";"U16";1;"%Pn/min"
-;"0804";"VoltHighLimit";"U16";0,1;"V"
-;"0805";"VoltLowLimit";"U16";0,1;"V"
-;"0806";"FreqHighLimit";"U16";0,01;"Hz"
-;"0807";"FreqLowLimit";"U16";0,01;"Hz"
-;"0808";"ReconnectVoltHighLimit";"U16";0,1;"V"
-;"0809";"ReconnectVoltLowLimit";"U16";0,1;"V"
-;"080A";"ReconnectFreqHighLimit";"U16";0,01;"Hz"
-;"080B";"ReconnectFreqLowLimit";"U16";0,01;"Hz"
-;;;;;
-;;;;;
-;;;;;
-;;;;;
-;"0840";"Voltage Config";"U16";;
-;"0841";"RatedVoltage";"U16";0,1;"V"
-;"0842";"FirstOvervoltageProtectionValue";"U16";0,1;"V"
-;"0843";"FirstOvervoltageProtectionTime";"U16";10;"ms"
-;"0844";"SecondOvervoltageProtectionValue";"U16";0,1;"V"
-;"0845";"SecondOvervoltageProtectionTime";"U16";10;"ms"
-;"0846";"ThirdOvervoltageProtectionValue";"U16";0,1;"V"
-;"0847";"ThirdOvervoltageProtectionTime";"U16";10;"ms"
-;"0848";"FirstUnderVoltageProtectionValue";"U16";0,1;"V"
-;"0849";"FirstUndervoltageProtectionTime";"U16";10;"ms"
-;"084A";"SecondUnderVoltageProtectionValue";"U16";0,1;"V"
-;"084B";"SecondUndervoltageProtectionTime";"U16";10;"ms"
-;"084C";"ThirdUnderVoltageProtectionValue";"U16";0,1;"V"
-;"084D";"ThirdUndervoltageProtectionTime";"U16";10;"ms"
-;"084E";"10MinOvervoltageProtectionValue";"U16";0,1;"V"
-;"084F";"FirstOvervoltageProtectionTimeHi";"U16";;
-;"0850";"SecondOvervoltageProtectionTimeHi";"U16";;
-;"0851";"ThirdOvervoltageProtectionTimeHi";"U16";;
-;;;;;
-;;;;;
-;;;;;
-;;;;;
-;"0880";"FrequencyConfig";"U16";;
-;"0881";"RatedFrequency";"U16";0,01;"Hz"
-;"0882";"FirstOverfrequencyProtectionValue";"U16";0,01;"Hz"
-;"0883";"FirstOverfrequencyProtectionTime";"U16";10;"ms"
-;"0884";"SecondOverfrequencyProtectionValue";"U16";0,01;"Hz"
-;"0885";"SecondOverfrequencyProtectionTime";"U16";10;"ms"
-;"0886";"ThirdOverfrequencyProtectionValue";"U16";0,01;"Hz"
-;"0887";"ThirdOverfrequencyProtectionTime";"U16";10;"ms"
-;"0888";"FirstUnderfrequencyProtectionValue";"U16";0,01;"Hz"
-;"0889";"FirstUnderfrequencyProtectionTime";"U16";10;"ms"
-;"088A";"SecondUnderfrequencyProtectionValue";"U16";0,01;"Hz"
-;"088B";"SecondUnderfrequencyProtectionTime";"U16";10;"ms"
-;"088C";"ThirdUnderfrequencyProtectionValue";"U16";0,01;"Hz"
-;"088D";"ThirdUnderfrequencyProtectionTime";"U16";10;"ms"
-;"088E";"FirstOverfrequencyProtectionTimeHi";"U16";;
-;"088F";"SecondOverfrequencyProtectionTimeHi";"U16";;
-;"0890";"ThirdOverfrequencyProtectionTimeHi";"U16";;
-;"0891";"FirstUnderfrequencyProtectionTimeHi";"U16";;
-;"0892";"SecondUnderfrequencyProtectionTimeHi";"U16";;
-;"0893";"ThirdUnderfrequencyProtectionTimeHi";"U16";;
-;;;;;
-;;;;;
-;;;;;
-;;;;;
-;"08C0";"DCI Config";"U16";;
-;"08C1";"DCIFirstProtectionValue";"U16";1;"mA"
-;"08C2";"DCIFirstProtectionTime";"U16";10;"ms"
-;"08C3";"DCISecondProtectionValue";"U16";1;"mA"
-;"08C4";"DCISecondProtectionTime";"U16";10;"ms"
-;"08C5";"DCIThirdProtectionValue";"U16";1;"mA"
-;"08C6";"DCIThirdProtectionTime";"U16";10;"ms"
-;"08C7";"DCITestValue1";"I16";1;"mA"
-;"08C8";"DCITestValue2";"I16";1;"mA"
-;"08C9";"DCITestValue3";"I16";1;"mA"
-;"08CA";"DCIFirstProtectionProportion";"U16";0,01;"%"
-;"08CB";"DCISecondProtectionProportion";"U16";0,01;"%"
-;"08CC";"DCIThirdProtectionProportion";"U16";0,01;"%"
-;;;;;
-;;;;;
-;;;;;
-;;;;;
-;"0900";"Remote Config
-";"U16";;
-;"0901";"ActiveOutputLimit";"U16";0,1;"%"
-;"0902";"ActiveOutputDownSpeed";"U16";1;"%Pn/min"
-;"0903";"GridVoltageDropStart";"U16";0,1;"V"
-;"0904";"GridVoltageDropStop";"U16";0,1;"V"
-;"0905";"GridVoltageDropMinPower";"I16";1;"%"
-;"0906";"OvervoltageDownSpeed";"U16";1;"%Pn/min"
-;"0907";"ChgDerateVoltStart";"U16";0,1;"V"
-;"0908";"ChgDerateVoltEnd";"U16";0,1;"V"
-;"0909";"ChgDerateMinPower";"I16";1;"%"
-;"090A -- 0911";"PowerForLogic1 -- 8";"I16";1;"%"
-;"0912";"RefluxPower";"U16";1;"%"
-;"0913";"RefluxOVloadTime";"U16";10;"ms"
-;"0914";"LogicDerateSpeed";"U16";1;"%Pn/min"
-;"0915";"LogicReloadSpeed";"U16";1;"%Pn/min"
-;"0916";"VoltageDerateResponseTime";"U16";1;"秒"
-;"0917";"PowerDownSpeed";"U16";1;"%Pn/min"
-;;;;;
-;;;;;
-;;;;;
-;;;;;
-;"0940";"FrequencyDerateConfig";"U16";;
-;"0941";"OverfrequencyStart";"U16";0,01;"Hz"
-;"0942";"OverfrequencyEnd";"U16";0,01;"Hz"
-;"0943";"OverfrequencySlope";"U16";1;"%Pn/Hz"
-;"0944";"OverfrequencyResponseDelay";"U16";10;"ms"
-;"0945";"OverfrequencyReloadDelay";"U16";10;"ms"
-;"0946";"OverfrequencyReloadStart";"U16";0,01;"Hz"
-;"0947";"OverfrequencyReloadSpeed";"U16";1;"%Pn/min"
-;"0948";"UnderfrequencyStart";"U16";0,01;"Hz"
-;"0949";"UnderfrequencyEnd";"U16";0,01;"Hz"
-;"094A";"UnderfrequencySlope";"U16";1;"%Pn/Hz"
-;"094B";"UnderfrequencyResponseDelay";"U16";10;"ms"
-;"094C";"UnderfrequencyReloadDelay";"U16";10;"ms"
-;"094D";"UnderfrequencyReloadStart";"U16";0,01;"Hz"
-;"094E";"UnderfrequencyReloadSpeed";"U16";1;"%Pn/min"
-;"094F";"FrequencyRecoverMax";"U16";0,01;"Hz"
-;"0950";"FrequencyRecoverMin";"U16";0,01;"Hz"
-;"0951";"ESSOverFrequencyStart";"U16";0,01;"Hz"
-;"0952";"ESSOverfrequencyEnd";"U16";0,01;"Hz"
-;"0953";"ESSOverFrequencySlope";"U16";1;"%Pn/Hz"
-;"0954";"ESSOverFrequencyResponseDelay";"U16";10;"ms"
-;"0955";"ESSOverFrequencyReloadDelay";"U16";10;"ms"
-;"0956";"ESSOverfrequencyReloadStart";"U16";0,01;"Hz"
-;"0957";"ESSOverFrequencyReloadSpeed";"U16";1;"%Pn/min"
-;"0958";"ESSUnderFrequencyStart";"U16";0,01;"Hz"
-;"0959";"ESSUnderfrequencyEnd";"U16";0,01;"Hz"
-;"095A";"ESSUnderFrequencySlope";"U16";1;"%Pn/Hz"
-;"095B";"ESSUnderFrequencyResponseDelay";"U16";10;"ms"
-;"095C";"ESSUnderFrequencyReloadDelay";"U16";10;"ms"
-;"095D";"ESSUnderfrequencyReloadStart";"U16";0,01;"Hz"
-;"095E";"ESSUnderFrequencyReloadSpeed";"U16";1;"%Pn/min"
-;"095F";"ESSFrequencyRecoverMax";"U16";0,01;"Hz"
-;"0960";"ESSFrequencyRecoverMin";"U16";0,01;"Hz"
-;"0961";"ESSOverFrequencyTransition";"U16";0,01;"Hz"
-;"0962";"ESSUnderFrequencyTransition";"U16";0,01;"Hz"
-;;;;;
-;;;;;
-;;;;;
-;;;;;
-;"0980";"ReactiveConfig";"U16";;
-;"0981";"PowerFactor";"I16";0,0001;
-;"0982";"FixedReactivePercentage";"I16";0,01;"%"
-;"0983";"ReactiveCos1";"I16";0,0001;
-;"0984";"ReactivedynamicValue1";"I16";1;"%"
-;"0985";"ReactiveCos2";"I16";0,0001;
-;"0986";"ReactivedynamicValue2";"I16";1;"%"
-;"0987";"ReactiveCos3";"I16";0,0001;
-;"0988";"ReactivedynamicValue3";"I16";1;"%"
-;"0989";"ReactiveCos4";"I16";0,0001;
-;"098A";"ReactivedynamicValue4";"I16";1;"%"
-;"098B";"LockinV";"U16";1;"%"
-;"098C";"LockoutV";"U16";1;"%"
-;"098D";"HighVoltStartValue4";"U16";1;"%"
-;"098E";"HighVoltEndValue4";"U16";1;"%"
-;"098F";"LowVoltStartValue4";"U16";1;"%"
-;"0990";"LowVoltEndValue4";"U16";1;"%"
-;"0991";"LockinPower4";"U16";1;"%"
-;"0992";"LockoutPower4";"U16";1;"%"
-;"0993";"MaxLeadingReactivePower4";"U16";0,01;"%Pn"
-;"0994";"ReactiveResponseWaitTime4";"U16";10;"ms"
-;"0995";"ReactivePowerOffset4";"I16";0,01;"%Qmax"
-;"0996";"ReactivePowerStart4";"U16";0,01;"%Pn"
-;"0997";"HighVoltStartValue5";"U16";1;"%"
-;"0998";"HighVoltEndValue5";"U16";1;"%"
-;"0999";"LowVoltStartValue5";"U16";1;"%"
-;"099A";"LowVoltEndValue5";"U16";1;"%"
-;"099B";"LockinPower5";"U16";1;"%"
-;"099C";"LockoutPower5";"U16";1;"%"
-;"099D";"MaxReactivePower5";"U16";0,01;"%"
-;"099E";"ReactiveResponseWaitTime5";"U16";10;"ms"
-;"099F";"PhaseType";"U16";;
-;"09A0";"ReactiveResponsePeriod";"U16";1;"秒"
-;"09A1";"MaxLaggingReactivePower4";"U16";0,01;"%Pn"
-;;;;;
-;;;;;
-;;;;;
-;;;;;
-;"09C0";"VRTConfig";"U16";;
-;"09C1";"LvrtInVolt";"U16";1;"%"
-;"09C2";"LvrtFirstPointVolt";"U16";1;"%"
-;"09C3";"LvrtFirstPointTime";"U16";1;"ms"
-;"09C4";"LvrtSecondPointVolt";"U16";1;"%"
-;"09C5";"LvrtSecondPointTime";"U16";1;"ms"
-;"09C6";"LvrtThirdPointVolt";"U16";1;"%"
-;"09C7";"LvrtThirdPointTime";"U16";1;"ms"
-;"09C8";"LvrtFourthPointVolt";"U16";1;"%"
-;"09C9";"LvrtFourthPointTime";"U16";1;"ms"
-;"09CA";"LvrtReactiveCurrentCoefficientK";"U16";0,1;"p.u."
-;"09CB";"LvrtWaitingTimeAfterVoltageRecovery";"U16";1;"ms"
-;"09CC";"LvrtPowerBackRate";"U16";1;"%Pn/min"
-;"09CD";"OvrtInVlot";"U16";1;"%"
-;"09CE";"OvrtFirstPointVolt";"U16";1;"%"
-;"09CF";"OvrtFirstPointTime";"U16";10;"ms"
-;"09D0";"OvrtSecondPointVolt";"U16";1;"%"
-;"09D1";"OvrtSecondPointTime";"U16";10;"ms"
-;"09D2";"OvrtThirdPointVolt";"U16";1;"%"
-;"09D3";"OvrtThirdPointTime";"U16";10;"ms"
-;"09D4";"OvrtFourthPointVolt";"U16";1;"%"
-;"09D5";"OvrtFourthPointTime";"U16";10;"ms"
-;"09D6";"OvrtReactiveCurrentCoefficientK";"U16";0,1;"p.u."
-;"09D7";"OvrtWaitingTimeAfterVoltageRecovery";"U16";1;"ms"
-;"09D8";"OvrtPowerBackRate";"U16";1;"%Pn/min"
-;"09D9";"ZeroCurrentModeInLowVolt";"U16";1;"%"
-;"09DA";"ZeroCurrentModeInHighVolt";"U16";1;"%"
-;"09DB";"LvrtOutVolt";"U16";1;"%"
-;"09DC";"LvrtIqVoltStart";"U16";1;"%"
-;"09DD";"OvrtOutVolt";"U16";1;"%"
-;"09DE";"OvrtIqVoltStart";"U16";1;"%"
-;"09DF";"MaxUnbalanceIqPct";"U16";1;"%"
-;"09E0 -- 09FF";;;;
-;;;;;
-;;;;;
-;;;;;
-;;;;;
-;"0A00";"IslandConfig";"U16";;
-;"0A01";"GFCIConfig";"U16";;
-;"0A02";"ISOConfig";"U16";;
-;"0A03";"InsulationProtectionValue";"U16";1;"kΩ"
-;"0A04";"IsoLeakageCurrentLimit";"U16";1;"mA"
-;"0A05";"GFCILimit";"U16";1;"mA/kVA"
-;"0A06";"PE_N_Config";"U16";;
-;"0A07";"IslandDetectSensitivity";"U16";;
-;"0A08";"PEProtectionValue";"U16";1;"kΩ"
-;"0A09 -- 0A3F";;;;
-;;;;;
-;;;;;
-;;;;;
-;;;;;
-;"0A40 -- 0A7F";;;;
+;0780____0783;AddressMask_Realtime_ArcInfo3;U64;;Data for 0780____0783
+Real-time arc intensity;0784____079B;ArcStrength_MPPT_1 -- 24;I16;1;Data for 0784____079B
+;079C____07A1;;;;Data for 079C____07A1
+Arc intensity history;07A2____07B9;ArcStrength_history_Channel1 -- 24;I16;1;Data for 07A2____07B9
+;07BA____07BF;;;;Data for 07BA____07BF
+;07C0____07C3;AddressMask_Realtime_ArcInfo4;U64;;Data for 07C0____07C3
+Arc polarity values;07C4;arc_peak_to_peak;U16;1;Data for 07C4
+;07C5;arc_variance;U16;1;Data for 07C5
+;07C6;arc_harmonic_energy;U16;1;Data for 07C6
+;07C7;arc_amplitude_variance;U16;1;Data for 07C7
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"1000 -- 1003";"AddressMask_Config_Basic1";"U64";;
+;0800;ConnectWaitTime;U16;1;秒
+;0801;PowerUpSpeed;U16;1;%Pn/min
+;0802;ReconnectWaitTime;U16;1;秒
+;0803;ReconnectPowerUpSpeed;U16;1;%Pn/min
+;0804;VoltHighLimit;U16;0,1;V
+;0805;VoltLowLimit;U16;0,1;V
+;0806;FreqHighLimit;U16;0,01;Hz
+;0807;FreqLowLimit;U16;0,01;Hz
+;0808;ReconnectVoltHighLimit;U16;0,1;V
+;0809;ReconnectVoltLowLimit;U16;0,1;V
+;080A;ReconnectFreqHighLimit;U16;0,01;Hz
+;080B;ReconnectFreqLowLimit;U16;0,01;Hz
+;;;;;
+;;;;;
+;;;;;
+;;;;;
+;0840;Voltage Config;U16;;Data for 0840
+;0841;RatedVoltage;U16;0,1;V
+;0842;FirstOvervoltageProtectionValue;U16;0,1;V
+;0843;FirstOvervoltageProtectionTime;U16;10;ms
+;0844;SecondOvervoltageProtectionValue;U16;0,1;V
+;0845;SecondOvervoltageProtectionTime;U16;10;ms
+;0846;ThirdOvervoltageProtectionValue;U16;0,1;V
+;0847;ThirdOvervoltageProtectionTime;U16;10;ms
+;0848;FirstUnderVoltageProtectionValue;U16;0,1;V
+;0849;FirstUndervoltageProtectionTime;U16;10;ms
+;084A;SecondUnderVoltageProtectionValue;U16;0,1;V
+;084B;SecondUndervoltageProtectionTime;U16;10;ms
+;084C;ThirdUnderVoltageProtectionValue;U16;0,1;V
+;084D;ThirdUndervoltageProtectionTime;U16;10;ms
+;084E;10MinOvervoltageProtectionValue;U16;0,1;V
+;084F;FirstOvervoltageProtectionTimeHi;U16;;Data for 084F
+;0850;SecondOvervoltageProtectionTimeHi;U16;;Data for 0850
+;0851;ThirdOvervoltageProtectionTimeHi;U16;;Data for 0851
+;;;;;
+;;;;;
+;;;;;
+;;;;;
+;0880;FrequencyConfig;U16;;Data for 0880
+;0881;RatedFrequency;U16;0,01;Hz
+;0882;FirstOverfrequencyProtectionValue;U16;0,01;Hz
+;0883;FirstOverfrequencyProtectionTime;U16;10;ms
+;0884;SecondOverfrequencyProtectionValue;U16;0,01;Hz
+;0885;SecondOverfrequencyProtectionTime;U16;10;ms
+;0886;ThirdOverfrequencyProtectionValue;U16;0,01;Hz
+;0887;ThirdOverfrequencyProtectionTime;U16;10;ms
+;0888;FirstUnderfrequencyProtectionValue;U16;0,01;Hz
+;0889;FirstUnderfrequencyProtectionTime;U16;10;ms
+;088A;SecondUnderfrequencyProtectionValue;U16;0,01;Hz
+;088B;SecondUnderfrequencyProtectionTime;U16;10;ms
+;088C;ThirdUnderfrequencyProtectionValue;U16;0,01;Hz
+;088D;ThirdUnderfrequencyProtectionTime;U16;10;ms
+;088E;FirstOverfrequencyProtectionTimeHi;U16;;Data for 088E
+;088F;SecondOverfrequencyProtectionTimeHi;U16;;Data for 088F
+;0890;ThirdOverfrequencyProtectionTimeHi;U16;;Data for 0890
+;0891;FirstUnderfrequencyProtectionTimeHi;U16;;Data for 0891
+;0892;SecondUnderfrequencyProtectionTimeHi;U16;;Data for 0892
+;0893;ThirdUnderfrequencyProtectionTimeHi;U16;;Data for 0893
+;;;;;
+;;;;;
+;;;;;
+;;;;;
+;08C0;DCI Config;U16;;Data for 08C0
+;08C1;DCIFirstProtectionValue;U16;1;mA
+;08C2;DCIFirstProtectionTime;U16;10;ms
+;08C3;DCISecondProtectionValue;U16;1;mA
+;08C4;DCISecondProtectionTime;U16;10;ms
+;08C5;DCIThirdProtectionValue;U16;1;mA
+;08C6;DCIThirdProtectionTime;U16;10;ms
+;08C7;DCITestValue1;I16;1;mA
+;08C8;DCITestValue2;I16;1;mA
+;08C9;DCITestValue3;I16;1;mA
+;08CA;DCIFirstProtectionProportion;U16;0,01;%
+;08CB;DCISecondProtectionProportion;U16;0,01;%
+;08CC;DCIThirdProtectionProportion;U16;0,01;%
+;;;;;
+;;;;;
+;;;;;
+;;;;;
+;0900;"Remote Config
+";U16;;Data for 0900
+;0901;ActiveOutputLimit;U16;0,1;%
+;0902;ActiveOutputDownSpeed;U16;1;%Pn/min
+;0903;GridVoltageDropStart;U16;0,1;V
+;0904;GridVoltageDropStop;U16;0,1;V
+;0905;GridVoltageDropMinPower;I16;1;%
+;0906;OvervoltageDownSpeed;U16;1;%Pn/min
+;0907;ChgDerateVoltStart;U16;0,1;V
+;0908;ChgDerateVoltEnd;U16;0,1;V
+;0909;ChgDerateMinPower;I16;1;%
+;090A____0911;PowerForLogic1 -- 8;I16;1;%
+;0912;RefluxPower;U16;1;%
+;0913;RefluxOVloadTime;U16;10;ms
+;0914;LogicDerateSpeed;U16;1;%Pn/min
+;0915;LogicReloadSpeed;U16;1;%Pn/min
+;0916;VoltageDerateResponseTime;U16;1;秒
+;0917;PowerDownSpeed;U16;1;%Pn/min
+;;;;;
+;;;;;
+;;;;;
+;;;;;
+;0940;FrequencyDerateConfig;U16;;Data for 0940
+;0941;OverfrequencyStart;U16;0,01;Hz
+;0942;OverfrequencyEnd;U16;0,01;Hz
+;0943;OverfrequencySlope;U16;1;%Pn/Hz
+;0944;OverfrequencyResponseDelay;U16;10;ms
+;0945;OverfrequencyReloadDelay;U16;10;ms
+;0946;OverfrequencyReloadStart;U16;0,01;Hz
+;0947;OverfrequencyReloadSpeed;U16;1;%Pn/min
+;0948;UnderfrequencyStart;U16;0,01;Hz
+;0949;UnderfrequencyEnd;U16;0,01;Hz
+;094A;UnderfrequencySlope;U16;1;%Pn/Hz
+;094B;UnderfrequencyResponseDelay;U16;10;ms
+;094C;UnderfrequencyReloadDelay;U16;10;ms
+;094D;UnderfrequencyReloadStart;U16;0,01;Hz
+;094E;UnderfrequencyReloadSpeed;U16;1;%Pn/min
+;094F;FrequencyRecoverMax;U16;0,01;Hz
+;0950;FrequencyRecoverMin;U16;0,01;Hz
+;0951;ESSOverFrequencyStart;U16;0,01;Hz
+;0952;ESSOverfrequencyEnd;U16;0,01;Hz
+;0953;ESSOverFrequencySlope;U16;1;%Pn/Hz
+;0954;ESSOverFrequencyResponseDelay;U16;10;ms
+;0955;ESSOverFrequencyReloadDelay;U16;10;ms
+;0956;ESSOverfrequencyReloadStart;U16;0,01;Hz
+;0957;ESSOverFrequencyReloadSpeed;U16;1;%Pn/min
+;0958;ESSUnderFrequencyStart;U16;0,01;Hz
+;0959;ESSUnderfrequencyEnd;U16;0,01;Hz
+;095A;ESSUnderFrequencySlope;U16;1;%Pn/Hz
+;095B;ESSUnderFrequencyResponseDelay;U16;10;ms
+;095C;ESSUnderFrequencyReloadDelay;U16;10;ms
+;095D;ESSUnderfrequencyReloadStart;U16;0,01;Hz
+;095E;ESSUnderFrequencyReloadSpeed;U16;1;%Pn/min
+;095F;ESSFrequencyRecoverMax;U16;0,01;Hz
+;0960;ESSFrequencyRecoverMin;U16;0,01;Hz
+;0961;ESSOverFrequencyTransition;U16;0,01;Hz
+;0962;ESSUnderFrequencyTransition;U16;0,01;Hz
+;;;;;
+;;;;;
+;;;;;
+;;;;;
+;0980;ReactiveConfig;U16;;Data for 0980
+;0981;PowerFactor;I16;0,0001;Data for 0981
+;0982;FixedReactivePercentage;I16;0,01;%
+;0983;ReactiveCos1;I16;0,0001;Data for 0983
+;0984;ReactivedynamicValue1;I16;1;%
+;0985;ReactiveCos2;I16;0,0001;Data for 0985
+;0986;ReactivedynamicValue2;I16;1;%
+;0987;ReactiveCos3;I16;0,0001;Data for 0987
+;0988;ReactivedynamicValue3;I16;1;%
+;0989;ReactiveCos4;I16;0,0001;Data for 0989
+;098A;ReactivedynamicValue4;I16;1;%
+;098B;LockinV;U16;1;%
+;098C;LockoutV;U16;1;%
+;098D;HighVoltStartValue4;U16;1;%
+;098E;HighVoltEndValue4;U16;1;%
+;098F;LowVoltStartValue4;U16;1;%
+;0990;LowVoltEndValue4;U16;1;%
+;0991;LockinPower4;U16;1;%
+;0992;LockoutPower4;U16;1;%
+;0993;MaxLeadingReactivePower4;U16;0,01;%Pn
+;0994;ReactiveResponseWaitTime4;U16;10;ms
+;0995;ReactivePowerOffset4;I16;0,01;%Qmax
+;0996;ReactivePowerStart4;U16;0,01;%Pn
+;0997;HighVoltStartValue5;U16;1;%
+;0998;HighVoltEndValue5;U16;1;%
+;0999;LowVoltStartValue5;U16;1;%
+;099A;LowVoltEndValue5;U16;1;%
+;099B;LockinPower5;U16;1;%
+;099C;LockoutPower5;U16;1;%
+;099D;MaxReactivePower5;U16;0,01;%
+;099E;ReactiveResponseWaitTime5;U16;10;ms
+;099F;PhaseType;U16;;Data for 099F
+;09A0;ReactiveResponsePeriod;U16;1;秒
+;09A1;MaxLaggingReactivePower4;U16;0,01;%Pn
+;;;;;
+;;;;;
+;;;;;
+;;;;;
+;09C0;VRTConfig;U16;;Data for 09C0
+;09C1;LvrtInVolt;U16;1;%
+;09C2;LvrtFirstPointVolt;U16;1;%
+;09C3;LvrtFirstPointTime;U16;1;ms
+;09C4;LvrtSecondPointVolt;U16;1;%
+;09C5;LvrtSecondPointTime;U16;1;ms
+;09C6;LvrtThirdPointVolt;U16;1;%
+;09C7;LvrtThirdPointTime;U16;1;ms
+;09C8;LvrtFourthPointVolt;U16;1;%
+;09C9;LvrtFourthPointTime;U16;1;ms
+;09CA;LvrtReactiveCurrentCoefficientK;U16;0,1;p.u.
+;09CB;LvrtWaitingTimeAfterVoltageRecovery;U16;1;ms
+;09CC;LvrtPowerBackRate;U16;1;%Pn/min
+;09CD;OvrtInVlot;U16;1;%
+;09CE;OvrtFirstPointVolt;U16;1;%
+;09CF;OvrtFirstPointTime;U16;10;ms
+;09D0;OvrtSecondPointVolt;U16;1;%
+;09D1;OvrtSecondPointTime;U16;10;ms
+;09D2;OvrtThirdPointVolt;U16;1;%
+;09D3;OvrtThirdPointTime;U16;10;ms
+;09D4;OvrtFourthPointVolt;U16;1;%
+;09D5;OvrtFourthPointTime;U16;10;ms
+;09D6;OvrtReactiveCurrentCoefficientK;U16;0,1;p.u.
+;09D7;OvrtWaitingTimeAfterVoltageRecovery;U16;1;ms
+;09D8;OvrtPowerBackRate;U16;1;%Pn/min
+;09D9;ZeroCurrentModeInLowVolt;U16;1;%
+;09DA;ZeroCurrentModeInHighVolt;U16;1;%
+;09DB;LvrtOutVolt;U16;1;%
+;09DC;LvrtIqVoltStart;U16;1;%
+;09DD;OvrtOutVolt;U16;1;%
+;09DE;OvrtIqVoltStart;U16;1;%
+;09DF;MaxUnbalanceIqPct;U16;1;%
+;09E0____09FF;;;;Data for 09E0____09FF
+;;;;;
+;;;;;
+;;;;;
+;;;;;
+;0A00;IslandConfig;U16;;Data for 0A00
+;0A01;GFCIConfig;U16;;Data for 0A01
+;0A02;ISOConfig;U16;;Data for 0A02
+;0A03;InsulationProtectionValue;U16;1;kΩ
+;0A04;IsoLeakageCurrentLimit;U16;1;mA
+;0A05;GFCILimit;U16;1;mA/kVA
+;0A06;PE_N_Config;U16;;Data for 0A06
+;0A07;IslandDetectSensitivity;U16;;Data for 0A07
+;0A08;PEProtectionValue;U16;1;kΩ
+;0A09____0A3F;;;;Data for 0A09____0A3F
+;;;;;
+;;;;;
+;;;;;
+;;;;;
+;0A40____0A7F;;;;Data for 0A40____0A7F
+;;;;;
+;;;;;
+;;;;;
+;;;;;
+;;;;;
+;1000____1003;AddressMask_Config_Basic1;U64;;Data for 1000____1003
 "System Time
-2-2";"1004";"SysTimeConfig_Year";"U16";;"年"
-;"1005";"SysTimeConfig_Month";"U16";;"月"
-;"1006";"SysTimeConfig_Date";"U16";;"日"
-;"1007";"SysTimeConfig_Hour";"U16";;"时"
-;"1008";"SysTimeConfig_Minute";"U16";;"分"
-;"1009";"SysTimeConfig_Second";"U16";;"秒"
-;"100A";"SysTimeConfig_Control";"U16";;
-"RS485 parameter setting";"100B";"RS485Config_Address";"U16";;
-;"100C";"RS485Config_Baud";"U16";;
-;"100D";"RS485Config_StopBit";"U16";;
-;"100E";"RS485Config_ParityBit";"U16";;
-;"100F";"RS485Config_Control";"U16";;
-"PV input mode setting";"1010";"PV_InputMode_Config";"U16";;
-;"1011 -- 1020";"InputType_Channel0_Config -- 
-InputType_Channel15_Config";"U16";;
-;"1021";"InputType_Control";"U16";;
-"Safety parameters from USB stick";"1022";"SafetyUpdateFromUSB_Control";"U16";;
-"Backflow prevention";"1023";"AntiReflux_Control";"U16";;
-;"1024";"AntiReflux_Power";"U16";100;"W"
-"IV curve scan settings";"1025";"IVCurveScan_Control";"U16";;
-;"1026";"IVCurveScan_Period";"U16";1;"分钟"
-;"1027";"IVCurveScan_Oneshot";"U16";;
-;"1028";"IVCurveScan_ReadChannel";"U16";;
-"Emergency power supply";"1029";"EPS_Control";"U16";;
-;"102A";"EPS_WaitTime";"U16";1;"秒"
-"Battery activation";"102B";"BatteryActive_Control";"U16";;
-;"102C";"BatteryActive_Oneshot";"U16";;
-"CT Auto Calibration";"102D";"CT_Auto_Calibrate";"U16";;
-"Italy Auto Test";"102E";"Italy_AutoTest";"U16";;
-;"102F";;;;
-"Electrical energy statistics return";"1030";"EnergyStatistics_Date_Year";"U16";1;"年"
-;"1031";"EnergyStatistics_Date_Month";"U16";1;"月"
-;"1032";"EnergyStatistics_Date_Date";"U16";1;"日"
-;"1033";"EnergyStatistics_Config";"U16";;
-"Languages";"1034";"Language";"U16";;
-"Parallel control";"1035";"Parallel_Control";"U16";;
-;"1036";"Parallel_Master_Slave";"U16";;
-;"1037";"Parallel_Address";"U16";;
-"3 phase 4 wire mode grid unbalance support control";"1038";"UnbalancedSupport_Control";"U16";;
-"Power multiplier";"1039";"PV_Generation_Ratio";"U16";0,001;"p.u."
-;"103A";"Energy_Purchase_Ratio";"U16";0,001;"p.u."
-;"103B";"Energy_Selling_Ratio";"U16";0,001;"p.u."
-;"103C";"Bat_Charge_Ratio";"U16";0,001;"p.u."
-;"103D";"Bat_Discharge_Ratio";"U16";0,001;"p.u."
-"Logic interface control";"103E";"LogicInterface_Control";"U16";;
-;"103F";;;;
-;"1040 -- 1043";"AddressMask_Config_Basic2";"U64";;
-"Battery configuration";"1044";"BatConfig_ID";"U16";;
-;"1045";"BatConfig_Address";"U16";;
-;"1046";"BatConfig_Potocol";"U16";;
-;"1047";"BatConfig_Voltage_Over";"U16";0,1;"V"
-;"1048";"BatConfig_Voltage_Charge";"U16";0,1;"V"
-;"1049";"BatConfig_Voltage_Lack";"U16";0,1;"V"
-;"104A";"BatConfig_Voltage_Discharge_Stop";"U16";0,1;"V"
-;"104B";"BatConfig_Current_Charge_Limit";"U16";0,01;"A"
-;"104C";"BatConfig_Current_Discharge_Limit";"U16";0,01;"A"
-;"104D";"BatConfig_Depth_of_Discharge";"U16";1;"%"
-;"104E";"BatConfig_End_of_Discharge";"U16";1;"%"
-;"104F";"BatConfig_Capacity";"U16";1;"Ah"
-;"1050";"BatConfig_Voltage_Nominal";"U16";0,1;"V"
-;"1051";"BatConfig_Cell_Type";"U16";1;
-;"1052";"BatConfig_EPS_Buffer";"U16";1;"%"
-;"1053";"BatConfig_Control";"U16";;
-;"1054";"BatConfig_Address2";"U16";;
-;"1055";"BatConfig_Address3";"U16";;
-;"1056";"BatConfig_Address4";"U16";;
-;"1057";"BatConfig_TEMPCO";"I16";0,1;"mV/Cell"
-;"1058";"BatConfig_Voltage_Recovery_Buffer";"U16";0,1;"V"
-;"1059";"BatConfig_Control_Bits";"U16";;
-;"105A";"BatConfig_Voltage_Float";"U16";0,1;"V"
-;"105B -- 105F";;;;
-"PCC power harvesting equipment configuration";"1060";"PCCSampleMode";"U16";;
-"Resonance detection sensitivity";"1061";"Resonance_Sensitivity";"U16";;
-"CT ratio setting";"1062";"CT_rate";"U16";;
-"Hard backflow prevention switch";"1063";"Hard_Reflux_Config";"U16";;
-"Dry/wet contact control";"1064";"Dry_Contact";"U16";;
-;"1065";"Wet_Contact";"U16";;
-"PV branch circuit";"1066 ";"pv_branch_current_limit";"U16";0,1;"A"
-;"1067 -- 107F";;;;
-;"1080 -- 1083";"AddressMask_Config_Basic3";"U64";;
-"Arc detection parameter configuration";"1084";"ArcingAlarmEnable";"U16";;
-;"1085";"PeakToPeakSet";"U16";1;
-;"1086";"VarianceSet";"U16";1;
-;"1087";"HarmonicEnergySet";"U16";1;
-;"1088";"AmplitudeVarianceSet";"U16";1;
-;"1089";"TimeDomWeiSet";"U16";1;
-;"108A";"FreDomWeiSet";"U16";1;
-;"108B";"ArcDetectSensitivity";"U16";1;
-;"108C";"ArcAlarmShutdownThreshold";"U16";1;
-;"108D";"ArcSelfCheckCommand";"U16";;
-;"108E";"ArcingAlarmClear";"U16";1;
-;"108F";"ArcAlarmCnt";"U16";1;
-;"1090";"AfciResult";"U16";1;
-;"1091";"SelfCheckResult";"U16";;
-;"1092";"SelfCheckState";"U16";;
-;"1093 -- 109F";;;;
-"PLC configuration";"10A0";"PLC_Enable_Setting";"U16";;
-;"10A1";"PLC_Com_Property";"U16";"NULL";"NULL"
-;"10A2 -- 10A4";;;;
-"Bluetooth configuration";"10A5";"BLE_Enable_Setting";"U16";"NULL";"NULL"
-;"10A6";"BLE_Com_Property";"U16";"NULL";"NULL"
-;"10A7 -- 10AF";;;;
-"PID parameter configuration";"10B0";"PID_Auto_running_enable";"U16";;
-;"10B1";"PID_Working_Start_Time";"BCD16";1;"Minute"
-;"10B2";"PID_Working_Hours";"U16";1;"Minute"
-;"10B3";"PID_Working_PV_Threshold";"U16";0,1;"V"
-;"10B4";"PID_Break_Restart_Delay";"U16";1;"Minute"
+2-2";1004;SysTimeConfig_Year;U16;;年
+;1005;SysTimeConfig_Month;U16;;月
+;1006;SysTimeConfig_Date;U16;;日
+;1007;SysTimeConfig_Hour;U16;;时
+;1008;SysTimeConfig_Minute;U16;;分
+;1009;SysTimeConfig_Second;U16;;秒
+;100A;SysTimeConfig_Control;U16;;Data for 100A
+RS485 parameter setting;100B;RS485Config_Address;U16;;Data for 100B
+;100C;RS485Config_Baud;U16;;Data for 100C
+;100D;RS485Config_StopBit;U16;;Data for 100D
+;100E;RS485Config_ParityBit;U16;;Data for 100E
+;100F;RS485Config_Control;U16;;Data for 100F
+PV input mode setting;1010;PV_InputMode_Config;U16;;Data for 1010
+;1011____1020;"InputType_Channel0_Config -- 
+InputType_Channel15_Config";U16;;Data for 1011____1020
+;1021;InputType_Control;U16;;Data for 1021
+Safety parameters from USB stick;1022;SafetyUpdateFromUSB_Control;U16;;Data for 1022
+Backflow prevention;1023;AntiReflux_Control;U16;;Data for 1023
+;1024;AntiReflux_Power;U16;100;W
+IV curve scan settings;1025;IVCurveScan_Control;U16;;Data for 1025
+;1026;IVCurveScan_Period;U16;1;分钟
+;1027;IVCurveScan_Oneshot;U16;;Data for 1027
+;1028;IVCurveScan_ReadChannel;U16;;Data for 1028
+Emergency power supply;1029;EPS_Control;U16;;Data for 1029
+;102A;EPS_WaitTime;U16;1;秒
+Battery activation;102B;BatteryActive_Control;U16;;Data for 102B
+;102C;BatteryActive_Oneshot;U16;;Data for 102C
+CT Auto Calibration;102D;CT_Auto_Calibrate;U16;;Data for 102D
+Italy Auto Test;102E;Italy_AutoTest;U16;;Data for 102E
+;102F;;;;Data for 102F
+Electrical energy statistics return;1030;EnergyStatistics_Date_Year;U16;1;年
+;1031;EnergyStatistics_Date_Month;U16;1;月
+;1032;EnergyStatistics_Date_Date;U16;1;日
+;1033;EnergyStatistics_Config;U16;;Data for 1033
+Languages;1034;Language;U16;;Data for 1034
+Parallel control;1035;Parallel_Control;U16;;Data for 1035
+;1036;Parallel_Master_Slave;U16;;Data for 1036
+;1037;Parallel_Address;U16;;Data for 1037
+3 phase 4 wire mode grid unbalance support control;1038;UnbalancedSupport_Control;U16;;Data for 1038
+Power multiplier;1039;PV_Generation_Ratio;U16;0,001;p.u.
+;103A;Energy_Purchase_Ratio;U16;0,001;p.u.
+;103B;Energy_Selling_Ratio;U16;0,001;p.u.
+;103C;Bat_Charge_Ratio;U16;0,001;p.u.
+;103D;Bat_Discharge_Ratio;U16;0,001;p.u.
+Logic interface control;103E;LogicInterface_Control;U16;;Data for 103E
+;103F;;;;Data for 103F
+;1040____1043;AddressMask_Config_Basic2;U64;;Data for 1040____1043
+Battery configuration;1044;BatConfig_ID;U16;;Data for 1044
+;1045;BatConfig_Address;U16;;Data for 1045
+;1046;BatConfig_Potocol;U16;;Data for 1046
+;1047;BatConfig_Voltage_Over;U16;0,1;V
+;1048;BatConfig_Voltage_Charge;U16;0,1;V
+;1049;BatConfig_Voltage_Lack;U16;0,1;V
+;104A;BatConfig_Voltage_Discharge_Stop;U16;0,1;V
+;104B;BatConfig_Current_Charge_Limit;U16;0,01;A
+;104C;BatConfig_Current_Discharge_Limit;U16;0,01;A
+;104D;BatConfig_Depth_of_Discharge;U16;1;%
+;104E;BatConfig_End_of_Discharge;U16;1;%
+;104F;BatConfig_Capacity;U16;1;Ah
+;1050;BatConfig_Voltage_Nominal;U16;0,1;V
+;1051;BatConfig_Cell_Type;U16;1;Data for 1051
+;1052;BatConfig_EPS_Buffer;U16;1;%
+;1053;BatConfig_Control;U16;;Data for 1053
+;1054;BatConfig_Address2;U16;;Data for 1054
+;1055;BatConfig_Address3;U16;;Data for 1055
+;1056;BatConfig_Address4;U16;;Data for 1056
+;1057;BatConfig_TEMPCO;I16;0,1;mV/Cell
+;1058;BatConfig_Voltage_Recovery_Buffer;U16;0,1;V
+;1059;BatConfig_Control_Bits;U16;;Data for 1059
+;105A;BatConfig_Voltage_Float;U16;0,1;V
+;105B____105F;;;;Data for 105B____105F
+PCC power harvesting equipment configuration;1060;PCCSampleMode;U16;;Data for 1060
+Resonance detection sensitivity;1061;Resonance_Sensitivity;U16;;Data for 1061
+CT ratio setting;1062;CT_rate;U16;;Data for 1062
+Hard backflow prevention switch;1063;Hard_Reflux_Config;U16;;Data for 1063
+Dry/wet contact control;1064;Dry_Contact;U16;;Data for 1064
+;1065;Wet_Contact;U16;;Data for 1065
+PV branch circuit;1066_;pv_branch_current_limit;U16;0,1;A
+;1067____107F;;;;Data for 1067____107F
+;1080____1083;AddressMask_Config_Basic3;U64;;Data for 1080____1083
+Arc detection parameter configuration;1084;ArcingAlarmEnable;U16;;Data for 1084
+;1085;PeakToPeakSet;U16;1;Data for 1085
+;1086;VarianceSet;U16;1;Data for 1086
+;1087;HarmonicEnergySet;U16;1;Data for 1087
+;1088;AmplitudeVarianceSet;U16;1;Data for 1088
+;1089;TimeDomWeiSet;U16;1;Data for 1089
+;108A;FreDomWeiSet;U16;1;Data for 108A
+;108B;ArcDetectSensitivity;U16;1;Data for 108B
+;108C;ArcAlarmShutdownThreshold;U16;1;Data for 108C
+;108D;ArcSelfCheckCommand;U16;;Data for 108D
+;108E;ArcingAlarmClear;U16;1;Data for 108E
+;108F;ArcAlarmCnt;U16;1;Data for 108F
+;1090;AfciResult;U16;1;Data for 1090
+;1091;SelfCheckResult;U16;;Data for 1091
+;1092;SelfCheckState;U16;;Data for 1092
+;1093____109F;;;;Data for 1093____109F
+PLC configuration;10A0;PLC_Enable_Setting;U16;;Data for 10A0
+;10A1;PLC_Com_Property;U16;NULL;NULL
+;10A2____10A4;;;;Data for 10A2____10A4
+Bluetooth configuration;10A5;BLE_Enable_Setting;U16;NULL;NULL
+;10A6;BLE_Com_Property;U16;NULL;NULL
+;10A7____10AF;;;;Data for 10A7____10AF
+PID parameter configuration;10B0;PID_Auto_running_enable;U16;;Data for 10B0
+;10B1;PID_Working_Start_Time;BCD16;1;Minute
+;10B2;PID_Working_Hours;U16;1;Minute
+;10B3;PID_Working_PV_Threshold;U16;0,1;V
+;10B4;PID_Break_Restart_Delay;U16;1;Minute
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"1100 -- 1103";"AddressMask_Config_Remote1";"U64";;
-"Remote switch on/off";"1104";"Remote_On_Off_Control";"U16";;
-"Power control";"1105";"Power_Control";"U16";;
-;"1106";"Active_Power_Export_Limit";"U16";0,1;"%"
-;"1107";"Active_Power_Import_Limit";"U16";0,1;"%"
-;"1108";"Reactive_Power_Setting";"I16";0,1;"%"
-;"1109";"Power_Factor_Setting";"I16";0,01;"p.u."
-;"110A";"Active_Power_Limit_Speed";"U16";1;"%"
-;"110B";"Reactive_Power_Response_Time";"U16";0,1;"second"
-;"110C";"SVG_Fixed_Reactive_Power_Setting";"I16";0,1;"kVar"
-;"110D -- 110F";;;;
-"Energy storage operating mode setting";"1110";"Energy_Storage_Mode_Control";"U16";;
-"Timed charging and discharging";"1111";"Timing_ID";"U16";;
-;"1112";"Timing_On_Off_Control";"U16";;
-;"1113";"Timing_Charge_Start";"U16";"1
+;1100____1103;AddressMask_Config_Remote1;U64;;Data for 1100____1103
+Remote switch on/off;1104;Remote_On_Off_Control;U16;;Data for 1104
+Power control;1105;Power_Control;U16;;Data for 1105
+;1106;Active_Power_Export_Limit;U16;0,1;%
+;1107;Active_Power_Import_Limit;U16;0,1;%
+;1108;Reactive_Power_Setting;I16;0,1;%
+;1109;Power_Factor_Setting;I16;0,01;p.u.
+;110A;Active_Power_Limit_Speed;U16;1;%
+;110B;Reactive_Power_Response_Time;U16;0,1;second
+;110C;SVG_Fixed_Reactive_Power_Setting;I16;0,1;kVar
+;110D____110F;;;;Data for 110D____110F
+Energy storage operating mode setting;1110;Energy_Storage_Mode_Control;U16;;Data for 1110
+Timed charging and discharging;1111;Timing_ID;U16;;Data for 1111
+;1112;Timing_On_Off_Control;U16;;Data for 1112
+;1113;Timing_Charge_Start;U16;"1
 1";"小时
 分钟"
-;"1114";"Timing_Charge_End";"U16";"1
+;1114;Timing_Charge_End;U16;"1
 1";"小时
 分钟"
-;"1115";"Timing_Discharge_Start";"U16";"1
+;1115;Timing_Discharge_Start;U16;"1
 1";"小时
 分钟"
-;"1116";"Timing_Discharge_End";"U16";"1
+;1116;Timing_Discharge_End;U16;"1
 1";"小时
 分钟"
-;"1117";"Timing_Power_Charge";"U32";1;"W"
-;"1118";;;;
-;"1119";"Timing_Power_Discharge";"U32";1;"W"
-;"111A";;;;
-;"111B -- 111E";"Timing_Rsvd1 -- 4";;;
-;"111F";"Timing_Control";"U16";;
-"Time share tariff";"1120";"TOU_ID";"U16";;
-;"1121";"TOU_On_Off_Control";"U16";;
-;"1122";"TOU_Charge_Start";"U16";"1
+;1117;Timing_Power_Charge;U32;1;W
+;1118;;;;Data for 1118
+;1119;Timing_Power_Discharge;U32;1;W
+;111A;;;;Data for 111A
+;111B____111E;Timing_Rsvd1 -- 4;;;Data for 111B____111E
+;111F;Timing_Control;U16;;Data for 111F
+Time share tariff;1120;TOU_ID;U16;;Data for 1120
+;1121;TOU_On_Off_Control;U16;;Data for 1121
+;1122;TOU_Charge_Start;U16;"1
 1";"小时
 分钟"
-;"1123";"TOU_Charge_End";"U16";"1
+;1123;TOU_Charge_End;U16;"1
 1";"小时
 分钟"
-;"1124";"TOU_Charge_Target_SOC";"U16";1;"%"
-;"1125";"TOU_Charge_Power";"U32";1;"W"
-;"1126";;;;
-;"1127";"TOU_Executed_Date_Start";"U16";"1
+;1124;TOU_Charge_Target_SOC;U16;1;%
+;1125;TOU_Charge_Power;U32;1;W
+;1126;;;;Data for 1126
+;1127;TOU_Executed_Date_Start;U16;"1
 1";"月
 日"
-;"1128";"TOU_Executed_Date_End";"U16";"1
+;1128;TOU_Executed_Date_End;U16;"1
 1";"月
 日"
-;"1129";"TOU_Executed_Day_of_Week";"U16";;
-;"112A -- 112E";"TOU_Rsvd1 -- 5";;;
-;"112F";"TOU_Control";"U16";;
-"Peak-shaving mode";"1130 -- 1131";"Peak_Shaving_Discharge_Threshold";"U32";1;"W"
-;"1132 -- 1133";"Peak_Shaving_Charge_Threshold";"U32";1;"W"
-;"1134 -- 113F";;;;
-;"1140 -- 1143";"AddressMask_Config_Remote2";"U64";;
-"Off-grid mode";"1144";"Off_Grid_Charge_Source";"U16";;
-;"1145";"Off_Grid_Grid_Power";"U16";0,01;"kW"
-;"1146";"Off_Grid_DG_Power";"U16";0,01;"kW"
-;"1147 -- 117F";;;;
-;"1180 -- 1183";"AddressMask_Config_Remote3";"U64";;
-"Passive mode";"1184";"Passive_Timeout";"U16";1;"秒"
-;"1185";"Passive_Timeout_Action";"U16";;
-;"1186";"Passive_Rsvd1";;;
-"Manual mode";"1187 ";"Passive_Manual_Gdes";"I32";1;"W"
-;"1188";;;;
-;"1189";"Passive_Manual_Blo";"I32";1;"W"
-;"118A";;;;
-;"118B";"Passive_Manual_Bup";"I32";1;"W"
-;"118C";;;;
-;"118D";"Passive_Manual_Gdzup";"I32";1;"W"
-;"118E";;;;
-;"118F";"Passive_Manual_Gdzlo";"I32";1;"W"
-;"1190";;;;
-"Scheduler mode";"1191";"Passive_Scheduler_Gdes_Ante";"I32";1;"W"
-;"1192";;;;
-;"1193";"Passive_Scheduler_Blo_Ante";"I32";1;"W"
-;"1194";;;;
-;"1195";"Passive_Scheduler_Bup_Ante";"I32";1;"W"
-;"1196";;;;
-;"1197";"Passive_Scheduler_Gdzup_Ante";"I32";1;"W"
-;"1198";;;;
-;"1199";"Passive_Scheduler_Gdzlo_Ante";"I32";1;"W"
-;"119A";;;;
-;"119B";"Passive_Scheduler_Gdes_Post";"I32";1;"W"
-;"119C";;;;
-;"119D";"Passive_Scheduler_Blo_Post";"I32";1;"W"
-;"119E";;;;
-;"119F";"Passive_Scheduler_Bup_Post";"I32";1;"W"
-;"11A0";;;;
-;"11A1";"Passive_Scheduler_Gdzup_Post";"I32";1;"W"
-;"11A2";;;;
-;"11A3";"Passive_Scheduler_Gdzlo_Post";"I32";1;"W"
-;"11A4";;;;
-;"11A5";"Passive_Scheduler_StartTime";"U32";1;"秒"
-;"11A6";;;;
-;"11A7";"Passive_Scheduler_DurationTime";"U32";1;"秒"
-;"11A8";;;;
-;"11A9";"Passive_Scheduler_ManagementMode";"U16";;
-;"11AA -- 11BF";;;;
-;"11C0 -- 11C3";"AddressMask_Config_Remote4";"U64";;
-"Power station communication interruption protection";"11C4";"CommBreak_Protect_Enable";"U16";1;
-;"11C5";"CommBreak_Recovery_Mode";"U16";1;
-;"11C6";"CommBreak_Threshold_Time";"U16";1;"min"
-;"11C7";"CommBreak_Mode_Judge";"U16";1;
-;"11C8";"CommBreak_Alarm_Clear";"U16";1;
+;1129;TOU_Executed_Day_of_Week;U16;;Data for 1129
+;112A____112E;TOU_Rsvd1 -- 5;;;Data for 112A____112E
+;112F;TOU_Control;U16;;Data for 112F
+Peak-shaving mode;1130____1131;Peak_Shaving_Discharge_Threshold;U32;1;W
+;1132____1133;Peak_Shaving_Charge_Threshold;U32;1;W
+;1134____113F;;;;Data for 1134____113F
+;1140____1143;AddressMask_Config_Remote2;U64;;Data for 1140____1143
+Off-grid mode;1144;Off_Grid_Charge_Source;U16;;Data for 1144
+;1145;Off_Grid_Grid_Power;U16;0,01;kW
+;1146;Off_Grid_DG_Power;U16;0,01;kW
+;1147____117F;;;;Data for 1147____117F
+;1180____1183;AddressMask_Config_Remote3;U64;;Data for 1180____1183
+Passive mode;1184;Passive_Timeout;U16;1;秒
+;1185;Passive_Timeout_Action;U16;;Data for 1185
+;1186;Passive_Rsvd1;;;Data for 1186
+Manual mode;1187_;Passive_Manual_Gdes;I32;1;W
+;1188;;;;Data for 1188
+;1189;Passive_Manual_Blo;I32;1;W
+;118A;;;;Data for 118A
+;118B;Passive_Manual_Bup;I32;1;W
+;118C;;;;Data for 118C
+;118D;Passive_Manual_Gdzup;I32;1;W
+;118E;;;;Data for 118E
+;118F;Passive_Manual_Gdzlo;I32;1;W
+;1190;;;;Data for 1190
+Scheduler mode;1191;Passive_Scheduler_Gdes_Ante;I32;1;W
+;1192;;;;Data for 1192
+;1193;Passive_Scheduler_Blo_Ante;I32;1;W
+;1194;;;;Data for 1194
+;1195;Passive_Scheduler_Bup_Ante;I32;1;W
+;1196;;;;Data for 1196
+;1197;Passive_Scheduler_Gdzup_Ante;I32;1;W
+;1198;;;;Data for 1198
+;1199;Passive_Scheduler_Gdzlo_Ante;I32;1;W
+;119A;;;;Data for 119A
+;119B;Passive_Scheduler_Gdes_Post;I32;1;W
+;119C;;;;Data for 119C
+;119D;Passive_Scheduler_Blo_Post;I32;1;W
+;119E;;;;Data for 119E
+;119F;Passive_Scheduler_Bup_Post;I32;1;W
+;11A0;;;;Data for 11A0
+;11A1;Passive_Scheduler_Gdzup_Post;I32;1;W
+;11A2;;;;Data for 11A2
+;11A3;Passive_Scheduler_Gdzlo_Post;I32;1;W
+;11A4;;;;Data for 11A4
+;11A5;Passive_Scheduler_StartTime;U32;1;秒
+;11A6;;;;Data for 11A6
+;11A7;Passive_Scheduler_DurationTime;U32;1;秒
+;11A8;;;;Data for 11A8
+;11A9;Passive_Scheduler_ManagementMode;U16;;Data for 11A9
+;11AA____11BF;;;;Data for 11AA____11BF
+;11C0____11C3;AddressMask_Config_Remote4;U64;;Data for 11C0____11C3
+Power station communication interruption protection;11C4;CommBreak_Protect_Enable;U16;1;Data for 11C4
+;11C5;CommBreak_Recovery_Mode;U16;1;Data for 11C5
+;11C6;CommBreak_Threshold_Time;U16;1;min
+;11C7;CommBreak_Mode_Judge;U16;1;Data for 11C7
+;11C8;CommBreak_Alarm_Clear;U16;1;Data for 11C8
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"1300 -- 1303";"AddressMask_Config_ReadOnly_Result1";"U64";;
-"Automatic testing in Italy";"1304";"Italay_Autotest_Result1";"U16";0,1;"V"
-;"1305";"Italay_Autotest_Result2";"U16";1;"ms"
-;"1306";"Italay_Autotest_Result3";"U16";0,1;"V"
-;"1307";"Italay_Autotest_Result4";"U16";1;"ms"
-;"1308";"Italay_Autotest_Result5";"U16";0,1;"V"
-;"1309";"Italay_Autotest_Result6";"U16";1;"ms"
-;"130A";"Italay_Autotest_Result7";"U16";0,1;"V"
-;"130B";"Italay_Autotest_Result8";"U16";1;"ms"
-;"130C";"Italay_Autotest_Result9";"U16";0,1;"V"
-;"130D";"Italay_Autotest_Result10";"U16";1;"ms"
-;"130E";"Italay_Autotest_Result11";"U16";0,1;"V"
-;"130F";"Italay_Autotest_Result12";"U16";1;"ms"
-;"1310";"Italay_Autotest_Result13";"U16";0,1;"V"
-;"1311";"Italay_Autotest_Result14";"U16";1;"ms"
-;"1312";"Italay_Autotest_Result15";"U16";0,1;"V"
-;"1313";"Italay_Autotest_Result16";"U16";1;"ms"
-;"1314";"Italay_Autotest_Result17";"U16";0,01;"Hz"
-;"1315";"Italay_Autotest_Result18";"U16";1;"ms"
-;"1316";"Italay_Autotest_Result19";"U16";0,01;"Hz"
-;"1317";"Italay_Autotest_Result20";"U16";1;"ms"
-;"1318";"Italay_Autotest_Result21";"U16";0,01;"Hz"
-;"1319";"Italay_Autotest_Result22";"U16";1;"ms"
-;"131A";"Italay_Autotest_Result23";"U16";0,01;"Hz"
-;"131B";"Italay_Autotest_Result24";"U16";1;"ms"
-;"131C";"Italay_Autotest_Result25";"U16";0,01;"Hz"
-;"131D";"Italay_Autotest_Result26";"U16";1;"ms"
-;"131E";"Italay_Autotest_Result27";"U16";0,01;"Hz"
-;"131F";"Italay_Autotest_Result28";"U16";1;"ms"
-;"1320";"Italay_Autotest_Result29";"U16";0,01;"Hz"
-;"1321";"Italay_Autotest_Result30";"U16";1;"ms"
-;"1322";"Italay_Autotest_Result31";"U16";0,01;"Hz"
-;"1323";"Italay_Autotest_Result32";"U16";1;"ms"
-;"1324 -- 1333";"Italay_Autotest_Result33 -- 48";;;
-;"1334-133F";;;;
-;"1340 -- 1343";"AddressMask_Config_ReadOnly_Result2";"U64";;
-"IV curve scanning";"1344 -- 137E";"IVCurve_Voltage1 -- 30";"U16";0,1;"V"
-;"1345 -- 137F";"IVCurve_Current1 -- 30";"U16";0,01;"A"
-;"1380 -- 1383";"AddressMask_Config_ReadOnly_Result3";"U64";;
-"IV curve scanning";"1384 -- 13BE";"IVCurve_Voltage31 -- 60";"U16";0,1;"V"
-;"1385 -- 13BF";"IVCurve_Current31 -- 60 ";"U16";0,01;"A"
-;"13C0 -- 13C3";"AddressMask_Config_ReadOnly_Result4";"U64";;
-"IV curve scan";"13C4 -- 13FE ";"IVCurve_Voltage61 -- 90";"U16";0,1;"V"
-;"13C5 -- 13FF";"IVCurve_Current61 -- 90";"U16";0,01;"A"
-;"1400 --1403";"AddressMask_Config_ReadOnly_Result5";"U64";;
-"IV curve scan";"1404 -- 143E";"IVCurve_Voltage91 -- 120";"U16";0,1;"V"
-;"1405 -- 143F";"IVCurve_Current91 -- 120";"U16";0,01;"A"
-;"1440 -- 1443";"AddressMask_Config_ReadOnly_Result6";"U64";;
-"IV curve scan";"1444 -- 147E";"IVCurve_Voltage121 -- 150";"U16";0,1;"V"
-;"1445 -- 147F";"IVCurve_Current121 -- 150";"U16";0,01;"A"
-"Historical events";"1480 -- 160C";"HistoryEventList_ID1 -- 100";"U16";;
-;"1481 -- 160D";"HistoryEventList_yM1 -- 100";"U16";;
-;"1482 -- 160E";"HistoryEventList_dH1 -- 100";"U16";;
-;"1483 -- 160F";"HistoryEventList_ms1 -- 100";"U16";;
-"Historical electricity";"1610 -- 165E";"EnergyStatistics1 -- 40";"U32";0,01;"kWh"
-;"1611 -- 165F";;;;
+;1300____1303;AddressMask_Config_ReadOnly_Result1;U64;;Data for 1300____1303
+Automatic testing in Italy;1304;Italay_Autotest_Result1;U16;0,1;V
+;1305;Italay_Autotest_Result2;U16;1;ms
+;1306;Italay_Autotest_Result3;U16;0,1;V
+;1307;Italay_Autotest_Result4;U16;1;ms
+;1308;Italay_Autotest_Result5;U16;0,1;V
+;1309;Italay_Autotest_Result6;U16;1;ms
+;130A;Italay_Autotest_Result7;U16;0,1;V
+;130B;Italay_Autotest_Result8;U16;1;ms
+;130C;Italay_Autotest_Result9;U16;0,1;V
+;130D;Italay_Autotest_Result10;U16;1;ms
+;130E;Italay_Autotest_Result11;U16;0,1;V
+;130F;Italay_Autotest_Result12;U16;1;ms
+;1310;Italay_Autotest_Result13;U16;0,1;V
+;1311;Italay_Autotest_Result14;U16;1;ms
+;1312;Italay_Autotest_Result15;U16;0,1;V
+;1313;Italay_Autotest_Result16;U16;1;ms
+;1314;Italay_Autotest_Result17;U16;0,01;Hz
+;1315;Italay_Autotest_Result18;U16;1;ms
+;1316;Italay_Autotest_Result19;U16;0,01;Hz
+;1317;Italay_Autotest_Result20;U16;1;ms
+;1318;Italay_Autotest_Result21;U16;0,01;Hz
+;1319;Italay_Autotest_Result22;U16;1;ms
+;131A;Italay_Autotest_Result23;U16;0,01;Hz
+;131B;Italay_Autotest_Result24;U16;1;ms
+;131C;Italay_Autotest_Result25;U16;0,01;Hz
+;131D;Italay_Autotest_Result26;U16;1;ms
+;131E;Italay_Autotest_Result27;U16;0,01;Hz
+;131F;Italay_Autotest_Result28;U16;1;ms
+;1320;Italay_Autotest_Result29;U16;0,01;Hz
+;1321;Italay_Autotest_Result30;U16;1;ms
+;1322;Italay_Autotest_Result31;U16;0,01;Hz
+;1323;Italay_Autotest_Result32;U16;1;ms
+;1324____1333;Italay_Autotest_Result33 -- 48;;;Data for 1324____1333
+;1334_133F;;;;Data for 1334_133F
+;1340____1343;AddressMask_Config_ReadOnly_Result2;U64;;Data for 1340____1343
+IV curve scanning;1344____137E;IVCurve_Voltage1 -- 30;U16;0,1;V
+;1345____137F;IVCurve_Current1 -- 30;U16;0,01;A
+;1380____1383;AddressMask_Config_ReadOnly_Result3;U64;;Data for 1380____1383
+IV curve scanning;1384____13BE;IVCurve_Voltage31 -- 60;U16;0,1;V
+;1385____13BF;IVCurve_Current31 -- 60 ;U16;0,01;A
+;13C0____13C3;AddressMask_Config_ReadOnly_Result4;U64;;Data for 13C0____13C3
+IV curve scan;13C4____13FE_;IVCurve_Voltage61 -- 90;U16;0,1;V
+;13C5____13FF;IVCurve_Current61 -- 90;U16;0,01;A
+;1400___1403;AddressMask_Config_ReadOnly_Result5;U64;;Data for 1400___1403
+IV curve scan;1404____143E;IVCurve_Voltage91 -- 120;U16;0,1;V
+;1405____143F;IVCurve_Current91 -- 120;U16;0,01;A
+;1440____1443;AddressMask_Config_ReadOnly_Result6;U64;;Data for 1440____1443
+IV curve scan;1444____147E;IVCurve_Voltage121 -- 150;U16;0,1;V
+;1445____147F;IVCurve_Current121 -- 150;U16;0,01;A
+Historical events;1480____160C;HistoryEventList_ID1 -- 100;U16;;Data for 1480____160C
+;1481____160D;HistoryEventList_yM1 -- 100;U16;;Data for 1481____160D
+;1482____160E;HistoryEventList_dH1 -- 100;U16;;Data for 1482____160E
+;1483____160F;HistoryEventList_ms1 -- 100;U16;;Data for 1483____160F
+Historical electricity;1610____165E;EnergyStatistics1 -- 40;U32;0,01;kWh
+;1611____165F;;;;Data for 1611____165F
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"2000 -- 2003";"AddressMask_Config_Core1";"U64";;
-"Safety countries";"2004";"Country_Code";"U16";;
-"Safety version";"2005";"Safety_Version";"U16";;
-"Restore factory settings";"2006";"Factory_Reset";"U16";;
-"Safety country name";"2007 -- 200B";"Safety_Name1 -- 5";"ASCII";;
-;"200C";;;;
-"Pair up communication protocol settings";"200D";"Commu_protocol_type";"U16";;
-"Safety compliance package setup";"200E";"Country_Code_flash";"U16";;
-;"200F";"Safety_Version_flash";"U16";;
-;"2010 -- 2033";;;;
+;2000____2003;AddressMask_Config_Core1;U64;;Data for 2000____2003
+Safety countries;2004;Country_Code;U16;;Data for 2004
+Safety version;2005;Safety_Version;U16;;Data for 2005
+Restore factory settings;2006;Factory_Reset;U16;;Data for 2006
+Safety country name;2007____200B;Safety_Name1 -- 5;ASCII;;Data for 2007____200B
+;200C;;;;Data for 200C
+Pair up communication protocol settings;200D;Commu_protocol_type;U16;;Data for 200D
+Safety compliance package setup;200E;Country_Code_flash;U16;;Data for 200E
+;200F;Safety_Version_flash;U16;;Data for 200F
+;2010____2033;;;;Data for 2010____2033
 "Local and remote
-Firmware Upgrade Control";"2034";"Remote_Download_Control_ex";"U16";;
-;"2035";"Remote_Upgrade_Control_ex";"U16";;
-;"2036";"Local_Upgrade_Control_ex";"U16";;
-;"2037";"Local_Upgrade_Control2";"U16";;
-;"2038";"Local_Upgrade_Status2";"U16";;
-;"2039";"Upgrade_Total";"U16";;
-;"203A";"Upgrade_Result_Table1";"U16";;
-;"203B";"Upgrade_Result_Table2";"U16";;
-;"203C";"Remote_Download_Control";"U16";;
-;"203D";"Remote_Upgrade_Control";"U16";;
-;"203E";"Local_Upgrade_Control";"U16";;
-;"203F";"Local_Upgrade_Status";"U16";;
-;"2040-2045";"Upgrade_Time";"U16";;
-;2046;"Upgrade_Result";"U16";;
-;2047;"Upgrade_Result1";"U16";;
-;2048;"Upgrade_Result_target";"U16";;
+Firmware Upgrade Control";2034;Remote_Download_Control_ex;U16;;Data for 2034
+;2035;Remote_Upgrade_Control_ex;U16;;Data for 2035
+;2036;Local_Upgrade_Control_ex;U16;;Data for 2036
+;2037;Local_Upgrade_Control2;U16;;Data for 2037
+;2038;Local_Upgrade_Status2;U16;;Data for 2038
+;2039;Upgrade_Total;U16;;Data for 2039
+;203A;Upgrade_Result_Table1;U16;;Data for 203A
+;203B;Upgrade_Result_Table2;U16;;Data for 203B
+;203C;Remote_Download_Control;U16;;Data for 203C
+;203D;Remote_Upgrade_Control;U16;;Data for 203D
+;203E;Local_Upgrade_Control;U16;;Data for 203E
+;203F;Local_Upgrade_Status;U16;;Data for 203F
+;2040_2045;Upgrade_Time;U16;;Data for 2040_2045
+;2046;Upgrade_Result;U16;;Data for 2046
+;2047;Upgrade_Result1;U16;;Data for 2047
+;2048;Upgrade_Result_target;U16;;Data for 2048
 ;;;;;
 ;;;;;
 ;;;;;
-;"2100 -- 2103";"AddressMask_Plc_Info";"U64";;
-"Main PLC parameter settings";2104;"PLC_Type";"U16";1;
-;"2105 -- 2113";"PLC_Soft_Ver1 -- 15";"ASCII";1;
-;2114;"PLC_Sta_Net_State";"U16";1;
-;2115;"PLC_Cco_Mac";"U16";1;
-;2116;;"U16";1;
-;2117;;"U16";1;
-;2118;"PLC_Com_Property";"U16";1;
-;2119;"PLC_Mac_Addr";"U16";1;
-;"211A";;"U16";1;
-;"211B";;"U16";1;
-;"211C";"PLC_BandChnl";"U16";1;
-;"211D";"PLC_TxPower";"U16";1;
-;"211E";"PLC_Whitelist_ExeType";"U16";1;
-;"211F";"PLC_WhitelistCount";"U16";1;
-;2120;"PLC_Whitelist_StartAndCount";"U16";1;
-"PLC Whitelist";2121;"PLC_Whitelist0";"U16";1;
-;2122;;"U16";1;
-;2123;;"U16";1;
-;2124;"PLC_Whitelist1";"U16";1;
-;2125;;"U16";1;
-;2126;;"U16";1;
-;2127;"PLC_Whitelist2";"U16";1;
-;2128;;"U16";1;
-;2129;;"U16";1;
-;"212A";"PLC_Whitelist3";"U16";1;
-;"212B";;"U16";1;
-;"212C";;"U16";1;
-;"212D";"PLC_Whitelist4";"U16";1;
-;"212E";;"U16";1;
-;"212F";;"U16";1;
-"PLC Reset";2130;"PLC_Reset";"U16";1;
-;;;;;
-;;;;;
-;;;;;
-;;;;;
-"Versions of the agreement in force";"4E20";"VersionType";"U16";;
+;2100____2103;AddressMask_Plc_Info;U64;;Data for 2100____2103
+Main PLC parameter settings;2104;PLC_Type;U16;1;Data for 2104
+;2105____2113;PLC_Soft_Ver1 -- 15;ASCII;1;Data for 2105____2113
+;2114;PLC_Sta_Net_State;U16;1;Data for 2114
+;2115;PLC_Cco_Mac;U16;1;Data for 2115
+;2116;;U16;1;Data for 2116
+;2117;;U16;1;Data for 2117
+;2118;PLC_Com_Property;U16;1;Data for 2118
+;2119;PLC_Mac_Addr;U16;1;Data for 2119
+;211A;;U16;1;Data for 211A
+;211B;;U16;1;Data for 211B
+;211C;PLC_BandChnl;U16;1;Data for 211C
+;211D;PLC_TxPower;U16;1;Data for 211D
+;211E;PLC_Whitelist_ExeType;U16;1;Data for 211E
+;211F;PLC_WhitelistCount;U16;1;Data for 211F
+;2120;PLC_Whitelist_StartAndCount;U16;1;Data for 2120
+PLC Whitelist;2121;PLC_Whitelist0;U16;1;Data for 2121
+;2122;;U16;1;Data for 2122
+;2123;;U16;1;Data for 2123
+;2124;PLC_Whitelist1;U16;1;Data for 2124
+;2125;;U16;1;Data for 2125
+;2126;;U16;1;Data for 2126
+;2127;PLC_Whitelist2;U16;1;Data for 2127
+;2128;;U16;1;Data for 2128
+;2129;;U16;1;Data for 2129
+;212A;PLC_Whitelist3;U16;1;Data for 212A
+;212B;;U16;1;Data for 212B
+;212C;;U16;1;Data for 212C
+;212D;PLC_Whitelist4;U16;1;Data for 212D
+;212E;;U16;1;Data for 212E
+;212F;;U16;1;Data for 212F
+PLC Reset;2130;PLC_Reset;U16;1;Data for 2130
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"5000 -- 5003";"addressmask_dcdc_sysinfo";"U64";;
-"DCDC Version Number Information";"5004";"dcdc_arm_to_inv_485_ver";"U16";;
-;"5005";"dcdc_dsp_to_inv_can_ver";"U16";;
-;"5006";"dcdc_arm_to_dsp_232_ver";"U16";;
-;"5007";"dcdc_dsp_to_arm_232_ver";"U16";;
-;"5008";"dcdc_arm_to_bms_can_ver";"U16";;
-;"5009";"dcdc_dsp_to_bms_can_ver";"U16";;
-;"500A";"dcdc_module_485_ver";"U16";;
-;"500B -- 500E";"dcdc_arm_app_software_ver0 -- 3";"ASCII";;
-;"500F -- 5010";"dcdc_arm_hardware_ver0 -- 1";"ASCII";;
-;"5011 -- 5014";"dcdc_arm_boot_software_ver0 -- 3";"ASCII";;
-;"5015";"dcdc_arm_core";"ASCII";;
-;"5016 -- 5019";"dcdc_dsp_app_software_ver0 -- 3";"ASCII";;
-;"501A -- 501B";"dcdc_dsp_hardware_ver0 -- 1";"ASCII";;
-;"501C -- 501F";"dcdc_dsp_boot_software_ver0 -- 3";"ASCII";;
-;"5020";"dcdc_dsp_core";"ASCII";;
-;"5021 -- 5024";"dcdc_safety_software_ver0 -- 3";"ASCII";;
-;"5025 -- 5026";"dcdc_safety_hardware_ver0 -- 1";"ASCII";;
-;"5027 -- 5028";"dcdc_safety_library_ver0 -- 1";"U16";;
-"DCDC device SN number";"5029 -- 5032";"dcdc_serial_number0 -- 9";"ASCII";;
-;"5033 -- 5038";"dcdc_serial_number_ravd10 --15";"ASCII";;
-"DCDC basic information and setting parameters1";"5039";"dcdc_pcu_mount_count";"U16";;
-;"503A";"dcdc_bms_mount_count";"U16";;
-;"503B";"dcdc_parallel_count";"U16";;
-;"503C -- 503F";;;;
-;"5040 -- 5043";"addressmask_dcdc_rtinfo";"U64";;
-;"5044";"systime_year";"U16";;
-;"5045";"systime_month";"U16";;
-;"5046";"systime_date";"U16";;
-;"5047";"systime_hour";"U16";;
-;"5048";"systime_minute";"U16";;
-;"5049";"systime_second";"U16";;
-;"504A";"system_state";"U16";;
-;"504B";"remote_on_off";"U16";;
-;"504C";"forced_on_off";"U16";;
-;"504D";"fan_power_limit_percent";"U16";;
-;"504E";"power_level";"U16";;
-;"504F";"mode";"U16";;
-;"5050";"rt_power_control";"U16";;
-;"5051";"active_power_export_limit";"U16";;
-;"5052";"dsp_state";"U16";;
-;"5053";"count_down";"U16";1;"second"
-;"5054";"low_bus_voltage";"U16";0,1;"V"
-;"5055";"low_current";"I16";0,1;"A"
-;"5056";"low_power";"I16";0,01;"kw"
-;"5057";"low_current_total";"I16";0,1;"A"
-;"5058 -- 505D";"branch1_current -- 
-dcdc_branch6_current --";"I16";0,1;"A"
-;"505E -- 5063";"branch1_fly_cap_voltage --
-dcdc_branch6_fly_cap_voltage";"U16";0,1;"V"
-;"5064";"high_bus_voltage";"U16";0,1;"V"
-;"5065";"insulation_impedance";"U16";1;"kΩ"
-;"5066";"inner_temperature";"I16";1;"℃"
-;"5067";"raditor_temperature";"I16";1;"℃"
-;"5068";"safety_recv_success_flag";"U16";;
-;"5069";"power_limit_status";"U16";;
-;"506A -- 5073";"fault1 -- 10";"U16";;
-;"5074 -- 507D";"state1 -- 10";"U16";;
-;"507E -- 507F";;;;
-;"5080 -- 5083";"addressmask_dcdc_paras";"U64";;
-"DCDC communication parameters";"5084";"external_485_addr";"U16";;
-;"5085";"external_485_baudrate";"U16";;
-;"5086";"external_485_stop_bit";"U16";;
-;"5087";"external_485_parity_bit";"U16";;
-;"5088";"inner_485_addr";"U16";;
-;"5089";"inner_485_baudrate";"U16";;
-;"508A";"inner_485_stopbit";"U16";;
-;"508B";"inner_485_paritybit";"U16";;
-;"508C";"arm_can_addr";"U16";;
-;"508D";"dsp_can_addr";"U16";;
-;"508E";"can_buad_rate";"U16";;
-"DCDC basic information and setup parameters2";"508F";"mount_count";"U16";;
-;"5090";"mount_pcu_count";"U16";;
-;"5091";"mount_bms_count";"U16";;
-;"5092";"coding_state";"U16";;
-;"5093 -- 509F";;;;
-"DCDC basic information and setup parameters 3";"50A0";"connect_waittime";"U16";1;"second"
-;"50A1";"rated_voltage";"U16";0,1;"V"
-;"50A2";"rated_freq";"U16";0,01;"Hz"
-;"50A3";"phase_number";"U16";;
-;"50A4";"gfci_limit";"U16";1;"mA"
-;"50A5";"power_up_time";"U16";1;"ms"
-;"50A6";"power_down_time";"U16";1;"ms"
+Versions of the agreement in force;4E20;VersionType;U16;;Data for 4E20
+;;;;;
+;;;;;
+;;;;;
+;;;;;
+;5000____5003;addressmask_dcdc_sysinfo;U64;;Data for 5000____5003
+DCDC Version Number Information;5004;dcdc_arm_to_inv_485_ver;U16;;Data for 5004
+;5005;dcdc_dsp_to_inv_can_ver;U16;;Data for 5005
+;5006;dcdc_arm_to_dsp_232_ver;U16;;Data for 5006
+;5007;dcdc_dsp_to_arm_232_ver;U16;;Data for 5007
+;5008;dcdc_arm_to_bms_can_ver;U16;;Data for 5008
+;5009;dcdc_dsp_to_bms_can_ver;U16;;Data for 5009
+;500A;dcdc_module_485_ver;U16;;Data for 500A
+;500B____500E;dcdc_arm_app_software_ver0 -- 3;ASCII;;Data for 500B____500E
+;500F____5010;dcdc_arm_hardware_ver0 -- 1;ASCII;;Data for 500F____5010
+;5011____5014;dcdc_arm_boot_software_ver0 -- 3;ASCII;;Data for 5011____5014
+;5015;dcdc_arm_core;ASCII;;Data for 5015
+;5016____5019;dcdc_dsp_app_software_ver0 -- 3;ASCII;;Data for 5016____5019
+;501A____501B;dcdc_dsp_hardware_ver0 -- 1;ASCII;;Data for 501A____501B
+;501C____501F;dcdc_dsp_boot_software_ver0 -- 3;ASCII;;Data for 501C____501F
+;5020;dcdc_dsp_core;ASCII;;Data for 5020
+;5021____5024;dcdc_safety_software_ver0 -- 3;ASCII;;Data for 5021____5024
+;5025____5026;dcdc_safety_hardware_ver0 -- 1;ASCII;;Data for 5025____5026
+;5027____5028;dcdc_safety_library_ver0 -- 1;U16;;Data for 5027____5028
+DCDC device SN number;5029____5032;dcdc_serial_number0 -- 9;ASCII;;Data for 5029____5032
+;5033____5038;dcdc_serial_number_ravd10 --15;ASCII;;Data for 5033____5038
+DCDC basic information and setting parameters1;5039;dcdc_pcu_mount_count;U16;;Data for 5039
+;503A;dcdc_bms_mount_count;U16;;Data for 503A
+;503B;dcdc_parallel_count;U16;;Data for 503B
+;503C____503F;;;;Data for 503C____503F
+;5040____5043;addressmask_dcdc_rtinfo;U64;;Data for 5040____5043
+;5044;systime_year;U16;;Data for 5044
+;5045;systime_month;U16;;Data for 5045
+;5046;systime_date;U16;;Data for 5046
+;5047;systime_hour;U16;;Data for 5047
+;5048;systime_minute;U16;;Data for 5048
+;5049;systime_second;U16;;Data for 5049
+;504A;system_state;U16;;Data for 504A
+;504B;remote_on_off;U16;;Data for 504B
+;504C;forced_on_off;U16;;Data for 504C
+;504D;fan_power_limit_percent;U16;;Data for 504D
+;504E;power_level;U16;;Data for 504E
+;504F;mode;U16;;Data for 504F
+;5050;rt_power_control;U16;;Data for 5050
+;5051;active_power_export_limit;U16;;Data for 5051
+;5052;dsp_state;U16;;Data for 5052
+;5053;count_down;U16;1;second
+;5054;low_bus_voltage;U16;0,1;V
+;5055;low_current;I16;0,1;A
+;5056;low_power;I16;0,01;kw
+;5057;low_current_total;I16;0,1;A
+;5058____505D;"branch1_current -- 
+dcdc_branch6_current --";I16;0,1;A
+;505E____5063;"branch1_fly_cap_voltage --
+dcdc_branch6_fly_cap_voltage";U16;0,1;V
+;5064;high_bus_voltage;U16;0,1;V
+;5065;insulation_impedance;U16;1;kΩ
+;5066;inner_temperature;I16;1;℃
+;5067;raditor_temperature;I16;1;℃
+;5068;safety_recv_success_flag;U16;;Data for 5068
+;5069;power_limit_status;U16;;Data for 5069
+;506A____5073;fault1 -- 10;U16;;Data for 506A____5073
+;5074____507D;state1 -- 10;U16;;Data for 5074____507D
+;507E____507F;;;;Data for 507E____507F
+;5080____5083;addressmask_dcdc_paras;U64;;Data for 5080____5083
+DCDC communication parameters;5084;external_485_addr;U16;;Data for 5084
+;5085;external_485_baudrate;U16;;Data for 5085
+;5086;external_485_stop_bit;U16;;Data for 5086
+;5087;external_485_parity_bit;U16;;Data for 5087
+;5088;inner_485_addr;U16;;Data for 5088
+;5089;inner_485_baudrate;U16;;Data for 5089
+;508A;inner_485_stopbit;U16;;Data for 508A
+;508B;inner_485_paritybit;U16;;Data for 508B
+;508C;arm_can_addr;U16;;Data for 508C
+;508D;dsp_can_addr;U16;;Data for 508D
+;508E;can_buad_rate;U16;;Data for 508E
+DCDC basic information and setup parameters2;508F;mount_count;U16;;Data for 508F
+;5090;mount_pcu_count;U16;;Data for 5090
+;5091;mount_bms_count;U16;;Data for 5091
+;5092;coding_state;U16;;Data for 5092
+;5093____509F;;;;Data for 5093____509F
+DCDC basic information and setup parameters 3;50A0;connect_waittime;U16;1;second
+;50A1;rated_voltage;U16;0,1;V
+;50A2;rated_freq;U16;0,01;Hz
+;50A3;phase_number;U16;;Data for 50A3
+;50A4;gfci_limit;U16;1;mA
+;50A5;power_up_time;U16;1;ms
+;50A6;power_down_time;U16;1;ms
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"6000 -- 6003";"AddressMask_PCU1";"U64";;
-;"6004";"PCU_Number";;;
-;"6005 -- 600F";;;;
-;"6010";"PCU_ID";"U16";;
-;"6011 -- 601A";"PCU_SN0 -- 9";"ASCII";;
-;"601B -- 601C";"PCU_Software_Version1 -- 2";"ASCII";;
-;"601D";"PCU_Hardware_Version";"U16";;
-;"601E";"PCU_Can1_Version";"U16";;
-;"601F";"PCU_Can2_Version";"U16";;
-;"6020";"PCU_Work_State";"U16";;
-;"6021";"PCU_Internal_Temperature";"U16";1;"℃"
-;"6022";"PCU_Radiator_Temperature1";"I16";1;"℃"
-;"6023";"PCU_Radiator_Temperature2";"I16";1;"℃"
-;"6024 -- 6027";"PCU_Warning1 -- 4";"U16";;
-;"6028 -- 602B";"PCU_Fault1 -- 4";"U16";;
-;"602C";"PCU_DC_High_Voltage";"U16";0,1;"V"
-;"602D";"PCU_DC_Low_Voltage";"U16";0,1;"V"
-;"602E";"PCU_Low_Current";"I16";0,1;"A"
-;"602F";"PCU_Low_Power";"I16";0,01;"kW"
-;"6030";"PCU_BusP";"U16";0,1;"V"
-;"6031";"PCU_BusN";"U16";0,1;"V"
-;"6032 -- 6035";"PCU_FC_Voltage1 -- 4";"U16";0,1;"V"
-;"6036 -- 6039";"PCU_IL_Current1 -- 4";"I16";0,1;"A"
-;"603A -- 603F";;;;
-;"6040 -- 6043";"AddressMask_PCU2";"U64";;
-;"6044";"PCU_Inquire";"U16";;
-;"6045";"PCU_Remote_On_Off";"U16";;
-;"6046";"PCU_Max_Charge_Current";"U16";0,1;"A"
-;"6047";"PCU_Max_Discharge_Current";"U16";0,1;"A"
-;"6048";"K_Voltage_HVbus";"U16";0,001;"p.u."
-;"6049";"K_Voltage_Pbus";"U16";0,001;"p.u."
-;"604A";"K_Current_HV_Chg";"U16";0,001;"p.u."
-;"604B";"K_Current_HV_Dchg";"U16";0,001;"p.u."
-;"604C";"K_Voltage_LV";"U16";0,001;"p.u."
-;"604D";"K_Current_LV_Chg";"U16";0,001;"p.u."
-;"604E";"K_Current_LV_Dchg";"U16";0,001;"p.u."
-;"604F -- 607F";;;;
-;"6080 -- 6083";"AddressMask_BDU1";"U64";;
-"BDU information";6084;"BDU_Number";"U16";;
-;"6085 -- 608F";;;;
-;6090;"BDU_ID";"U16";;
-;"6091 -- 609A";"BDU_SN0 -- 9";"ASCII";;
-;"609B";"Software_Version_Stage_BDU";"ASCII";;
-;"609C";"Software_Version_Major_BDU";"ASCII";;
-;"609D";"Software_Version_Custom_BDU";"ASCII";;
-;"609E";"Software_Version_Minor_BDU";"ASCII";;
-;"609F";"BDU_Fault1";"U16";;
-;"60A0";"BDU_Battery_Number";"U16";;
-;"60A1";"TotalNum_PV";"U16";1;
-;"60A2";"TotalNum_Battery";"U16";1;
-;"60A3 -- 60A5";;;;
-;"60A6 -- 60A9";"AddressMask_BDU2";"U64";;
-;"60AA";"BDU_Inquire";"U16";;
-;"60AB";"RatedPower_N_ID";"U16";1;
-;"60AC";"RatedPower_N_PV";"U16";1;
-;"60AD";"RatedPower_N_Battery";"U16";1;
+;6000____6003;AddressMask_PCU1;U64;;Data for 6000____6003
+;6004;PCU_Number;;;Data for 6004
+;6005____600F;;;;Data for 6005____600F
+;6010;PCU_ID;U16;;Data for 6010
+;6011____601A;PCU_SN0 -- 9;ASCII;;Data for 6011____601A
+;601B____601C;PCU_Software_Version1 -- 2;ASCII;;Data for 601B____601C
+;601D;PCU_Hardware_Version;U16;;Data for 601D
+;601E;PCU_Can1_Version;U16;;Data for 601E
+;601F;PCU_Can2_Version;U16;;Data for 601F
+;6020;PCU_Work_State;U16;;Data for 6020
+;6021;PCU_Internal_Temperature;U16;1;℃
+;6022;PCU_Radiator_Temperature1;I16;1;℃
+;6023;PCU_Radiator_Temperature2;I16;1;℃
+;6024____6027;PCU_Warning1 -- 4;U16;;Data for 6024____6027
+;6028____602B;PCU_Fault1 -- 4;U16;;Data for 6028____602B
+;602C;PCU_DC_High_Voltage;U16;0,1;V
+;602D;PCU_DC_Low_Voltage;U16;0,1;V
+;602E;PCU_Low_Current;I16;0,1;A
+;602F;PCU_Low_Power;I16;0,01;kW
+;6030;PCU_BusP;U16;0,1;V
+;6031;PCU_BusN;U16;0,1;V
+;6032____6035;PCU_FC_Voltage1 -- 4;U16;0,1;V
+;6036____6039;PCU_IL_Current1 -- 4;I16;0,1;A
+;603A____603F;;;;Data for 603A____603F
+;6040____6043;AddressMask_PCU2;U64;;Data for 6040____6043
+;6044;PCU_Inquire;U16;;Data for 6044
+;6045;PCU_Remote_On_Off;U16;;Data for 6045
+;6046;PCU_Max_Charge_Current;U16;0,1;A
+;6047;PCU_Max_Discharge_Current;U16;0,1;A
+;6048;K_Voltage_HVbus;U16;0,001;p.u.
+;6049;K_Voltage_Pbus;U16;0,001;p.u.
+;604A;K_Current_HV_Chg;U16;0,001;p.u.
+;604B;K_Current_HV_Dchg;U16;0,001;p.u.
+;604C;K_Voltage_LV;U16;0,001;p.u.
+;604D;K_Current_LV_Chg;U16;0,001;p.u.
+;604E;K_Current_LV_Dchg;U16;0,001;p.u.
+;604F____607F;;;;Data for 604F____607F
+;6080____6083;AddressMask_BDU1;U64;;Data for 6080____6083
+BDU information;6084;BDU_Number;U16;;Data for 6084
+;6085____608F;;;;Data for 6085____608F
+;6090;BDU_ID;U16;;Data for 6090
+;6091____609A;BDU_SN0 -- 9;ASCII;;Data for 6091____609A
+;609B;Software_Version_Stage_BDU;ASCII;;Data for 609B
+;609C;Software_Version_Major_BDU;ASCII;;Data for 609C
+;609D;Software_Version_Custom_BDU;ASCII;;Data for 609D
+;609E;Software_Version_Minor_BDU;ASCII;;Data for 609E
+;609F;BDU_Fault1;U16;;Data for 609F
+;60A0;BDU_Battery_Number;U16;;Data for 60A0
+;60A1;TotalNum_PV;U16;1;Data for 60A1
+;60A2;TotalNum_Battery;U16;1;Data for 60A2
+;60A3____60A5;;;;Data for 60A3____60A5
+;60A6____60A9;AddressMask_BDU2;U64;;Data for 60A6____60A9
+;60AA;BDU_Inquire;U16;;Data for 60AA
+;60AB;RatedPower_N_ID;U16;1;Data for 60AB
+;60AC;RatedPower_N_PV;U16;1;Data for 60AC
+;60AD;RatedPower_N_Battery;U16;1;Data for 60AD
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
 "Custom
-Serial number, model";"7000";;"ASCII";;
+Serial number, model";7000;;ASCII;;Data for 7000
 ;;;;;
 ;;;;;
 ;;;;;
 ;;;;;
-;"9000 -- 9003";"AddressMask_BMS1_System";"U64";;
-"Basic BMS information";"9004";"BMS_Sys_Time";"U32";;
-;"9005";;;;
-;"9006";"BMS_CAN_Version";"U16";;
-;"9007";"BMS_Manufacture_Name0";"U16";;
-;"9008 -- 900A";"BMS_Manufacture_Name1 -- 3";"U16";;
-;"900B";"BMS_Version";"U16";;
-;"900C";"Cell_Type";"U16";;
-;"900D";"BaPack_Number";"U16";;
-;"900E";"Realtime_Capacity";"U16";1;"%"
-;"900F";"Total_Voltage";"U16";0,1;"V"
-;"9010";"Total_Current";"I16";0,1;"A"
-;"9011";"Cell_Average_Temperature";"U16";0,1;"℃"
-;"9012";"SOC";"U16";1;"%"
-;"9013";"SOH";"U16";1;"%"
-"BMS protection, alarm information";"9014 -- 9015";"BMS_Sys_Protect0 -- 1";"U16";;
-;"9016 -- 9017";"BMS_Sys_Alarm0 -- 1";"U16";;
-"BMS version number";9018;"Sofar_BMS_Version";"ASCII";;
-;9019;"Sofar_BMS_Version";"U16";;
-;"901A";"Sofar_BMS_Version";"U16";;
-;"901B";"Sofar_BMS_Version";"U16";;
-;"901C -- 901F";;;;
-"BMS query control word";"9020";"BMS_Inquire";"U16";;
-;"9021 -- 903F";;;;
-;"9040 -- 9043";"AddressMask_BMS2_Realtime";"U64";;
+;9000____9003;AddressMask_BMS1_System;U64;;Data for 9000____9003
+Basic BMS information;9004;BMS_Sys_Time;U32;;Data for 9004
+;9005;;;;Data for 9005
+;9006;BMS_CAN_Version;U16;;Data for 9006
+;9007;BMS_Manufacture_Name0;U16;;Data for 9007
+;9008____900A;BMS_Manufacture_Name1 -- 3;U16;;Data for 9008____900A
+;900B;BMS_Version;U16;;Data for 900B
+;900C;Cell_Type;U16;;Data for 900C
+;900D;BaPack_Number;U16;;Data for 900D
+;900E;Realtime_Capacity;U16;1;%
+;900F;Total_Voltage;U16;0,1;V
+;9010;Total_Current;I16;0,1;A
+;9011;Cell_Average_Temperature;U16;0,1;℃
+;9012;SOC;U16;1;%
+;9013;SOH;U16;1;%
+BMS protection, alarm information;9014____9015;BMS_Sys_Protect0 -- 1;U16;;Data for 9014____9015
+;9016____9017;BMS_Sys_Alarm0 -- 1;U16;;Data for 9016____9017
+BMS version number;9018;Sofar_BMS_Version;ASCII;;Data for 9018
+;9019;Sofar_BMS_Version;U16;;Data for 9019
+;901A;Sofar_BMS_Version;U16;;Data for 901A
+;901B;Sofar_BMS_Version;U16;;Data for 901B
+;901C____901F;;;;Data for 901C____901F
+BMS query control word;9020;BMS_Inquire;U16;;Data for 9020
+;9021____903F;;;;Data for 9021____903F
+;9040____9043;AddressMask_BMS2_Realtime;U64;;Data for 9040____9043
 "Battery pack
-Real-time data";"9044";"Pack_RT_ID";"U16";;
-;"9045";"Pack_RT_Timestamp";"U32";;
-;"9046";;;;
-;"9047";"Pack_RT_SN0";"U16";;
-;"9048 -- 9050";"Pack_RT_SN1 -- 9 ";"U16";;
-;"9051 -- 9068";"Pack_RT_Cell_Voltage1 -- 24";"U16";0,001;"V"
-;"9069";"Pack_RT_Cell_Max_Voltage";"U16";0,001;"V"
-;"906A";"Pack_RT_Cell_Min_Voltage";"U16";0,001;"V"
-;"906B -- 906E";"Pack_RT_Temperature1_Pack --
-Pack_RT_Temperature4_Pack";"I16";0,1;"℃"
-;"906F";"Pack_RT_Temperature_MOS";"I16";0,1;"℃"
-;"9070";"Pack_RT_Temperature_Env";"I16";0,1;"℃"
-;"9071";"Pack_RT_Current";"I16";0,1;"A"
-;"9072";"Pack_RT_Remaining_Capacity";"U16";0,1;"Ah"
-;"9073";"Pack_RT_FullCharge_Capacity";"U16";0,1;"Ah"
-;"9074";"Pack_RT_Cycles";"U16";1;"times"
-;"9075";"Pack_RT_Balance_State";"U16";;
-;"9076";"Pack_RT_Alarm_State";"U16";;
-;"9077";"Pack_RT_Protect_State";"U16";;
-;"9078";"Pack_RT_Fault_State";"U16";;
-;"9079";"Pack_RT_Total_Voltage";"U16";0,1;"V"
-;"907A";"Pack_RT_SOC";"U16";1;"%"
-;"907B";"Pack_RT_Pack_Number";"U16";;
-;"907C";"Pack_RT_Cell_Number";"U16";;
-;"907D -- 907F";;;;
-;"9080 -- 9083";"AddressMask_BMS3_Fault";"U64";;
+Real-time data";9044;Pack_RT_ID;U16;;Data for 9044
+;9045;Pack_RT_Timestamp;U32;;Data for 9045
+;9046;;;;Data for 9046
+;9047;Pack_RT_SN0;U16;;Data for 9047
+;9048____9050;Pack_RT_SN1 -- 9 ;U16;;Data for 9048____9050
+;9051____9068;Pack_RT_Cell_Voltage1 -- 24;U16;0,001;V
+;9069;Pack_RT_Cell_Max_Voltage;U16;0,001;V
+;906A;Pack_RT_Cell_Min_Voltage;U16;0,001;V
+;906B____906E;"Pack_RT_Temperature1_Pack --
+Pack_RT_Temperature4_Pack";I16;0,1;℃
+;906F;Pack_RT_Temperature_MOS;I16;0,1;℃
+;9070;Pack_RT_Temperature_Env;I16;0,1;℃
+;9071;Pack_RT_Current;I16;0,1;A
+;9072;Pack_RT_Remaining_Capacity;U16;0,1;Ah
+;9073;Pack_RT_FullCharge_Capacity;U16;0,1;Ah
+;9074;Pack_RT_Cycles;U16;1;times
+;9075;Pack_RT_Balance_State;U16;;Data for 9075
+;9076;Pack_RT_Alarm_State;U16;;Data for 9076
+;9077;Pack_RT_Protect_State;U16;;Data for 9077
+;9078;Pack_RT_Fault_State;U16;;Data for 9078
+;9079;Pack_RT_Total_Voltage;U16;0,1;V
+;907A;Pack_RT_SOC;U16;1;%
+;907B;Pack_RT_Pack_Number;U16;;Data for 907B
+;907C;Pack_RT_Cell_Number;U16;;Data for 907C
+;907D____907F;;;;Data for 907D____907F
+;9080____9083;AddressMask_BMS3_Fault;U64;;Data for 9080____9083
 "Battery pack
 Fault data
-";"9084";"Pack_Fault_ID";"U16";;
-;"9085 -- 9086";"Pack_Fault_Timestamp";"U32";;
-;"9087 -- 9090";"Pack_Fault_SN0 -- 9";"U16";;
-;"9091 -- 90A8";"Pack_Fault_Cell_Voltage1 -- 24";"U16";0,001;"V"
-;"90A9";"Pack_Fault_Cell_Max_Voltage";"U16";0,001;"V"
-;"90AA";"Pack_Fault_Cell_Min_Voltage";"U16";0,001;"V"
-;"90AB -- 90AE";"Pack_Fault_Temperature1_Pack -- Pack_Fault_Temperature4_Pack";"I16";0,1;"℃"
-;"90AF";"Pack_Fault_Temperature_MOS";"I16";0,1;"℃"
-;"90B0";"Pack_Fault_Temperature_Env";"I16";0,1;"℃"
-;"90B1";"Pack_Fault_Current";"I16";0,1;"A"
-;"90B2";"Pack_Fault_Remaining_Capacity";"U16";0,1;"Ah"
-;"90B3";"Pack_Fault_FullCharge_Capacity";"U16";0,1;"Ah"
-;"90B4";"Pack_Fault_Total_Voltage";"U16";0,01;"V"
-;"90B5";"Pack_Alarm_State";"U16";;
-;"90B6";"Pack_Protect_State";"U16";;
-;"90B7";"Pack_Fault_State";"U16";;
-;"90B8";"Pack_Fault_Pack_Number";"U16";;
-;"90B9";"Pack_Fault_Cell_Number";"U16";;
+";9084;Pack_Fault_ID;U16;;Data for 9084
+;9085____9086;Pack_Fault_Timestamp;U32;;Data for 9085____9086
+;9087____9090;Pack_Fault_SN0 -- 9;U16;;Data for 9087____9090
+;9091____90A8;Pack_Fault_Cell_Voltage1 -- 24;U16;0,001;V
+;90A9;Pack_Fault_Cell_Max_Voltage;U16;0,001;V
+;90AA;Pack_Fault_Cell_Min_Voltage;U16;0,001;V
+;90AB____90AE;Pack_Fault_Temperature1_Pack -- Pack_Fault_Temperature4_Pack;I16;0,1;℃
+;90AF;Pack_Fault_Temperature_MOS;I16;0,1;℃
+;90B0;Pack_Fault_Temperature_Env;I16;0,1;℃
+;90B1;Pack_Fault_Current;I16;0,1;A
+;90B2;Pack_Fault_Remaining_Capacity;U16;0,1;Ah
+;90B3;Pack_Fault_FullCharge_Capacity;U16;0,1;Ah
+;90B4;Pack_Fault_Total_Voltage;U16;0,01;V
+;90B5;Pack_Alarm_State;U16;;Data for 90B5
+;90B6;Pack_Protect_State;U16;;Data for 90B6
+;90B7;Pack_Fault_State;U16;;Data for 90B7
+;90B8;Pack_Fault_Pack_Number;U16;;Data for 90B8
+;90B9;Pack_Fault_Cell_Number;U16;;Data for 90B9
