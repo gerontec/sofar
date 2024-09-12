@@ -205,7 +205,10 @@ Current
 Power
 Data";"0584 -- 05B1";"Voltage_PV1 -- 16";"U16";0,1;"V"
 ;"0585 -- 05B2";"Current_PV1 -- 16";"U16";0,01;"A"
-;"0586 -- 05B3";"Power_PV1 -- 16";"U16";0,01;"kW"
+;"0586";"Power_PV1 -- 16";"U16";0,01;"kW"
+;"0587";"Voltage_PV2 -- 16";"U16";0,1;"V"
+;"0588";"Current_PV2 -- 16";"U16";0,01;"A"
+;"0589";"Power_PV2 -- 16";"U16";0,01;"kW"
 ;"05B4 -- 05B6";;;;
 ;"05C0 -- 05C3";"AddressMask_Realtime_Input_PV2";"U64";;
 "Total PV power";"05C4";"Power_PV_Total";"U16";0,1;"kW"
