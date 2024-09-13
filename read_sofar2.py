@@ -4,6 +4,8 @@ import csv
 import time
 from pymodbus.client.serial import ModbusSerialClient
 import logging
+from datetime import datetime
+import pandas as pd
 
 # Set up logging
 logging.basicConfig(filename='sofar_inverter.log', level=logging.ERROR, 
