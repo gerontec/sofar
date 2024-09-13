@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+import sys
 import csv
 import time
 from pymodbus.client.serial import ModbusSerialClient
@@ -104,11 +105,15 @@ def main():
     client = ModbusSerialClient(method='rtu', port=SERIAL_PORT, baudrate=BAUD_RATE, 
                                 parity='N', stopbits=1, bytesize=8, timeout=1)
     if not client.connect():
-        print("Failed to connect to the inverter")
+        print("Failed to connect to the inverter", file=sys.stderr)
         return
 
     register_info = read_register_info_from_csv(CSV_FILE)
     
+    # Set up CSV writer
+    csv_writer = csv.writer(sys.stdout)
+    csv_writer.writerow(['Address', 'Name', 'Value', 'Unit', 'Type'])
+
     current_section = ""
     for start_address in range(0, MAX_REGISTER + 1, BLOCK_SIZE):
         end_address = min(start_address + BLOCK_SIZE - 1, MAX_REGISTER)
@@ -122,11 +127,24 @@ def main():
                     
                     if info['section'] != current_section:
                         current_section = info['section']
-                        print(f"\n--- {current_section} ---")
+                        csv_writer.writerow([])
+                        csv_writer.writerow([f"--- {current_section} ---"])
                     
                     decoded_value = decode_value([value], info['type'], info['accuracy'])
                     if decoded_value is not None:
-                        print(f"Register 0x{address:04X} ({info['name']}): {decoded_value} {info['unit']}")
+                        # Format the value based on its type
+                        if isinstance(decoded_value, (int, float)):
+                            formatted_value = f"{decoded_value:.4f}"
+                        else:
+                            formatted_value = str(decoded_value)
+                        
+                        csv_writer.writerow([
+                            f"0x{address:04X}",
+                            info['name'],
+                            formatted_value,
+                            info['unit'],
+                            info['type']
+                        ])
 
     client.close()
 

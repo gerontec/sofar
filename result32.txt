@@ -1,681 +1,699 @@
+Address,Name,Value,Unit,Type
 
 --- I General（0x0040-0x007F） ---
-Register 0x0040 (AddressMask_General1): 0 
-Register 0x0041 (): 0 
-Register 0x0042 (): 0 
-Register 0x0043 (): 31 
-Register 0x0044 (Modbus_Protocol_Version): 108 
-Register 0x0045 (COMM_MCU_Code):  
-Register 0x0046 (CTRL1_MCU_Code):  
-Register 0x0047 (CTRL2_MCU_Code):  
-Register 0x0048 (MCU_Code_Rsvd1 -- 10): 0 
-Register 0x0052 (Protocol_ARM-DSPM): 1028 
-Register 0x0053 (Protocol_ARM-DSPS): 1028 
-Register 0x0054 (Protocol_DSPM-DSPS): 771 
-Register 0x0055 (Protocol_Version_Rsvd4 -- 20): 0 
-Register 0x0066 (): 0 
-Register 0x007E (客户ID_0 -- 1): 0 
-Register 0x0400 (AddressMask_Realtime_SysInfo1): 16383 
-Register 0x0404 (SysState): 2 
-Register 0x0405 (Fault1 -- 18): 0 
-Register 0x0417 (Countdown): 60.0 秒
-Register 0x0418 (Temperature_Env1 -- 2): 48.0 ℃
-Register 0x041A (Temperature_HeatSink1 -- 6): 40.0 ℃
-Register 0x0420 (Temperature_Inv1 -- 3): 47.0 ℃
-Register 0x0423 (Temp_Rsvd1 -- 3): 0.0 ℃
-Register 0x0426 (GenerationTime_Today): 625.0 分钟
-Register 0x0427 (GenerationTime_Total): 6.0 分钟
-Register 0x0429 (ServiceTime_Total): 11.0 分钟
-Register 0x042B (InsulationResistance): 449.0 kΩ
-Register 0x042C (SysTime_Year): 24 
-Register 0x042D (SysTime_Month): 9 
-Register 0x042E (SysTime_Date): 13 
-Register 0x042F (SysTime_Hour): 10 
-Register 0x0430 (SysTime_Minute): 32 
-Register 0x0431 (SysTime_Second): 13 
-Register 0x0432 (Fault19 -- 30): 0 
-Register 0x043E (): 0 
-Register 0x0440 (AddressMask_Realtime_SysInfo2): 0 
-Register 0x0444 (Production_Code): 4660 
-Register 0x0445 (Serial_Number0 -- 7): SP 
-Register 0x044D (Hardware_Version0 -- 1): V0 
-Register 0x044F (Software_Version_Stage_COM): 0V 
-Register 0x0450 (Software_Version_Major_COM): 11 
-Register 0x0451 (Software_Version_Custom_COM): 00 
-Register 0x0452 (Software_Version_Minor_COM): 51 
-Register 0x0453 (Software_Version_Stage_Master): 0V 
-Register 0x0454 (Software_Version_Major_Master): 11 
-Register 0x0455 (Software_Version_Custom_Master): 00 
-Register 0x0456 (Software_Version_Minor_Master): 51 
-Register 0x0457 (Software_Version_Stage_Slave): 0V 
-Register 0x0458 (Software_Version_Major_Slave): 11 
-Register 0x0459 (Software_Version_Custom_Slave): 00 
-Register 0x045A (Software_Version_Minor_Slave): 51 
-Register 0x045B (Safety_Version_Major): 12345 
-Register 0x045C (Safety_version_Minor): 12337 
-Register 0x045D (Boot_Version_COM): 0 
-Register 0x045E (Boot_Version_Master): 0 
-Register 0x045F (Boot_Version_Slave): 0 
-Register 0x0480 (AddressMask_Realtime_GridOutput1): 0 
-Register 0x0484 (Frequency_Grid): 49.980000000000004 Hz
-Register 0x0485 (ActivePower_Output_Total): 0.62 kW
-Register 0x0486 (ReactivePower_Output_Total): -1.7 kW
-Register 0x0487 (ApparentPower_Output_Total): 0.0 kW
-Register 0x0488 (ActivePower_PCC_Total): 0.52 kW
-Register 0x0489 (ReactivePower_PCC_Total): 0.0 kW
-Register 0x048A (ApparentPower_PCC_Total): 0.0 kW
-Register 0x048B (GridOutput_Rsvd1 -- 2): 0 
-Register 0x048D (Voltage_Phase_R): 238.10000000000002 V
-Register 0x048E (Current_Output_R): 3.83 A
-Register 0x048F (ActivePower_Output_R): 0.24 kW
-Register 0x0490 (ReactivePower_Output_R): 0.0 kW
-Register 0x0491 (PowerFactor_Output_R): 0.0 p.u.
-Register 0x0492 (Current_PCC_R): 1.36 A
-Register 0x0493 (ActivePower_PCC_R): 0.17 kW
-Register 0x0494 (ReactivePower_PCC_R): 0.0 kW
-Register 0x0495 (PowerFactor_PCC_R): 0.0 p.u.
-Register 0x0496 (R_Rsvd1 -- 2): 0 
-Register 0x0498 (Voltage_Phase_S): 237.5 V
-Register 0x0499 (Current_Output_S): 3.86 A
-Register 0x049A (ActivePower_Output_S): 0.31 kW
-Register 0x049B (ReactivePower_Output_S): 0.0 kW
-Register 0x049C (PowerFactor_Output_S): 0.0 p.u.
-Register 0x049D (Current_PCC_S): 1.68 A
-Register 0x049E (ActivePower_PCC_S): 0.18 kW
-Register 0x049F (ReactivePower_PCC_S): 0.0 kW
-Register 0x04A0 (PowerFactor_PCC_S): 0.0 p.u.
-Register 0x04A1 (S_Rsvd1 -- 2): 0 
-Register 0x04A3 (Voltage_Phase_T): 240.3 V
-Register 0x04A4 (Current_Output_T): 3.65 A
-Register 0x04A5 (ActivePower_Output_T): 0.06 kW
-Register 0x04A6 (ReactivePower_Output_T): 0.0 kW
-Register 0x04A7 (PowerFactor_Output_T): 0.0 p.u.
-Register 0x04A8 (Current_PCC_T): 1.78 A
-Register 0x04A9 (ActivePower_PCC_T): 0.17 kW
-Register 0x04AA (ReactivePower_PCC_T): 0.0 kW
-Register 0x04AB (PowerFactor_PCC_T): 0.0 p.u.
-Register 0x04AC (T_Rsvd1 -- 2): 0 
-Register 0x04AE (ActivePower_PV_Ext): 0.0 kW
-Register 0x04AF (ActivePower_Load_Sys): 0.1 kW
-Register 0x04B0 (Voltage_Phase_L1N): 0.0 V
-Register 0x04B1 (Current_Output_L1N): 0.0 A
-Register 0x04B2 (ActivePower_Output_L1N): 0.0 kW
-Register 0x04B3 (Current_PCC_L1N): 0.0 A
-Register 0x04B4 (ActivePower_PCC_L1N): 0.0 kW
-Register 0x04B5 (Voltage_Phase_L2N): 0.0 V
-Register 0x04B6 (Current_Output_L2N): 0.0 A
-Register 0x04B7 (ActivePower_Output_L2N): 0.0 kW
-Register 0x04B8 (Current_PCC_L2N): 0.0 A
-Register 0x04B9 (ActivePower_PCC_L2N): 0.0 kW
-Register 0x04BA (Voltage_Line_L1): 0.0 V
-Register 0x04BB (Voltage_Line_L2): 0.0 V
-Register 0x04BC (Voltage_Line_L3): 0.0 V
-Register 0x04BD (Power_Factor): 0.333 p.u.
-Register 0x0500 (AddressMask_Realtime_EmergencyOutput1): 0 
-Register 0x0504 (ActivePower_Load_Total): 0.0 kW
-Register 0x0505 (ReactivePower_Load_Total): 0.0 kW
-Register 0x0506 (ApparentPower_Load_Total): 0.0 kW
-Register 0x0507 (Frequency_Output): 49.980000000000004 Hz
-Register 0x0508 (ESOutput_Rsvd1 -- 2): 0 
-Register 0x050A (Voltage_Output_R): 238.20000000000002 V
-Register 0x050B (Current_Load_R): 0.22 A
-Register 0x050C (ActivePower_Load_R): 0.0 kW
-Register 0x050D (ReactivePower_Load_R): 0.0 kW
-Register 0x050E (ApparentPower_Load_R): 0.0 kVA
-Register 0x050F (LoadPeakRatio_R): 0.0 p.u.
-Register 0x0510 (Voltage_Load_R): 236.8 V
-Register 0x0511 (ESR_Rsvd2): 0 
-Register 0x0512 (Voltage_Output_S): 238.4 V
-Register 0x0513 (Current_Load_S): 0.22 A
-Register 0x0514 (ActivePower_Load_S): 0.0 kW
-Register 0x0515 (ReactivePower_Load_S): 0.0 kW
-Register 0x0516 (ApparentPower_Load_S): 0.0 kVA
-Register 0x0517 (LoadPeakRatio_S): 0.0 p.u.
-Register 0x0518 (Voltage_Load_S): 237.60000000000002 V
-Register 0x0519 (ESS_Rsvd2): 0 
-Register 0x051A (Voltage_Output_T): 239.70000000000002 V
-Register 0x051B (Current_Load_T): 0.22 A
-Register 0x051C (ActivePower_Load_T): 0.0 kW
-Register 0x051D (ReactivePower_Load_T): 0.0 kW
-Register 0x051E (ApparentPower_Load_T): 0.0 kVA
-Register 0x051F (LoadPeakRatio_T): 0.0 p.u.
-Register 0x0520 (Voltage_Load_T): 238.8 V
-Register 0x0521 (EST_Rsvd2): 0 
-Register 0x0522 (Voltage_Output_L1N): 0.0 V
-Register 0x0523 (Current_Load_L1N): 0.0 A
-Register 0x0524 (ActivePower_Load_L1N): 0.0 kW
-Register 0x0525 (Voltage_Output_L2N): 0.0 V
-Register 0x0526 (Current_Load_L2N): 0.0 A
-Register 0x0527 (ActivePower_Load_L2N): 0.0 kW
-Register 0x0580 (AddressMask_Realtime_Input_PV1): 0 
-Register 0x0584 (Voltage_PV1 -- 16): 504.90000000000003 V
-Register 0x0585 (Current_PV1 -- 16): 1.09 A
-Register 0x0586 (Power_PV1 -- 16): 0.55 kW
-Register 0x0587 (Voltage_PV2 -- 16): 489.6 V
-Register 0x0588 (Current_PV2 -- 16): 0.53 A
-Register 0x0589 (Power_PV2 -- 16): 0.26 kW
-Register 0x05B4 (): 0 
-Register 0x05C0 (AddressMask_Realtime_Input_PV2): 0 
-Register 0x05C4 (Power_PV_Total): 0.8 kW
-Register 0x0600 (AddressMask_Realtime_Input_Bat1): 0 
-Register 0x0604 (Voltage_Bat1 -- 8): 196.60000000000002 V
-Register 0x0605 (Current_Bat1 -- 8): 0.0 A
-Register 0x0606 (Power_Bat1 -- 8): 0.0 kW
-Register 0x0607 (Temperature_Env_Bat1 -- 8): 0.0 ℃
-Register 0x0608 (SOC_Bat1 -- 8): 0.0 %
-Register 0x0609 (SOH_Bat1 -- 8): 0.0 %
-Register 0x060A (ChargeCycle_Bat1 -- 8): 0.0 cycle
-Register 0x063C (): 0 
-Register 0x0640 (AddressMask_Realtime_Input_Bat2): 0 
-Register 0x0644 (Voltage_Bat9 -- 12): 0.0 V
-Register 0x0645 (Current_Bat9 -- 12): 0.0 A
-Register 0x0646 (Power_Bat9 -- 12): 0.0 kW
-Register 0x0647 (Temperature_Env_Bat9 -- 12): 0.0 ℃
-Register 0x0648 (SOC_Bat9 -- 12): 0.0 %
-Register 0x0649 (SOH_Bat9 -- 12): 0.0 %
-Register 0x064A (ChargeCycle_Bat9 -- 12): 0.0 cycle
-Register 0x0660 (): 0 
-Register 0x0667 (Power_Bat_Total): 0.0 kW
-Register 0x0668 (SOC_Bat_Average): 0.0 %
-Register 0x0669 (SOH_Bat): 0.0 %
-Register 0x066A (CurrentBattery_num): 0.0 
-Register 0x0680 (AddressMask_Realtime_ElectricityStatistics1): 0 
-Register 0x0684 (PV_Generation_Today): 0.0 kWh
-Register 0x0686 (PV_Generation_Total): 0.30000000000000004 kWh
-Register 0x0688 (Load_Consumption_Today): 0.0 kWh
-Register 0x068A (Load_Consumption_Total): 0.0 kWh
-Register 0x068C (Energy_Purchase_Today): 0.0 kWh
-Register 0x068E (Energy_Purchase_Total): 0.0 kWh
-Register 0x0690 (Energy_Selling_Today): 0.0 kWh
-Register 0x0692 (Energy_Selling_Total): 0.30000000000000004 kWh
-Register 0x0694 (Bat_Charge_Today): 0.0 kWh
-Register 0x0696 (Bat_Charge_Total): 0.0 kWh
-Register 0x0698 (Bat_Discharge_Today): 0.0 kWh
-Register 0x069A (Bat_Discharge_Total): 0.0 kWh
-Register 0x069C (PV_Generation_Month): 0.0 kWh
-Register 0x069E (PV_Generation_Year): 0.0 kWh
-Register 0x06A0 (Load_Consumption_Month): 0.0 kWh
-Register 0x06A2 (Load_Consumption_Year): 0.0 kWh
-Register 0x06A4 (Energy_Purchase_Month): 0.0 kWh
-Register 0x06A6 (Energy_Purchase_Year): 0.0 kWh
-Register 0x06A8 (Energy_Selling_Month): 0.0 kWh
-Register 0x06AA (Energy_Selling_Year): 0.0 kWh
-Register 0x06AC (Bat_Charge_Month): 0.0 kWh
-Register 0x06AE (Bat_Charge_Year): 0.0 kWh
-Register 0x06B0 (Bat_Discharge_Month): 0.0 kWh
-Register 0x06B2 (Bat_Discharge_Year): 0.0 kWh
-Register 0x06C0 (AddressMask_Realtime_ClassifiedInfo1): 0 
-Register 0x06C4 (GFCI): 2.0 mA
-Register 0x06C5 (Current_Bus_Balance): 0.0 A
-Register 0x06C6 (DCI_R): -1.0 mA
-Register 0x06C7 (DCI_S): -13.0 mA
-Register 0x06C8 (DCI_T): 16.0 mA
-Register 0x06C9 (DCV_R): -12.0 mV
-Register 0x06CA (DCV_S): 103.0 mV
-Register 0x06CB (DCV_T): 43.0 mV
-Register 0x06CC (Voltage_Bus): 714.6 V
-Register 0x06CD (Voltage_Bus_P): 357.3 V
-Register 0x06CE (Voltage_Bus_N): 357.3 V
-Register 0x06CF (Voltage_Bus_LLC): 0.0 V
-Register 0x06D0 (Current_BuckBoost): 0.0 A
-Register 0x06D1 (Voltage_Bus_P_Half): 0.0 V
-Register 0x06D2 (Voltage_Bus_N_Half): 0.0 V
-Register 0x06D3 (FlyingCap_Voltage1 -- 16): 0.0 V
-Register 0x06E3 (Internal_Info1 -- 10): 77.4 V
-Register 0x06ED (RatedPower_Inverter): 0.0 kW
-Register 0x06EE (IVPoints_Effec_Num): 88.0 
-Register 0x0700 (AddressMask_Realtime_CombinerInfo1): 0 
-Register 0x0704 (Voltage_Group1 -- 16): 0.0 V
-Register 0x0705 (Current_Group1_Branch1 --
-Current_Group16_Branch1): 0.0 A
-Register 0x0706 (Current_Group1_Branch2 -- 
-Current_Group16_Branch2): 0.0 A
-Register 0x0734 (): 0 
-Register 0x0740 (AddressMask_Realtime_CombinerInfo2): 0 
-Register 0x0744 (Current_Group1_Branch3 --
-Current_Group16_Branch3): 0.0 A
-Register 0x0745 (Current_Group1_Branch4 -- 
-Current_Group16_Branch4): 0.0 A
-Register 0x0764 (): 0 
-Register 0x0780 (AddressMask_Realtime_ArcInfo3): 0 
-Register 0x0784 (ArcStrength_MPPT_1 -- 24): 0.0 
-Register 0x079C (): 0 
-Register 0x07A2 (ArcStrength_history_Channel1 -- 24): 0.0 
-Register 0x07BA (): 0 
-Register 0x07C0 (AddressMask_Realtime_ArcInfo4): 0 
-Register 0x07C4 (arc_peak_to_peak): 0.0 
-Register 0x07C5 (arc_variance): 0.0 
-Register 0x07C6 (arc_harmonic_energy): 0.0 
-Register 0x07C7 (arc_amplitude_variance): 0.0 
-Register 0x0800 (ConnectWaitTime): 60.0 秒
-Register 0x0801 (PowerUpSpeed): 8.0 %Pn/min
-Register 0x0802 (ReconnectWaitTime): 60.0 秒
-Register 0x0803 (ReconnectPowerUpSpeed): 8.0 %Pn/min
-Register 0x0804 (VoltHighLimit): 253.0 V
-Register 0x0805 (VoltLowLimit): 195.5 V
-Register 0x0806 (FreqHighLimit): 50.1 Hz
-Register 0x0807 (FreqLowLimit): 47.5 Hz
-Register 0x0808 (ReconnectVoltHighLimit): 253.0 V
-Register 0x0809 (ReconnectVoltLowLimit): 195.5 V
-Register 0x080A (ReconnectFreqHighLimit): 50.1 Hz
-Register 0x080B (ReconnectFreqLowLimit): 47.5 Hz
-Register 0x0840 (Voltage Config): 90 
-Register 0x0841 (RatedVoltage): 230.0 V
-Register 0x0842 (FirstOvervoltageProtectionValue): 264.5 V
-Register 0x0843 (FirstOvervoltageProtectionTime): 60.0 ms
-Register 0x0844 (SecondOvervoltageProtectionValue): 287.5 V
-Register 0x0845 (SecondOvervoltageProtectionTime): 60.0 ms
-Register 0x0846 (ThirdOvervoltageProtectionValue): 0.0 V
-Register 0x0847 (ThirdOvervoltageProtectionTime): 10.0 ms
-Register 0x0848 (FirstUnderVoltageProtectionValue): 184.0 V
-Register 0x0849 (FirstUndervoltageProtectionTime): 3000.0 ms
-Register 0x084A (SecondUnderVoltageProtectionValue): 103.5 V
-Register 0x084B (SecondUndervoltageProtectionTime): 300.0 ms
-Register 0x084C (ThirdUnderVoltageProtectionValue): 0.0 V
-Register 0x084D (ThirdUndervoltageProtectionTime): 10.0 ms
-Register 0x084E (10MinOvervoltageProtectionValue): 253.0 V
-Register 0x084F (FirstOvervoltageProtectionTimeHi): 0 
-Register 0x0850 (SecondOvervoltageProtectionTimeHi): 0 
-Register 0x0851 (ThirdOvervoltageProtectionTimeHi): 0 
-Register 0x0880 (FrequencyConfig): 9 
-Register 0x0881 (RatedFrequency): 50.0 Hz
-Register 0x0882 (FirstOverfrequencyProtectionValue): 51.5 Hz
-Register 0x0883 (FirstOverfrequencyProtectionTime): 60.0 ms
-Register 0x0884 (SecondOverfrequencyProtectionValue): 52.0 Hz
-Register 0x0885 (SecondOverfrequencyProtectionTime): 60.0 ms
-Register 0x0886 (ThirdOverfrequencyProtectionValue): 70.0 Hz
-Register 0x0887 (ThirdOverfrequencyProtectionTime): 10.0 ms
-Register 0x0888 (FirstUnderfrequencyProtectionValue): 47.5 Hz
-Register 0x0889 (FirstUnderfrequencyProtectionTime): 60.0 ms
-Register 0x088A (SecondUnderfrequencyProtectionValue): 45.0 Hz
-Register 0x088B (SecondUnderfrequencyProtectionTime): 60.0 ms
-Register 0x088C (ThirdUnderfrequencyProtectionValue): 40.0 Hz
-Register 0x088D (ThirdUnderfrequencyProtectionTime): 10.0 ms
-Register 0x088E (FirstOverfrequencyProtectionTimeHi): 0 
-Register 0x088F (SecondOverfrequencyProtectionTimeHi): 0 
-Register 0x0890 (ThirdOverfrequencyProtectionTimeHi): 0 
-Register 0x0891 (FirstUnderfrequencyProtectionTimeHi): 0 
-Register 0x0892 (SecondUnderfrequencyProtectionTimeHi): 0 
-Register 0x0893 (ThirdUnderfrequencyProtectionTimeHi): 0 
-Register 0x08C0 (DCI Config): 3 
-Register 0x08C1 (DCIFirstProtectionValue): 150.0 mA
-Register 0x08C2 (DCIFirstProtectionTime): 800.0 ms
-Register 0x08C3 (DCISecondProtectionValue): 500.0 mA
-Register 0x08C4 (DCISecondProtectionTime): 100.0 ms
-Register 0x08C5 (DCIThirdProtectionValue): 800.0 mA
-Register 0x08C6 (DCIThirdProtectionTime): 10.0 ms
-Register 0x08C7 (DCITestValue1): 0.0 mA
-Register 0x08C8 (DCITestValue2): 0.0 mA
-Register 0x08C9 (DCITestValue3): 0.0 mA
-Register 0x08CA (DCIFirstProtectionProportion): 0.5 %
-Register 0x08CB (DCISecondProtectionProportion): 3.0 %
-Register 0x08CC (DCIThirdProtectionProportion): 5.0 %
-Register 0x0900 (Remote Config): 1091 
-Register 0x0901 (ActiveOutputLimit): 100.0 %
-Register 0x0902 (ActiveOutputDownSpeed): 100.0 %Pn/min
-Register 0x0903 (GridVoltageDropStart): 253.0 V
-Register 0x0904 (GridVoltageDropStop): 260.0 V
-Register 0x0905 (GridVoltageDropMinPower): 20.0 %
-Register 0x0906 (OvervoltageDownSpeed): 600.0 %Pn/min
-Register 0x0907 (ChgDerateVoltStart): 210.0 V
-Register 0x0908 (ChgDerateVoltEnd): 205.0 V
-Register 0x0909 (ChgDerateMinPower): -20.0 %
-Register 0x090A (PowerForLogic1 -- 8): 0.0 %
-Register 0x0912 (RefluxPower): 100.0 %
-Register 0x0913 (RefluxOVloadTime): 3000.0 ms
-Register 0x0914 (LogicDerateSpeed): 3000.0 %Pn/min
-Register 0x0915 (LogicReloadSpeed): 3000.0 %Pn/min
-Register 0x0916 (VoltageDerateResponseTime): 10.0 秒
-Register 0x0917 (PowerDownSpeed): 3000.0 %Pn/min
-Register 0x0940 (FrequencyDerateConfig): 37 
-Register 0x0941 (OverfrequencyStart): 50.2 Hz
-Register 0x0942 (OverfrequencyEnd): 52.0 Hz
-Register 0x0943 (OverfrequencySlope): 40.0 %Pn/Hz
-Register 0x0944 (OverfrequencyResponseDelay): 0.0 ms
-Register 0x0945 (OverfrequencyReloadDelay): 610000.0 ms
-Register 0x0946 (OverfrequencyReloadStart): 50.2 Hz
-Register 0x0947 (OverfrequencyReloadSpeed): 9.0 %Pn/min
-Register 0x0948 (UnderfrequencyStart): 49.800000000000004 Hz
-Register 0x0949 (UnderfrequencyEnd): 47.5 Hz
-Register 0x094A (UnderfrequencySlope): 40.0 %Pn/Hz
-Register 0x094B (UnderfrequencyResponseDelay): 0.0 ms
-Register 0x094C (UnderfrequencyReloadDelay): 30000.0 ms
-Register 0x094D (UnderfrequencyReloadStart): 49.85 Hz
-Register 0x094E (UnderfrequencyReloadSpeed): 9.0 %Pn/min
-Register 0x094F (FrequencyRecoverMax): 50.2 Hz
-Register 0x0950 (FrequencyRecoverMin): 49.85 Hz
-Register 0x0951 (ESSOverFrequencyStart): 50.2 Hz
-Register 0x0952 (ESSOverfrequencyEnd): 52.0 Hz
-Register 0x0953 (ESSOverFrequencySlope): 40.0 %Pn/Hz
-Register 0x0954 (ESSOverFrequencyResponseDelay): 0.0 ms
-Register 0x0955 (ESSOverFrequencyReloadDelay): 610000.0 ms
-Register 0x0956 (ESSOverfrequencyReloadStart): 50.2 Hz
-Register 0x0957 (ESSOverFrequencyReloadSpeed): 9.0 %Pn/min
-Register 0x0958 (ESSUnderFrequencyStart): 49.800000000000004 Hz
-Register 0x0959 (ESSUnderfrequencyEnd): 47.5 Hz
-Register 0x095A (ESSUnderFrequencySlope): 40.0 %Pn/Hz
-Register 0x095B (ESSUnderFrequencyResponseDelay): 0.0 ms
-Register 0x095C (ESSUnderFrequencyReloadDelay): 30000.0 ms
-Register 0x095D (ESSUnderfrequencyReloadStart): 49.85 Hz
-Register 0x095E (ESSUnderFrequencyReloadSpeed): 10.0 %Pn/min
-Register 0x095F (ESSFrequencyRecoverMax): 50.2 Hz
-Register 0x0960 (ESSFrequencyRecoverMin): 49.85 Hz
-Register 0x0961 (ESSOverFrequencyTransition): 51.0 Hz
-Register 0x0962 (ESSUnderFrequencyTransition): 49.0 Hz
-Register 0x0980 (ReactiveConfig): 7 
-Register 0x0981 (PowerFactor): 1.0 
-Register 0x0982 (FixedReactivePercentage): 100.0 %
-Register 0x0983 (ReactiveCos1): 1.0 
-Register 0x0984 (ReactivedynamicValue1): 50.0 %
-Register 0x0985 (ReactiveCos2): 1.0 
-Register 0x0986 (ReactivedynamicValue2): 50.0 %
-Register 0x0987 (ReactiveCos3): 1.0 
-Register 0x0988 (ReactivedynamicValue3): 50.0 %
-Register 0x0989 (ReactiveCos4): 0.9 
-Register 0x098A (ReactivedynamicValue4): 100.0 %
-Register 0x098B (LockinV): 0.0 %
-Register 0x098C (LockoutV): 0.0 %
-Register 0x098D (HighVoltStartValue4): 103.0 %
-Register 0x098E (HighVoltEndValue4): 107.0 %
-Register 0x098F (LowVoltStartValue4): 97.0 %
-Register 0x0990 (LowVoltEndValue4): 93.0 %
-Register 0x0991 (LockinPower4): 0.0 %
-Register 0x0992 (LockoutPower4): 0.0 %
-Register 0x0993 (MaxLeadingReactivePower4): 48.43 %Pn
-Register 0x0994 (ReactiveResponseWaitTime4): 0.0 ms
-Register 0x0995 (ReactivePowerOffset4): 0.0 %Qmax
-Register 0x0996 (ReactivePowerStart4): 0.0 %Pn
-Register 0x0997 (HighVoltStartValue5): 10.0 %
-Register 0x0998 (HighVoltEndValue5): 0.0 %
-Register 0x0999 (LowVoltStartValue5): 0.0 %
-Register 0x099A (LowVoltEndValue5): 0.0 %
-Register 0x099B (LockinPower5): 0.0 %
-Register 0x099C (LockoutPower5): 0.0 %
-Register 0x099D (MaxReactivePower5): 0.0 %
-Register 0x099E (ReactiveResponseWaitTime5): 0.0 ms
-Register 0x099F (PhaseType): 2 
-Register 0x09A0 (ReactiveResponsePeriod): 10.0 秒
-Register 0x09A1 (MaxLaggingReactivePower4): 48.43 %Pn
-Register 0x09C0 (VRTConfig): 35 
-Register 0x09C1 (LvrtInVolt): 80.0 %
-Register 0x09C2 (LvrtFirstPointVolt): 15.0 %
-Register 0x09C3 (LvrtFirstPointTime): 220.0 ms
-Register 0x09C4 (LvrtSecondPointVolt): 25.0 %
-Register 0x09C5 (LvrtSecondPointTime): 640.0 ms
-Register 0x09C6 (LvrtThirdPointVolt): 50.0 %
-Register 0x09C7 (LvrtThirdPointTime): 1640.0 ms
-Register 0x09C8 (LvrtFourthPointVolt): 80.0 %
-Register 0x09C9 (LvrtFourthPointTime): 60100.0 ms
-Register 0x09CA (LvrtReactiveCurrentCoefficientK): 0.0 p.u.
-Register 0x09CB (LvrtWaitingTimeAfterVoltageRecovery): 0.0 ms
-Register 0x09CC (LvrtPowerBackRate): 30000.0 %Pn/min
-Register 0x09CD (OvrtInVlot): 115.0 %
-Register 0x09CE (OvrtFirstPointVolt): 125.0 %
-Register 0x09CF (OvrtFirstPointTime): 160.0 ms
-Register 0x09D0 (OvrtSecondPointVolt): 120.0 %
-Register 0x09D1 (OvrtSecondPointTime): 5100.0 ms
-Register 0x09D2 (OvrtThirdPointVolt): 115.0 %
-Register 0x09D3 (OvrtThirdPointTime): 60100.0 ms
-Register 0x09D4 (OvrtFourthPointVolt): 115.0 %
-Register 0x09D5 (OvrtFourthPointTime): 60100.0 ms
-Register 0x09D6 (OvrtReactiveCurrentCoefficientK): 0.0 p.u.
-Register 0x09D7 (OvrtWaitingTimeAfterVoltageRecovery): 0.0 ms
-Register 0x09D8 (OvrtPowerBackRate): 30000.0 %Pn/min
-Register 0x09D9 (ZeroCurrentModeInLowVolt): 50.0 %
-Register 0x09DA (ZeroCurrentModeInHighVolt): 120.0 %
-Register 0x09DB (LvrtOutVolt): 81.0 %
-Register 0x09DC (LvrtIqVoltStart): 80.0 %
-Register 0x09DD (OvrtOutVolt): 114.0 %
-Register 0x09DE (OvrtIqVoltStart): 115.0 %
-Register 0x09DF (MaxUnbalanceIqPct): 100.0 %
-Register 0x09E0 (): 100 
-Register 0x0A00 (IslandConfig): 3 
-Register 0x0A01 (GFCIConfig): 1 
-Register 0x0A02 (ISOConfig): 1 
-Register 0x0A03 (InsulationProtectionValue): 150.0 kΩ
-Register 0x0A04 (IsoLeakageCurrentLimit): 10.0 mA
-Register 0x0A05 (GFCILimit): 0.0 mA/kVA
-Register 0x0A06 (PE_N_Config): 3 
-Register 0x0A07 (IslandDetectSensitivity): 65535 
-Register 0x0A08 (PEProtectionValue): 65535.0 kΩ
-Register 0x0A09 (): 0 
-Register 0x1000 (AddressMask_Config_Basic1): 16895 
-Register 0x1004 (SysTimeConfig_Year): 24 年
-Register 0x1005 (SysTimeConfig_Month): 9 月
-Register 0x1006 (SysTimeConfig_Date): 13 日
-Register 0x1007 (SysTimeConfig_Hour): 10 时
-Register 0x1008 (SysTimeConfig_Minute): 32 分
-Register 0x1009 (SysTimeConfig_Second): 21 秒
-Register 0x100A (SysTimeConfig_Control): 0 
-Register 0x100B (RS485Config_Address): 3 
-Register 0x100C (RS485Config_Baud): 1 
-Register 0x100D (RS485Config_StopBit): 0 
-Register 0x100E (RS485Config_ParityBit): 0 
-Register 0x100F (RS485Config_Control): 0 
-Register 0x1010 (PV_InputMode_Config): 0 
-Register 0x1011 (InputType_Channel0_Config -- 
-InputType_Channel15_Config): 128 
-Register 0x1021 (InputType_Control): 0 
-Register 0x1022 (SafetyUpdateFromUSB_Control): 0 
-Register 0x1023 (AntiReflux_Control): 2 
-Register 0x1024 (AntiReflux_Power): 220000.0 W
-Register 0x1025 (IVCurveScan_Control): 1 
-Register 0x1026 (IVCurveScan_Period): 30.0 分钟
-Register 0x1027 (IVCurveScan_Oneshot): 0 
-Register 0x1028 (IVCurveScan_ReadChannel): 0 
-Register 0x1029 (EPS_Control): 1 
-Register 0x102A (EPS_WaitTime): 0.0 秒
-Register 0x102B (BatteryActive_Control): 1 
-Register 0x102C (BatteryActive_Oneshot): 0 
-Register 0x102D (CT_Auto_Calibrate): 0 
-Register 0x102E (Italy_AutoTest): 0 
-Register 0x102F (): 0 
-Register 0x1030 (EnergyStatistics_Date_Year): 0.0 年
-Register 0x1031 (EnergyStatistics_Date_Month): 0.0 月
-Register 0x1032 (EnergyStatistics_Date_Date): 0.0 日
-Register 0x1033 (EnergyStatistics_Config): 0 
-Register 0x1034 (Language): 1 
-Register 0x1035 (Parallel_Control): 0 
-Register 0x1036 (Parallel_Master_Slave): 1 
-Register 0x1037 (Parallel_Address): 0 
-Register 0x1038 (UnbalancedSupport_Control): 1 
-Register 0x1039 (PV_Generation_Ratio): 0.0 p.u.
-Register 0x103A (Energy_Purchase_Ratio): 0.0 p.u.
-Register 0x103B (Energy_Selling_Ratio): 0.0 p.u.
-Register 0x103C (Bat_Charge_Ratio): 0.0 p.u.
-Register 0x103D (Bat_Discharge_Ratio): 0.0 p.u.
-Register 0x103E (LogicInterface_Control): 0 
-Register 0x103F (): 127 
-Register 0x1040 (AddressMask_Config_Basic2): 0 
-Register 0x1044 (BatConfig_ID): 0 
-Register 0x1045 (BatConfig_Address): 32 
-Register 0x1046 (BatConfig_Potocol): 11 
-Register 0x1047 (BatConfig_Voltage_Over): 500.0 V
-Register 0x1048 (BatConfig_Voltage_Charge): 235.0 V
-Register 0x1049 (BatConfig_Voltage_Lack): 0.0 V
-Register 0x104A (BatConfig_Voltage_Discharge_Stop): 180.0 V
-Register 0x104B (BatConfig_Current_Charge_Limit): 35.0 A
-Register 0x104C (BatConfig_Current_Discharge_Limit): 35.0 A
-Register 0x104D (BatConfig_Depth_of_Discharge): 80.0 %
-Register 0x104E (BatConfig_End_of_Discharge): 80.0 %
-Register 0x104F (BatConfig_Capacity): 0.0 Ah
-Register 0x1050 (BatConfig_Voltage_Nominal): 200.0 V
-Register 0x1051 (BatConfig_Cell_Type): 0.0 
-Register 0x1052 (BatConfig_EPS_Buffer): 5.0 %
-Register 0x1053 (BatConfig_Control): 0 
-Register 0x1054 (BatConfig_Address2): 32 
-Register 0x1055 (BatConfig_Address3): 32 
-Register 0x1056 (BatConfig_Address4): 32 
-Register 0x1057 (BatConfig_TEMPCO): -3.9000000000000004 mV/Cell
-Register 0x1058 (BatConfig_Voltage_Recovery_Buffer): 10.0 V
-Register 0x1059 (BatConfig_Control_Bits): 0 
-Register 0x105A (BatConfig_Voltage_Float): 225.0 V
-Register 0x105B (): 0 
-Register 0x1060 (PCCSampleMode): 0 
-Register 0x1061 (Resonance_Sensitivity): 0 
-Register 0x1062 (CT_rate): 40 
-Register 0x1063 (Hard_Reflux_Config): 0 
-Register 0x1064 (Dry_Contact): 0 
-Register 0x1065 (Wet_Contact): 0 
-Register 0x1066 (pv_branch_current_limit): 0.0 A
-Register 0x1067 (): 0 
-Register 0x1080 (AddressMask_Config_Basic3): 0 
-Register 0x1084 (ArcingAlarmEnable): 0 
-Register 0x1085 (PeakToPeakSet): 0.0 
-Register 0x1086 (VarianceSet): 0.0 
-Register 0x1087 (HarmonicEnergySet): 0.0 
-Register 0x1088 (AmplitudeVarianceSet): 0.0 
-Register 0x1089 (TimeDomWeiSet): 0.0 
-Register 0x108A (FreDomWeiSet): 0.0 
-Register 0x108B (ArcDetectSensitivity): 0.0 
-Register 0x108C (ArcAlarmShutdownThreshold): 0.0 
-Register 0x108D (ArcSelfCheckCommand): 0 
-Register 0x108E (ArcingAlarmClear): 0.0 
-Register 0x108F (ArcAlarmCnt): 0.0 
-Register 0x1090 (AfciResult): 0.0 
-Register 0x1091 (SelfCheckResult): 0 
-Register 0x1092 (SelfCheckState): 0 
-Register 0x1093 (): 0 
-Register 0x10A0 (PLC_Enable_Setting): 0 
-Register 0x10A1 (PLC_Com_Property): 0 NULL
-Register 0x10A2 (): 0 
-Register 0x10A5 (BLE_Enable_Setting): 1 NULL
-Register 0x10A6 (BLE_Com_Property): 0 NULL
-Register 0x10A7 (): 0 
-Register 0x10B0 (PID_Auto_running_enable): 0 
-Register 0x10B1 (PID_Working_Start_Time): 0.0 Minute
-Register 0x10B2 (PID_Working_Hours): 0.0 Minute
-Register 0x10B3 (PID_Working_PV_Threshold): 0.0 V
-Register 0x10B4 (PID_Break_Restart_Delay): 0.0 Minute
-Register 0x1100 (AddressMask_Config_Remote1): 15 
-Register 0x1104 (Remote_On_Off_Control): 1 
-Register 0x1105 (Power_Control): 0 
-Register 0x1106 (Active_Power_Export_Limit): 100.0 %
-Register 0x1107 (Active_Power_Import_Limit): 100.0 %
-Register 0x1108 (Reactive_Power_Setting): 0.0 %
-Register 0x1109 (Power_Factor_Setting): 1.0 p.u.
-Register 0x110A (Active_Power_Limit_Speed): 100.0 %
-Register 0x110B (Reactive_Power_Response_Time): 0.1 second
-Register 0x110C (SVG_Fixed_Reactive_Power_Setting): 0.0 kVar
-Register 0x110D (): 0 
-Register 0x1110 (Energy_Storage_Mode_Control): 0 
-Register 0x1111 (Timing_ID): 0 
-Register 0x1112 (Timing_On_Off_Control): 0 
-Register 0x1113 (Timing_Charge_Start): 61952.0 小时
-分钟
-Register 0x1114 (Timing_Charge_End): 14410.0 小时
-分钟
-Register 0x1115 (Timing_Discharge_Start): 16896.0 小时
-分钟
-Register 0x1116 (Timing_Discharge_End): 59136.0 小时
-分钟
-Register 0x1117 (Timing_Power_Charge): 0.0 W
-Register 0x1118 (): 1000 
-Register 0x1119 (Timing_Power_Discharge): 0.0 W
-Register 0x111A (): 1000 
-Register 0x111B (Timing_Rsvd1 -- 4): 0 
-Register 0x111F (Timing_Control): 0 
-Register 0x1120 (TOU_ID): 0 
-Register 0x1121 (TOU_On_Off_Control): 0 
-Register 0x1122 (TOU_Charge_Start): 0.0 小时
-分钟
-Register 0x1123 (TOU_Charge_End): 0.0 小时
-分钟
-Register 0x1124 (TOU_Charge_Target_SOC): 0.0 %
-Register 0x1125 (TOU_Charge_Power): 0.0 W
-Register 0x1126 (): 0 
-Register 0x1127 (TOU_Executed_Date_Start): 2816.0 月
-日
-Register 0x1128 (TOU_Executed_Date_End): 2816.0 月
-日
-Register 0x1129 (TOU_Executed_Day_of_Week): 0 
-Register 0x112A (TOU_Rsvd1 -- 5): 0 
-Register 0x112F (TOU_Control): 0 
-Register 0x1130 (Peak_Shaving_Discharge_Threshold): 0.0 W
-Register 0x1132 (Peak_Shaving_Charge_Threshold): 0.0 W
-Register 0x1134 (): 0 
-Register 0x1140 (AddressMask_Config_Remote2): 0 
-Register 0x1144 (Off_Grid_Charge_Source): 0 
-Register 0x1145 (Off_Grid_Grid_Power): 2.0 kW
-Register 0x1146 (Off_Grid_DG_Power): 0.0 kW
-Register 0x1147 (): 0 
-Register 0x1180 (AddressMask_Config_Remote3): 0 
-Register 0x1184 (Passive_Timeout): 0.0 秒
-Register 0x1185 (Passive_Timeout_Action): 0 
-Register 0x1186 (Passive_Rsvd1): 0 
-Register 0x1187 (Passive_Manual_Gdes): 0.0 W
-Register 0x1188 (): 0 
-Register 0x1189 (Passive_Manual_Blo): 0.0 W
-Register 0x118A (): 0 
-Register 0x118B (Passive_Manual_Bup): 0.0 W
-Register 0x118C (): 0 
-Register 0x118D (Passive_Manual_Gdzup): 0.0 W
-Register 0x118E (): 0 
-Register 0x118F (Passive_Manual_Gdzlo): 0.0 W
-Register 0x1190 (): 0 
-Register 0x1191 (Passive_Scheduler_Gdes_Ante): 0.0 W
-Register 0x1192 (): 0 
-Register 0x1193 (Passive_Scheduler_Blo_Ante): 0.0 W
-Register 0x1194 (): 0 
-Register 0x1195 (Passive_Scheduler_Bup_Ante): 0.0 W
-Register 0x1196 (): 0 
-Register 0x1197 (Passive_Scheduler_Gdzup_Ante): 0.0 W
-Register 0x1198 (): 0 
-Register 0x1199 (Passive_Scheduler_Gdzlo_Ante): 0.0 W
-Register 0x119A (): 0 
-Register 0x119B (Passive_Scheduler_Gdes_Post): 0.0 W
-Register 0x119C (): 0 
-Register 0x119D (Passive_Scheduler_Blo_Post): 0.0 W
-Register 0x119E (): 0 
-Register 0x119F (Passive_Scheduler_Bup_Post): 0.0 W
-Register 0x11A0 (): 0 
-Register 0x11A1 (Passive_Scheduler_Gdzup_Post): 0.0 W
-Register 0x11A2 (): 0 
-Register 0x11A3 (Passive_Scheduler_Gdzlo_Post): 0.0 W
-Register 0x11A4 (): 0 
-Register 0x11A5 (Passive_Scheduler_StartTime): 0.0 秒
-Register 0x11A6 (): 0 
-Register 0x11A7 (Passive_Scheduler_DurationTime): 0.0 秒
-Register 0x11A8 (): 0 
-Register 0x11A9 (Passive_Scheduler_ManagementMode): 0 
-Register 0x11AA (): 0 
-Register 0x11C0 (AddressMask_Config_Remote4): 0 
-Register 0x11C4 (CommBreak_Protect_Enable): 0.0 
-Register 0x11C5 (CommBreak_Recovery_Mode): 0.0 
-Register 0x11C6 (CommBreak_Threshold_Time): 0.0 min
-Register 0x11C7 (CommBreak_Mode_Judge): 0.0 
-Register 0x11C8 (CommBreak_Alarm_Clear): 0.0 
-Register 0x1300 (AddressMask_Config_ReadOnly_Result1): 31 
-Register 0x1304 (Italay_Autotest_Result1): 253.0 V
-Register 0x1305 (Italay_Autotest_Result2): 900.0 ms
-Register 0x1306 (Italay_Autotest_Result3): 0.0 V
-Register 0x1307 (Italay_Autotest_Result4): 0.0 ms
-Register 0x1308 (Italay_Autotest_Result5): 264.5 V
-Register 0x1309 (Italay_Autotest_Result6): 200.0 ms
-Register 0x130A (Italay_Autotest_Result7): 0.0 V
-Register 0x130B (Italay_Autotest_Result8): 0.0 ms
-Register 0x130C (Italay_Autotest_Result9): 0.0 V
-Register 0x130D (Italay_Autotest_Result10): 0.0 ms
-Register 0x130E (Italay_Autotest_Result11): 0.0 V
-Register 0x130F (Italay_Autotest_Result12): 0.0 ms
-Register 0x1310 (Italay_Autotest_Result13): 0.0 V
-Register 0x1311 (Italay_Autotest_Result14): 0.0 ms
-Register 0x1312 (Italay_Autotest_Result15): 0.0 V
-Register 0x1313 (Italay_Autotest_Result16): 0.0 ms
-Register 0x1314 (Italay_Autotest_Result17): 0.0 Hz
-Register 0x1315 (Italay_Autotest_Result18): 0.0 ms
-Register 0x1316 (Italay_Autotest_Result19): 0.0 Hz
-Register 0x1317 (Italay_Autotest_Result20): 0.0 ms
-Register 0x1318 (Italay_Autotest_Result21): 0.0 Hz
-Register 0x1319 (Italay_Autotest_Result22): 0.0 ms
-Register 0x131A (Italay_Autotest_Result23): 0.0 Hz
-Register 0x131B (Italay_Autotest_Result24): 0.0 ms
-Register 0x131C (Italay_Autotest_Result25): 0.0 Hz
-Register 0x131D (Italay_Autotest_Result26): 0.0 ms
-Register 0x131E (Italay_Autotest_Result27): 0.0 Hz
-Register 0x131F (Italay_Autotest_Result28): 0.0 ms
-Register 0x1320 (Italay_Autotest_Result29): 0.0 Hz
-Register 0x1321 (Italay_Autotest_Result30): 0.0 ms
-Register 0x1322 (Italay_Autotest_Result31): 0.0 Hz
-Register 0x1323 (Italay_Autotest_Result32): 0.0 ms
-Register 0x1324 (Italay_Autotest_Result33 -- 48): 2530 
+0x0040,AddressMask_General1,0.0000,,U64
+0x0041,,0.0000,,U16
+0x0042,,0.0000,,U16
+0x0043,,31.0000,,U16
+0x0044,Modbus_Protocol_Version,108.0000,,BCD16
+0x0045,COMM_MCU_Code,,,ASCII
+0x0046,CTRL1_MCU_Code,,,ASCII
+0x0047,CTRL2_MCU_Code,,,ASCII
+0x0048,MCU_Code_Rsvd1 -- 10,0.0000,,U16
+0x0052,Protocol_ARM-DSPM,1028.0000,,U16
+0x0053,Protocol_ARM-DSPS,1028.0000,,U16
+0x0054,Protocol_DSPM-DSPS,771.0000,,U16
+0x0055,Protocol_Version_Rsvd4 -- 20,0.0000,,U16
+0x0066,,0.0000,,U16
+0x007E,客户ID_0 -- 1,0.0000,,U16
+0x0400,AddressMask_Realtime_SysInfo1,16383.0000,,U64
+0x0404,SysState,2.0000,,U16
+0x0405,Fault1 -- 18,0.0000,,U16
+0x0417,Countdown,60.0000,秒,U16
+0x0418,Temperature_Env1 -- 2,48.0000,℃,I16
+0x041A,Temperature_HeatSink1 -- 6,40.0000,℃,I16
+0x0420,Temperature_Inv1 -- 3,46.0000,℃,I16
+0x0423,Temp_Rsvd1 -- 3,0.0000,℃,I16
+0x0426,GenerationTime_Today,653.0000,分钟,U16
+0x0427,GenerationTime_Total,6.0000,分钟,U32
+0x0429,ServiceTime_Total,11.0000,分钟,U32
+0x042B,InsulationResistance,449.0000,kΩ,U16
+0x042C,SysTime_Year,24.0000,,U16
+0x042D,SysTime_Month,9.0000,,U16
+0x042E,SysTime_Date,13.0000,,U16
+0x042F,SysTime_Hour,11.0000,,U16
+0x0430,SysTime_Minute,0.0000,,U16
+0x0431,SysTime_Second,44.0000,,U16
+0x0432,Fault19 -- 30,0.0000,,U16
+0x043E,,0.0000,,U16
+0x0440,AddressMask_Realtime_SysInfo2,0.0000,,U64
+0x0444,Production_Code,4660.0000,,U16
+0x0445,Serial_Number0 -- 7,SP,,ASCII
+0x044D,Hardware_Version0 -- 1,V0,,ASCII
+0x044F,Software_Version_Stage_COM,0V,,ASCII
+0x0450,Software_Version_Major_COM,11,,ASCII
+0x0451,Software_Version_Custom_COM,00,,ASCII
+0x0452,Software_Version_Minor_COM,51,,ASCII
+0x0453,Software_Version_Stage_Master,0V,,ASCII
+0x0454,Software_Version_Major_Master,11,,ASCII
+0x0455,Software_Version_Custom_Master,00,,ASCII
+0x0456,Software_Version_Minor_Master,51,,ASCII
+0x0457,Software_Version_Stage_Slave,0V,,ASCII
+0x0458,Software_Version_Major_Slave,11,,ASCII
+0x0459,Software_Version_Custom_Slave,00,,ASCII
+0x045A,Software_Version_Minor_Slave,51,,ASCII
+0x045B,Safety_Version_Major,12345.0000,,U16
+0x045C,Safety_version_Minor,12337.0000,,U16
+0x045D,Boot_Version_COM,0.0000,,U16
+0x045E,Boot_Version_Master,0.0000,,U16
+0x045F,Boot_Version_Slave,0.0000,,U16
+0x0460,Safety_Firmware_Version_Stage,0V,,ASCII
+0x0461,Safety_Firmware_Version_Major,2.,,ASCII
+0x0462,Safety_Firmware_Version_Custom,00,,ASCII
+0x0463,Safety_Firmware_Version_Minor,00,,ASCII
+0x0464,Safety_Hardware_Version0,V1,,ASCII
+0x0465,Safety_Hardware_Version1,.0,,ASCII
+0x0466,Afci_Ver_Firmware,,,ASCII
+0x0467,Afci_Ver_Sft,,,ASCII
+0x0468,Afci_Ver_Hard,,,ASCII
+0x0469,Afci_Srs_Hard,,,ASCII
+0x046A,Afci_Ver_Com,,,ASCII
+0x046B,Safety_Package_Version0,,,ASCII
+0x046C,Safety_Package_Version1,,,ASCII
+0x046D,,0.0000,,U16
+0x0470,Serial_Number8 -- 9,,,ASCII
+0x0472,Serial_Number11_Rsvd0 -- 4,,,ASCII
+0x0477,State1 -- 9,0.0000,,U16
+0x0480,AddressMask_Realtime_GridOutput1,0.0000,,U64
+0x0484,Frequency_Grid,49.9700,Hz,U16
+0x0485,ActivePower_Output_Total,0.5800,kW,I16
+0x0486,ReactivePower_Output_Total,-0.8000,kW,I16
+0x0487,ApparentPower_Output_Total,0.0000,kW,I16
+0x0488,ActivePower_PCC_Total,-5.5800,kW,I16
+0x0489,ReactivePower_PCC_Total,0.0000,kW,I16
+0x048A,ApparentPower_PCC_Total,0.0000,kW,I16
+0x048B,GridOutput_Rsvd1 -- 2,0.0000,,U16
+0x048D,Voltage_Phase_R,237.9000,V,U16
+0x048E,Current_Output_R,3.1800,A,U16
+0x048F,ActivePower_Output_R,-0.4200,kW,I16
+0x0490,ReactivePower_Output_R,0.0000,kW,I16
+0x0491,PowerFactor_Output_R,0.0000,p.u.,I16
+0x0492,Current_PCC_R,8.8400,A,U16
+0x0493,ActivePower_PCC_R,-1.8500,kW,I16
+0x0494,ReactivePower_PCC_R,0.0000,kW,I16
+0x0495,PowerFactor_PCC_R,0.0000,p.u.,I16
+0x0496,R_Rsvd1 -- 2,0.0000,,U16
+0x0498,Voltage_Phase_S,236.4000,V,U16
+0x0499,Current_Output_S,6.4000,A,U16
+0x049A,ActivePower_Output_S,1.3700,kW,I16
+0x049B,ReactivePower_Output_S,0.0000,kW,I16
+0x049C,PowerFactor_Output_S,0.0000,p.u.,I16
+0x049D,Current_PCC_S,8.7600,A,U16
+0x049E,ActivePower_PCC_S,-1.8500,kW,I16
+0x049F,ReactivePower_PCC_S,0.0000,kW,I16
+0x04A0,PowerFactor_PCC_S,0.0000,p.u.,I16
+0x04A1,S_Rsvd1 -- 2,0.0000,,U16
+0x04A3,Voltage_Phase_T,239.0000,V,U16
+0x04A4,Current_Output_T,2.4400,A,U16
+0x04A5,ActivePower_Output_T,-0.3600,kW,I16
+0x04A6,ReactivePower_Output_T,0.0000,kW,I16
+0x04A7,PowerFactor_Output_T,0.0000,p.u.,I16
+0x04A8,Current_PCC_T,8.7200,A,U16
+0x04A9,ActivePower_PCC_T,-1.8800,kW,I16
+0x04AA,ReactivePower_PCC_T,0.0000,kW,I16
+0x04AB,PowerFactor_PCC_T,0.0000,p.u.,I16
+0x04AC,T_Rsvd1 -- 2,0.0000,,U16
+0x04AE,ActivePower_PV_Ext,0.0000,kW,U16
+0x04AF,ActivePower_Load_Sys,6.1600,kW,U16
+0x04B0,Voltage_Phase_L1N,0.0000,V,U16
+0x04B1,Current_Output_L1N,0.0000,A,U16
+0x04B2,ActivePower_Output_L1N,0.0000,kW,I16
+0x04B3,Current_PCC_L1N,0.0000,A,U16
+0x04B4,ActivePower_PCC_L1N,0.0000,kW,I16
+0x04B5,Voltage_Phase_L2N,0.0000,V,U16
+0x04B6,Current_Output_L2N,0.0000,A,U16
+0x04B7,ActivePower_Output_L2N,0.0000,kW,I16
+0x04B8,Current_PCC_L2N,0.0000,A,U16
+0x04B9,ActivePower_PCC_L2N,0.0000,kW,I16
+0x04BA,Voltage_Line_L1,0.0000,V,U16
+0x04BB,Voltage_Line_L2,0.0000,V,U16
+0x04BC,Voltage_Line_L3,0.0000,V,U16
+0x04BD,Power_Factor,0.5700,p.u.,I16
+0x0500,AddressMask_Realtime_EmergencyOutput1,0.0000,,U64
+0x0504,ActivePower_Load_Total,0.0000,kW,I16
+0x0505,ReactivePower_Load_Total,0.0000,kW,I16
+0x0506,ApparentPower_Load_Total,0.0000,kW,I16
+0x0507,Frequency_Output,49.9700,Hz,U16
+0x0508,ESOutput_Rsvd1 -- 2,0.0000,,U16
+0x050A,Voltage_Output_R,237.4000,V,U16
+0x050B,Current_Load_R,0.2200,A,I16
+0x050C,ActivePower_Load_R,0.0000,kW,I16
+0x050D,ReactivePower_Load_R,0.0000,kW,I16
+0x050E,ApparentPower_Load_R,0.0000,kVA,I16
+0x050F,LoadPeakRatio_R,0.0000,p.u.,U16
+0x0510,Voltage_Load_R,236.2000,V,U16
+0x0511,ESR_Rsvd2,0.0000,,U16
+0x0512,Voltage_Output_S,237.1000,V,U16
+0x0513,Current_Load_S,0.2200,A,I16
+0x0514,ActivePower_Load_S,0.0000,kW,I16
+0x0515,ReactivePower_Load_S,0.0000,kW,I16
+0x0516,ApparentPower_Load_S,0.0000,kVA,I16
+0x0517,LoadPeakRatio_S,0.0000,p.u.,U16
+0x0518,Voltage_Load_S,236.0000,V,U16
+0x0519,ESS_Rsvd2,0.0000,,U16
+0x051A,Voltage_Output_T,238.2000,V,U16
+0x051B,Current_Load_T,0.2100,A,I16
+0x051C,ActivePower_Load_T,0.0000,kW,I16
+0x051D,ReactivePower_Load_T,0.0000,kW,I16
+0x051E,ApparentPower_Load_T,0.0000,kVA,I16
+0x051F,LoadPeakRatio_T,0.0000,p.u.,U16
+0x0520,Voltage_Load_T,236.9000,V,U16
+0x0521,EST_Rsvd2,0.0000,,U16
+0x0522,Voltage_Output_L1N,0.0000,V,U16
+0x0523,Current_Load_L1N,0.0000,A,I16
+0x0524,ActivePower_Load_L1N,0.0000,kW,I16
+0x0525,Voltage_Output_L2N,0.0000,V,U16
+0x0526,Current_Load_L2N,0.0000,A,I16
+0x0527,ActivePower_Load_L2N,0.0000,kW,I16
+0x0580,AddressMask_Realtime_Input_PV1,0.0000,,U64
+0x0584,Voltage_PV1 -- 16,514.1000,V,U16
+0x0585,Current_PV1 -- 16,1.1500,A,U16
+0x0586,Power_PV1 -- 16,0.5900,kW,U16
+0x0587,Voltage_PV2 -- 16,507.5000,V,U16
+0x0588,Current_PV2 -- 16,0.5300,A,U16
+0x0589,Power_PV2 -- 16,0.2700,kW,U16
+0x05B4,,0.0000,,U16
+0x05C0,AddressMask_Realtime_Input_PV2,0.0000,,U64
+0x05C4,Power_PV_Total,0.8000,kW,U16
+0x0600,AddressMask_Realtime_Input_Bat1,0.0000,,U64
+0x0604,Voltage_Bat1 -- 8,430.0000,V,U16
+0x0605,Current_Bat1 -- 8,0.0200,A,I16
+0x0606,Power_Bat1 -- 8,0.0100,kW,I16
+0x0607,Temperature_Env_Bat1 -- 8,0.0000,℃,I16
+0x0608,SOC_Bat1 -- 8,0.0000,%,U16
+0x0609,SOH_Bat1 -- 8,0.0000,%,U16
+0x060A,ChargeCycle_Bat1 -- 8,0.0000,cycle,U16
+0x063C,,0.0000,,U16
+0x0640,AddressMask_Realtime_Input_Bat2,0.0000,,U64
+0x0644,Voltage_Bat9 -- 12,0.0000,V,U16
+0x0645,Current_Bat9 -- 12,0.0000,A,I16
+0x0646,Power_Bat9 -- 12,0.0000,kW,I16
+0x0647,Temperature_Env_Bat9 -- 12,0.0000,℃,I16
+0x0648,SOC_Bat9 -- 12,0.0000,%,U16
+0x0649,SOH_Bat9 -- 12,0.0000,%,U16
+0x064A,ChargeCycle_Bat9 -- 12,0.0000,cycle,U16
+0x0660,,0.0000,,U16
+0x0667,Power_Bat_Total,0.0000,kW,I16
+0x0668,SOC_Bat_Average,0.0000,%,U16
+0x0669,SOH_Bat,0.0000,%,U16
+0x066A,CurrentBattery_num,0.0000,,U16
+0x0680,AddressMask_Realtime_ElectricityStatistics1,0.0000,,U64
+0x0684,PV_Generation_Today,0.0000,kWh,U32
+0x0686,PV_Generation_Total,0.3000,kWh,U32
+0x0688,Load_Consumption_Today,0.0000,kWh,U32
+0x068A,Load_Consumption_Total,0.0000,kWh,U32
+0x068C,Energy_Purchase_Today,0.0000,kWh,U32
+0x068E,Energy_Purchase_Total,0.0000,kWh,U32
+0x0690,Energy_Selling_Today,0.0000,kWh,U32
+0x0692,Energy_Selling_Total,0.3000,kWh,U32
+0x0694,Bat_Charge_Today,0.0000,kWh,U32
+0x0696,Bat_Charge_Total,0.0000,kWh,U32
+0x0698,Bat_Discharge_Today,0.0000,kWh,U32
+0x069A,Bat_Discharge_Total,0.0000,kWh,U32
+0x069C,PV_Generation_Month,0.0000,kWh,U32
+0x069E,PV_Generation_Year,0.0000,kWh,U32
+0x06A0,Load_Consumption_Month,0.0000,kWh,U32
+0x06A2,Load_Consumption_Year,0.0000,kWh,U32
+0x06A4,Energy_Purchase_Month,0.0000,kWh,U32
+0x06A6,Energy_Purchase_Year,0.0000,kWh,U32
+0x06A8,Energy_Selling_Month,0.0000,kWh,U32
+0x06AA,Energy_Selling_Year,0.0000,kWh,U32
+0x06AC,Bat_Charge_Month,0.0000,kWh,U32
+0x06AE,Bat_Charge_Year,0.0000,kWh,U32
+0x06B0,Bat_Discharge_Month,0.0000,kWh,U32
+0x06B2,Bat_Discharge_Year,0.0000,kWh,U32
+0x06C0,AddressMask_Realtime_ClassifiedInfo1,0.0000,,U64
+0x06C4,GFCI,3.0000,mA,U16
+0x06C5,Current_Bus_Balance,0.0000,A,I16
+0x06C6,DCI_R,-26.0000,mA,I16
+0x06C7,DCI_S,44.0000,mA,I16
+0x06C8,DCI_T,50.0000,mA,I16
+0x06C9,DCV_R,-23.0000,mV,I16
+0x06CA,DCV_S,101.0000,mV,I16
+0x06CB,DCV_T,36.0000,mV,I16
+0x06CC,Voltage_Bus,805.6000,V,U16
+0x06CD,Voltage_Bus_P,402.7000,V,U16
+0x06CE,Voltage_Bus_N,402.9000,V,U16
+0x06CF,Voltage_Bus_LLC,0.0000,V,U16
+0x06D0,Current_BuckBoost,0.0000,A,I16
+0x06D1,Voltage_Bus_P_Half,0.0000,V,U16
+0x06D2,Voltage_Bus_N_Half,0.0000,V,U16
+0x06D3,FlyingCap_Voltage1 -- 16,0.0000,V,U16
+0x06E3,Internal_Info1 -- 10,77.4000,V,U16
+0x06ED,RatedPower_Inverter,0.0000,kW,U16
+0x06EE,IVPoints_Effec_Num,88.0000,,U16
+0x0700,AddressMask_Realtime_CombinerInfo1,0.0000,,U64
+0x0704,Voltage_Group1 -- 16,0.0000,V,U16
+0x0705,"Current_Group1_Branch1 --
+Current_Group16_Branch1",0.0000,A,U16
+0x0706,"Current_Group1_Branch2 -- 
+Current_Group16_Branch2",0.0000,A,U16
+0x0734,,0.0000,,U16
+0x0740,AddressMask_Realtime_CombinerInfo2,0.0000,,U64
+0x0744,"Current_Group1_Branch3 --
+Current_Group16_Branch3",0.0000,A,U16
+0x0745,"Current_Group1_Branch4 -- 
+Current_Group16_Branch4",0.0000,A,U16
+0x0764,,0.0000,,U16
+0x0780,AddressMask_Realtime_ArcInfo3,0.0000,,U64
+0x0784,ArcStrength_MPPT_1 -- 24,0.0000,,I16
+0x079C,,0.0000,,U16
+0x07A2,ArcStrength_history_Channel1 -- 24,0.0000,,I16
+0x07BA,,0.0000,,U16
+0x07C0,AddressMask_Realtime_ArcInfo4,0.0000,,U64
+0x07C4,arc_peak_to_peak,0.0000,,U16
+0x07C5,arc_variance,0.0000,,U16
+0x07C6,arc_harmonic_energy,0.0000,,U16
+0x07C7,arc_amplitude_variance,0.0000,,U16
+0x0800,ConnectWaitTime,60.0000,秒,U16
+0x0801,PowerUpSpeed,8.0000,%Pn/min,U16
+0x0802,ReconnectWaitTime,60.0000,秒,U16
+0x0803,ReconnectPowerUpSpeed,8.0000,%Pn/min,U16
+0x0804,VoltHighLimit,253.0000,V,U16
+0x0805,VoltLowLimit,195.5000,V,U16
+0x0806,FreqHighLimit,50.1000,Hz,U16
+0x0807,FreqLowLimit,47.5000,Hz,U16
+0x0808,ReconnectVoltHighLimit,253.0000,V,U16
+0x0809,ReconnectVoltLowLimit,195.5000,V,U16
+0x080A,ReconnectFreqHighLimit,50.1000,Hz,U16
+0x080B,ReconnectFreqLowLimit,47.5000,Hz,U16
+0x0840,Voltage Config,90.0000,,U16
+0x0841,RatedVoltage,230.0000,V,U16
+0x0842,FirstOvervoltageProtectionValue,264.5000,V,U16
+0x0843,FirstOvervoltageProtectionTime,60.0000,ms,U16
+0x0844,SecondOvervoltageProtectionValue,287.5000,V,U16
+0x0845,SecondOvervoltageProtectionTime,60.0000,ms,U16
+0x0846,ThirdOvervoltageProtectionValue,0.0000,V,U16
+0x0847,ThirdOvervoltageProtectionTime,10.0000,ms,U16
+0x0848,FirstUnderVoltageProtectionValue,184.0000,V,U16
+0x0849,FirstUndervoltageProtectionTime,3000.0000,ms,U16
+0x084A,SecondUnderVoltageProtectionValue,103.5000,V,U16
+0x084B,SecondUndervoltageProtectionTime,300.0000,ms,U16
+0x084C,ThirdUnderVoltageProtectionValue,0.0000,V,U16
+0x084D,ThirdUndervoltageProtectionTime,10.0000,ms,U16
+0x084E,10MinOvervoltageProtectionValue,253.0000,V,U16
+0x084F,FirstOvervoltageProtectionTimeHi,0.0000,,U16
+0x0850,SecondOvervoltageProtectionTimeHi,0.0000,,U16
+0x0851,ThirdOvervoltageProtectionTimeHi,0.0000,,U16
+0x0880,FrequencyConfig,9.0000,,U16
+0x0881,RatedFrequency,50.0000,Hz,U16
+0x0882,FirstOverfrequencyProtectionValue,51.5000,Hz,U16
+0x0883,FirstOverfrequencyProtectionTime,60.0000,ms,U16
+0x0884,SecondOverfrequencyProtectionValue,52.0000,Hz,U16
+0x0885,SecondOverfrequencyProtectionTime,60.0000,ms,U16
+0x0886,ThirdOverfrequencyProtectionValue,70.0000,Hz,U16
+0x0887,ThirdOverfrequencyProtectionTime,10.0000,ms,U16
+0x0888,FirstUnderfrequencyProtectionValue,47.5000,Hz,U16
+0x0889,FirstUnderfrequencyProtectionTime,60.0000,ms,U16
+0x088A,SecondUnderfrequencyProtectionValue,45.0000,Hz,U16
+0x088B,SecondUnderfrequencyProtectionTime,60.0000,ms,U16
+0x088C,ThirdUnderfrequencyProtectionValue,40.0000,Hz,U16
+0x088D,ThirdUnderfrequencyProtectionTime,10.0000,ms,U16
+0x088E,FirstOverfrequencyProtectionTimeHi,0.0000,,U16
+0x088F,SecondOverfrequencyProtectionTimeHi,0.0000,,U16
+0x0890,ThirdOverfrequencyProtectionTimeHi,0.0000,,U16
+0x0891,FirstUnderfrequencyProtectionTimeHi,0.0000,,U16
+0x0892,SecondUnderfrequencyProtectionTimeHi,0.0000,,U16
+0x0893,ThirdUnderfrequencyProtectionTimeHi,0.0000,,U16
+0x08C0,DCI Config,3.0000,,U16
+0x08C1,DCIFirstProtectionValue,150.0000,mA,U16
+0x08C2,DCIFirstProtectionTime,800.0000,ms,U16
+0x08C3,DCISecondProtectionValue,500.0000,mA,U16
+0x08C4,DCISecondProtectionTime,100.0000,ms,U16
+0x08C5,DCIThirdProtectionValue,800.0000,mA,U16
+0x08C6,DCIThirdProtectionTime,10.0000,ms,U16
+0x08C7,DCITestValue1,0.0000,mA,I16
+0x08C8,DCITestValue2,0.0000,mA,I16
+0x08C9,DCITestValue3,0.0000,mA,I16
+0x08CA,DCIFirstProtectionProportion,0.5000,%,U16
+0x08CB,DCISecondProtectionProportion,3.0000,%,U16
+0x08CC,DCIThirdProtectionProportion,5.0000,%,U16
+0x0900,Remote Config,1091.0000,,U16
+0x0901,ActiveOutputLimit,100.0000,%,U16
+0x0902,ActiveOutputDownSpeed,100.0000,%Pn/min,U16
+0x0903,GridVoltageDropStart,253.0000,V,U16
+0x0904,GridVoltageDropStop,260.0000,V,U16
+0x0905,GridVoltageDropMinPower,20.0000,%,I16
+0x0906,OvervoltageDownSpeed,600.0000,%Pn/min,U16
+0x0907,ChgDerateVoltStart,210.0000,V,U16
+0x0908,ChgDerateVoltEnd,205.0000,V,U16
+0x0909,ChgDerateMinPower,-20.0000,%,I16
+0x090A,PowerForLogic1 -- 8,0.0000,%,I16
+0x0912,RefluxPower,100.0000,%,U16
+0x0913,RefluxOVloadTime,3000.0000,ms,U16
+0x0914,LogicDerateSpeed,3000.0000,%Pn/min,U16
+0x0915,LogicReloadSpeed,3000.0000,%Pn/min,U16
+0x0916,VoltageDerateResponseTime,10.0000,秒,U16
+0x0917,PowerDownSpeed,3000.0000,%Pn/min,U16
+0x0940,FrequencyDerateConfig,37.0000,,U16
+0x0941,OverfrequencyStart,50.2000,Hz,U16
+0x0942,OverfrequencyEnd,52.0000,Hz,U16
+0x0943,OverfrequencySlope,40.0000,%Pn/Hz,U16
+0x0944,OverfrequencyResponseDelay,0.0000,ms,U16
+0x0945,OverfrequencyReloadDelay,610000.0000,ms,U16
+0x0946,OverfrequencyReloadStart,50.2000,Hz,U16
+0x0947,OverfrequencyReloadSpeed,9.0000,%Pn/min,U16
+0x0948,UnderfrequencyStart,49.8000,Hz,U16
+0x0949,UnderfrequencyEnd,47.5000,Hz,U16
+0x094A,UnderfrequencySlope,40.0000,%Pn/Hz,U16
+0x094B,UnderfrequencyResponseDelay,0.0000,ms,U16
+0x094C,UnderfrequencyReloadDelay,30000.0000,ms,U16
+0x094D,UnderfrequencyReloadStart,49.8500,Hz,U16
+0x094E,UnderfrequencyReloadSpeed,9.0000,%Pn/min,U16
+0x094F,FrequencyRecoverMax,50.2000,Hz,U16
+0x0950,FrequencyRecoverMin,49.8500,Hz,U16
+0x0951,ESSOverFrequencyStart,50.2000,Hz,U16
+0x0952,ESSOverfrequencyEnd,52.0000,Hz,U16
+0x0953,ESSOverFrequencySlope,40.0000,%Pn/Hz,U16
+0x0954,ESSOverFrequencyResponseDelay,0.0000,ms,U16
+0x0955,ESSOverFrequencyReloadDelay,610000.0000,ms,U16
+0x0956,ESSOverfrequencyReloadStart,50.2000,Hz,U16
+0x0957,ESSOverFrequencyReloadSpeed,9.0000,%Pn/min,U16
+0x0958,ESSUnderFrequencyStart,49.8000,Hz,U16
+0x0959,ESSUnderfrequencyEnd,47.5000,Hz,U16
+0x095A,ESSUnderFrequencySlope,40.0000,%Pn/Hz,U16
+0x095B,ESSUnderFrequencyResponseDelay,0.0000,ms,U16
+0x095C,ESSUnderFrequencyReloadDelay,30000.0000,ms,U16
+0x095D,ESSUnderfrequencyReloadStart,49.8500,Hz,U16
+0x095E,ESSUnderFrequencyReloadSpeed,10.0000,%Pn/min,U16
+0x095F,ESSFrequencyRecoverMax,50.2000,Hz,U16
+0x0960,ESSFrequencyRecoverMin,49.8500,Hz,U16
+0x0961,ESSOverFrequencyTransition,51.0000,Hz,U16
+0x0962,ESSUnderFrequencyTransition,49.0000,Hz,U16
+0x0980,ReactiveConfig,7.0000,,U16
+0x0981,PowerFactor,1.0000,,I16
+0x0982,FixedReactivePercentage,100.0000,%,I16
+0x0983,ReactiveCos1,1.0000,,I16
+0x0984,ReactivedynamicValue1,50.0000,%,I16
+0x0985,ReactiveCos2,1.0000,,I16
+0x0986,ReactivedynamicValue2,50.0000,%,I16
+0x0987,ReactiveCos3,1.0000,,I16
+0x0988,ReactivedynamicValue3,50.0000,%,I16
+0x0989,ReactiveCos4,0.9000,,I16
+0x098A,ReactivedynamicValue4,100.0000,%,I16
+0x098B,LockinV,0.0000,%,U16
+0x098C,LockoutV,0.0000,%,U16
+0x098D,HighVoltStartValue4,103.0000,%,U16
+0x098E,HighVoltEndValue4,107.0000,%,U16
+0x098F,LowVoltStartValue4,97.0000,%,U16
+0x0990,LowVoltEndValue4,93.0000,%,U16
+0x0991,LockinPower4,0.0000,%,U16
+0x0992,LockoutPower4,0.0000,%,U16
+0x0993,MaxLeadingReactivePower4,48.4300,%Pn,U16
+0x0994,ReactiveResponseWaitTime4,0.0000,ms,U16
+0x0995,ReactivePowerOffset4,0.0000,%Qmax,I16
+0x0996,ReactivePowerStart4,0.0000,%Pn,U16
+0x0997,HighVoltStartValue5,10.0000,%,U16
+0x0998,HighVoltEndValue5,0.0000,%,U16
+0x0999,LowVoltStartValue5,0.0000,%,U16
+0x099A,LowVoltEndValue5,0.0000,%,U16
+0x099B,LockinPower5,0.0000,%,U16
+0x099C,LockoutPower5,0.0000,%,U16
+0x099D,MaxReactivePower5,0.0000,%,U16
+0x099E,ReactiveResponseWaitTime5,0.0000,ms,U16
+0x099F,PhaseType,2.0000,,U16
+0x09A0,ReactiveResponsePeriod,10.0000,秒,U16
+0x09A1,MaxLaggingReactivePower4,48.4300,%Pn,U16
+0x09C0,VRTConfig,35.0000,,U16
+0x09C1,LvrtInVolt,80.0000,%,U16
+0x09C2,LvrtFirstPointVolt,15.0000,%,U16
+0x09C3,LvrtFirstPointTime,220.0000,ms,U16
+0x09C4,LvrtSecondPointVolt,25.0000,%,U16
+0x09C5,LvrtSecondPointTime,640.0000,ms,U16
+0x09C6,LvrtThirdPointVolt,50.0000,%,U16
+0x09C7,LvrtThirdPointTime,1640.0000,ms,U16
+0x09C8,LvrtFourthPointVolt,80.0000,%,U16
+0x09C9,LvrtFourthPointTime,60100.0000,ms,U16
+0x09CA,LvrtReactiveCurrentCoefficientK,0.0000,p.u.,U16
+0x09CB,LvrtWaitingTimeAfterVoltageRecovery,0.0000,ms,U16
+0x09CC,LvrtPowerBackRate,30000.0000,%Pn/min,U16
+0x09CD,OvrtInVlot,115.0000,%,U16
+0x09CE,OvrtFirstPointVolt,125.0000,%,U16
+0x09CF,OvrtFirstPointTime,160.0000,ms,U16
+0x09D0,OvrtSecondPointVolt,120.0000,%,U16
+0x09D1,OvrtSecondPointTime,5100.0000,ms,U16
+0x09D2,OvrtThirdPointVolt,115.0000,%,U16
+0x09D3,OvrtThirdPointTime,60100.0000,ms,U16
+0x09D4,OvrtFourthPointVolt,115.0000,%,U16
+0x09D5,OvrtFourthPointTime,60100.0000,ms,U16
+0x09D6,OvrtReactiveCurrentCoefficientK,0.0000,p.u.,U16
+0x09D7,OvrtWaitingTimeAfterVoltageRecovery,0.0000,ms,U16
+0x09D8,OvrtPowerBackRate,30000.0000,%Pn/min,U16
+0x09D9,ZeroCurrentModeInLowVolt,50.0000,%,U16
+0x09DA,ZeroCurrentModeInHighVolt,120.0000,%,U16
+0x09DB,LvrtOutVolt,81.0000,%,U16
+0x09DC,LvrtIqVoltStart,80.0000,%,U16
+0x09DD,OvrtOutVolt,114.0000,%,U16
+0x09DE,OvrtIqVoltStart,115.0000,%,U16
+0x09DF,MaxUnbalanceIqPct,100.0000,%,U16
+0x09E0,,100.0000,,U16
+0x0A00,IslandConfig,3.0000,,U16
+0x0A01,GFCIConfig,1.0000,,U16
+0x0A02,ISOConfig,1.0000,,U16
+0x0A03,InsulationProtectionValue,150.0000,kΩ,U16
+0x0A04,IsoLeakageCurrentLimit,10.0000,mA,U16
+0x0A05,GFCILimit,0.0000,mA/kVA,U16
+0x0A06,PE_N_Config,3.0000,,U16
+0x0A07,IslandDetectSensitivity,65535.0000,,U16
+0x0A08,PEProtectionValue,65535.0000,kΩ,U16
+0x0A09,,0.0000,,U16
+0x1000,AddressMask_Config_Basic1,16895.0000,,U64
+0x1004,SysTimeConfig_Year,24.0000,年,U16
+0x1005,SysTimeConfig_Month,9.0000,月,U16
+0x1006,SysTimeConfig_Date,13.0000,日,U16
+0x1007,SysTimeConfig_Hour,11.0000,时,U16
+0x1008,SysTimeConfig_Minute,0.0000,分,U16
+0x1009,SysTimeConfig_Second,53.0000,秒,U16
+0x100A,SysTimeConfig_Control,0.0000,,U16
+0x100B,RS485Config_Address,3.0000,,U16
+0x100C,RS485Config_Baud,1.0000,,U16
+0x100D,RS485Config_StopBit,0.0000,,U16
+0x100E,RS485Config_ParityBit,0.0000,,U16
+0x100F,RS485Config_Control,0.0000,,U16
+0x1010,PV_InputMode_Config,0.0000,,U16
+0x1011,"InputType_Channel0_Config -- 
+InputType_Channel15_Config",128.0000,,U16
+0x1021,InputType_Control,0.0000,,U16
+0x1022,SafetyUpdateFromUSB_Control,0.0000,,U16
+0x1023,AntiReflux_Control,2.0000,,U16
+0x1024,AntiReflux_Power,220000.0000,W,U16
+0x1025,IVCurveScan_Control,1.0000,,U16
+0x1026,IVCurveScan_Period,30.0000,分钟,U16
+0x1027,IVCurveScan_Oneshot,0.0000,,U16
+0x1028,IVCurveScan_ReadChannel,0.0000,,U16
+0x1029,EPS_Control,1.0000,,U16
+0x102A,EPS_WaitTime,0.0000,秒,U16
+0x102B,BatteryActive_Control,1.0000,,U16
+0x102C,BatteryActive_Oneshot,0.0000,,U16
+0x102D,CT_Auto_Calibrate,0.0000,,U16
+0x102E,Italy_AutoTest,0.0000,,U16
+0x102F,,0.0000,,U16
+0x1030,EnergyStatistics_Date_Year,0.0000,年,U16
+0x1031,EnergyStatistics_Date_Month,0.0000,月,U16
+0x1032,EnergyStatistics_Date_Date,0.0000,日,U16
+0x1033,EnergyStatistics_Config,0.0000,,U16
+0x1034,Language,1.0000,,U16
+0x1035,Parallel_Control,0.0000,,U16
+0x1036,Parallel_Master_Slave,1.0000,,U16
+0x1037,Parallel_Address,0.0000,,U16
+0x1038,UnbalancedSupport_Control,1.0000,,U16
+0x1039,PV_Generation_Ratio,0.0000,p.u.,U16
+0x103A,Energy_Purchase_Ratio,0.0000,p.u.,U16
+0x103B,Energy_Selling_Ratio,0.0000,p.u.,U16
+0x103C,Bat_Charge_Ratio,0.0000,p.u.,U16
+0x103D,Bat_Discharge_Ratio,0.0000,p.u.,U16
+0x103E,LogicInterface_Control,0.0000,,U16
+0x103F,,127.0000,,U16
+0x1040,AddressMask_Config_Basic2,0.0000,,U64
+0x1044,BatConfig_ID,0.0000,,U16
+0x1045,BatConfig_Address,32.0000,,U16
+0x1046,BatConfig_Potocol,11.0000,,U16
+0x1047,BatConfig_Voltage_Over,500.0000,V,U16
+0x1048,BatConfig_Voltage_Charge,235.0000,V,U16
+0x1049,BatConfig_Voltage_Lack,0.0000,V,U16
+0x104A,BatConfig_Voltage_Discharge_Stop,180.0000,V,U16
+0x104B,BatConfig_Current_Charge_Limit,35.0000,A,U16
+0x104C,BatConfig_Current_Discharge_Limit,35.0000,A,U16
+0x104D,BatConfig_Depth_of_Discharge,80.0000,%,U16
+0x104E,BatConfig_End_of_Discharge,80.0000,%,U16
+0x104F,BatConfig_Capacity,0.0000,Ah,U16
+0x1050,BatConfig_Voltage_Nominal,200.0000,V,U16
+0x1051,BatConfig_Cell_Type,0.0000,,U16
+0x1052,BatConfig_EPS_Buffer,5.0000,%,U16
+0x1053,BatConfig_Control,0.0000,,U16
+0x1054,BatConfig_Address2,32.0000,,U16
+0x1055,BatConfig_Address3,32.0000,,U16
+0x1056,BatConfig_Address4,32.0000,,U16
+0x1057,BatConfig_TEMPCO,-3.9000,mV/Cell,I16
+0x1058,BatConfig_Voltage_Recovery_Buffer,10.0000,V,U16
+0x1059,BatConfig_Control_Bits,0.0000,,U16
+0x105A,BatConfig_Voltage_Float,225.0000,V,U16
+0x105B,,0.0000,,U16
+0x1060,PCCSampleMode,0.0000,,U16
+0x1061,Resonance_Sensitivity,0.0000,,U16
+0x1062,CT_rate,40.0000,,U16
+0x1063,Hard_Reflux_Config,0.0000,,U16
+0x1064,Dry_Contact,0.0000,,U16
+0x1065,Wet_Contact,0.0000,,U16
+0x1066,pv_branch_current_limit,0.0000,A,U16
+0x1067,,0.0000,,U16
+0x1080,AddressMask_Config_Basic3,0.0000,,U64
+0x1084,ArcingAlarmEnable,0.0000,,U16
+0x1085,PeakToPeakSet,0.0000,,U16
+0x1086,VarianceSet,0.0000,,U16
+0x1087,HarmonicEnergySet,0.0000,,U16
+0x1088,AmplitudeVarianceSet,0.0000,,U16
+0x1089,TimeDomWeiSet,0.0000,,U16
+0x108A,FreDomWeiSet,0.0000,,U16
+0x108B,ArcDetectSensitivity,0.0000,,U16
+0x108C,ArcAlarmShutdownThreshold,0.0000,,U16
+0x108D,ArcSelfCheckCommand,0.0000,,U16
+0x108E,ArcingAlarmClear,0.0000,,U16
+0x108F,ArcAlarmCnt,0.0000,,U16
+0x1090,AfciResult,0.0000,,U16
+0x1091,SelfCheckResult,0.0000,,U16
+0x1092,SelfCheckState,0.0000,,U16
+0x1093,,0.0000,,U16
+0x10A0,PLC_Enable_Setting,0.0000,,U16
+0x10A1,PLC_Com_Property,0.0000,NULL,U16
+0x10A2,,0.0000,,U16
+0x10A5,BLE_Enable_Setting,1.0000,NULL,U16
+0x10A6,BLE_Com_Property,0.0000,NULL,U16
+0x10A7,,0.0000,,U16
+0x10B0,PID_Auto_running_enable,0.0000,,U16
+0x10B1,PID_Working_Start_Time,0.0000,Minute,BCD16
+0x10B2,PID_Working_Hours,0.0000,Minute,U16
+0x10B3,PID_Working_PV_Threshold,0.0000,V,U16
+0x10B4,PID_Break_Restart_Delay,0.0000,Minute,U16
+0x1100,AddressMask_Config_Remote1,15.0000,,U64
+0x1104,Remote_On_Off_Control,1.0000,,U16
+0x1105,Power_Control,0.0000,,U16
+0x1106,Active_Power_Export_Limit,100.0000,%,U16
+0x1107,Active_Power_Import_Limit,100.0000,%,U16
+0x1108,Reactive_Power_Setting,0.0000,%,I16
+0x1109,Power_Factor_Setting,1.0000,p.u.,I16
+0x110A,Active_Power_Limit_Speed,100.0000,%,U16
+0x110B,Reactive_Power_Response_Time,0.1000,second,U16
+0x110C,SVG_Fixed_Reactive_Power_Setting,0.0000,kVar,I16
+0x110D,,0.0000,,U16
+0x1110,Energy_Storage_Mode_Control,0.0000,,U16
+0x1111,Timing_ID,0.0000,,U16
+0x1112,Timing_On_Off_Control,0.0000,,U16
+0x1113,Timing_Charge_Start,61952.0000,"小时
+分钟",U16
+0x1114,Timing_Charge_End,14410.0000,"小时
+分钟",U16
+0x1115,Timing_Discharge_Start,16896.0000,"小时
+分钟",U16
+0x1116,Timing_Discharge_End,59136.0000,"小时
+分钟",U16
+0x1117,Timing_Power_Charge,0.0000,W,U32
+0x1118,,1000.0000,,U16
+0x1119,Timing_Power_Discharge,0.0000,W,U32
+0x111A,,1000.0000,,U16
+0x111B,Timing_Rsvd1 -- 4,0.0000,,U16
+0x111F,Timing_Control,0.0000,,U16
+0x1120,TOU_ID,0.0000,,U16
+0x1121,TOU_On_Off_Control,0.0000,,U16
+0x1122,TOU_Charge_Start,0.0000,"小时
+分钟",U16
+0x1123,TOU_Charge_End,0.0000,"小时
+分钟",U16
+0x1124,TOU_Charge_Target_SOC,0.0000,%,U16
+0x1125,TOU_Charge_Power,0.0000,W,U32
+0x1126,,0.0000,,U16
+0x1127,TOU_Executed_Date_Start,2816.0000,"月
+日",U16
+0x1128,TOU_Executed_Date_End,2816.0000,"月
+日",U16
+0x1129,TOU_Executed_Day_of_Week,0.0000,,U16
+0x112A,TOU_Rsvd1 -- 5,0.0000,,U16
+0x112F,TOU_Control,0.0000,,U16
+0x1130,Peak_Shaving_Discharge_Threshold,0.0000,W,U32
+0x1132,Peak_Shaving_Charge_Threshold,0.0000,W,U32
+0x1134,,0.0000,,U16
+0x1140,AddressMask_Config_Remote2,0.0000,,U64
+0x1144,Off_Grid_Charge_Source,0.0000,,U16
+0x1145,Off_Grid_Grid_Power,2.0000,kW,U16
+0x1146,Off_Grid_DG_Power,0.0000,kW,U16
+0x1147,,0.0000,,U16
+0x1180,AddressMask_Config_Remote3,0.0000,,U64
+0x1184,Passive_Timeout,0.0000,秒,U16
+0x1185,Passive_Timeout_Action,0.0000,,U16
+0x1186,Passive_Rsvd1,0.0000,,U16
+0x1187,Passive_Manual_Gdes,0.0000,W,I32
+0x1188,,0.0000,,U16
+0x1189,Passive_Manual_Blo,0.0000,W,I32
+0x118A,,0.0000,,U16
+0x118B,Passive_Manual_Bup,0.0000,W,I32
+0x118C,,0.0000,,U16
+0x118D,Passive_Manual_Gdzup,0.0000,W,I32
+0x118E,,0.0000,,U16
+0x118F,Passive_Manual_Gdzlo,0.0000,W,I32
+0x1190,,0.0000,,U16
+0x1191,Passive_Scheduler_Gdes_Ante,0.0000,W,I32
+0x1192,,0.0000,,U16
+0x1193,Passive_Scheduler_Blo_Ante,0.0000,W,I32
+0x1194,,0.0000,,U16
+0x1195,Passive_Scheduler_Bup_Ante,0.0000,W,I32
+0x1196,,0.0000,,U16
+0x1197,Passive_Scheduler_Gdzup_Ante,0.0000,W,I32
+0x1198,,0.0000,,U16
+0x1199,Passive_Scheduler_Gdzlo_Ante,0.0000,W,I32
+0x119A,,0.0000,,U16
+0x119B,Passive_Scheduler_Gdes_Post,0.0000,W,I32
+0x119C,,0.0000,,U16
+0x119D,Passive_Scheduler_Blo_Post,0.0000,W,I32
+0x119E,,0.0000,,U16
+0x119F,Passive_Scheduler_Bup_Post,0.0000,W,I32
+0x11A0,,0.0000,,U16
+0x11A1,Passive_Scheduler_Gdzup_Post,0.0000,W,I32
+0x11A2,,0.0000,,U16
+0x11A3,Passive_Scheduler_Gdzlo_Post,0.0000,W,I32
+0x11A4,,0.0000,,U16
+0x11A5,Passive_Scheduler_StartTime,0.0000,秒,U32
+0x11A6,,0.0000,,U16
+0x11A7,Passive_Scheduler_DurationTime,0.0000,秒,U32
+0x11A8,,0.0000,,U16
+0x11A9,Passive_Scheduler_ManagementMode,0.0000,,U16
+0x11AA,,0.0000,,U16
+0x11C0,AddressMask_Config_Remote4,0.0000,,U64
+0x11C4,CommBreak_Protect_Enable,0.0000,,U16
+0x11C5,CommBreak_Recovery_Mode,0.0000,,U16
+0x11C6,CommBreak_Threshold_Time,0.0000,min,U16
+0x11C7,CommBreak_Mode_Judge,0.0000,,U16
+0x11C8,CommBreak_Alarm_Clear,0.0000,,U16
+0x1300,AddressMask_Config_ReadOnly_Result1,31.0000,,U64
+0x1304,Italay_Autotest_Result1,253.0000,V,U16
+0x1305,Italay_Autotest_Result2,900.0000,ms,U16
+0x1306,Italay_Autotest_Result3,0.0000,V,U16
+0x1307,Italay_Autotest_Result4,0.0000,ms,U16
+0x1308,Italay_Autotest_Result5,264.5000,V,U16
+0x1309,Italay_Autotest_Result6,200.0000,ms,U16
+0x130A,Italay_Autotest_Result7,0.0000,V,U16
+0x130B,Italay_Autotest_Result8,0.0000,ms,U16
+0x130C,Italay_Autotest_Result9,0.0000,V,U16
+0x130D,Italay_Autotest_Result10,0.0000,ms,U16
+0x130E,Italay_Autotest_Result11,0.0000,V,U16
+0x130F,Italay_Autotest_Result12,0.0000,ms,U16
+0x1310,Italay_Autotest_Result13,0.0000,V,U16
+0x1311,Italay_Autotest_Result14,0.0000,ms,U16
+0x1312,Italay_Autotest_Result15,0.0000,V,U16
+0x1313,Italay_Autotest_Result16,0.0000,ms,U16
+0x1314,Italay_Autotest_Result17,0.0000,Hz,U16
+0x1315,Italay_Autotest_Result18,0.0000,ms,U16
+0x1316,Italay_Autotest_Result19,0.0000,Hz,U16
+0x1317,Italay_Autotest_Result20,0.0000,ms,U16
+0x1318,Italay_Autotest_Result21,0.0000,Hz,U16
+0x1319,Italay_Autotest_Result22,0.0000,ms,U16
+0x131A,Italay_Autotest_Result23,0.0000,Hz,U16
+0x131B,Italay_Autotest_Result24,0.0000,ms,U16
+0x131C,Italay_Autotest_Result25,0.0000,Hz,U16
+0x131D,Italay_Autotest_Result26,0.0000,ms,U16
+0x131E,Italay_Autotest_Result27,0.0000,Hz,U16
+0x131F,Italay_Autotest_Result28,0.0000,ms,U16
+0x1320,Italay_Autotest_Result29,0.0000,Hz,U16
+0x1321,Italay_Autotest_Result30,0.0000,ms,U16
+0x1322,Italay_Autotest_Result31,0.0000,Hz,U16
+0x1323,Italay_Autotest_Result32,0.0000,ms,U16
+0x1324,Italay_Autotest_Result33 -- 48,2530.0000,,U16
