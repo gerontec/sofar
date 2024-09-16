@@ -4,15 +4,13 @@ import csv
 import time
 from pymodbus.client.serial import ModbusSerialClient
 import logging
-from datetime import datetime
-import pandas as pd
 
 # Set up logging
 logging.basicConfig(filename='sofar_inverter.log', level=logging.ERROR, 
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Configuration
-SERIAL_PORT = '/dev/ttyUSB0'
+SERIAL_PORT = '/dev/ttyUSB32'
 BAUD_RATE = 9600
 UNIT_ID = 3
 CSV_FILE = 'sofarregister.csv'
@@ -72,36 +70,44 @@ def decode_value(registers, reg_type, accuracy):
     if not registers:
         return None
     
+    value = None
+    
     if reg_type == 'U16':
-        return registers[0] * accuracy
+        value = registers[0]
     elif reg_type == 'I16':
         value = registers[0]
-        return (value if value < 32768 else value - 65536) * accuracy
+        if value >= 32768:
+            value -= 65536
     elif reg_type == 'U32':
         if len(registers) >= 2:
-            return (registers[0] << 16 | registers[1]) * accuracy
-        else:
-            return registers[0] * accuracy
-    elif reg_type == 'I32':
-        if len(registers) >= 2:
-            value = (registers[0] << 16 | registers[1])
-            return (value if value < 2147483648 else value - 4294967296) * accuracy
+            value = (registers[0] << 16) | registers[1]
         else:
             value = registers[0]
-            return (value if value < 32768 else value - 65536) * accuracy
+    elif reg_type == 'I32':
+        if len(registers) >= 2:
+            value = (registers[0] << 16) | registers[1]
+            if value >= 2147483648:
+                value -= 4294967296
+        else:
+            value = registers[0]
+            if value >= 32768:
+                value -= 65536
     elif reg_type == 'U64':
         if len(registers) >= 4:
-            return (registers[0] << 48 | registers[1] << 32 | registers[2] << 16 | registers[3]) * accuracy
+            value = (registers[0] << 48) | (registers[1] << 32) | (registers[2] << 16) | registers[3]
         elif len(registers) >= 2:
-            return (registers[0] << 16 | registers[1]) * accuracy
+            value = (registers[0] << 16) | registers[1]
         else:
-            return registers[0] * accuracy
+            value = registers[0]
     elif reg_type == 'BCD16':
-        return int(f"{registers[0]:04x}") * accuracy
+        value = int(f"{registers[0]:04x}")
     elif reg_type == 'ASCII':
         return ''.join(chr(reg >> 8) + chr(reg & 0xFF) for reg in registers).strip('\x00')
-    else:
-        return None
+    
+    if value is not None:
+        value *= accuracy
+    
+    return value
 
 def main():
     client = ModbusSerialClient(method='rtu', port=SERIAL_PORT, baudrate=BAUD_RATE, 
@@ -114,7 +120,7 @@ def main():
     
     # Set up CSV writer
     csv_writer = csv.writer(sys.stdout)
-    csv_writer.writerow(['Address', 'Name', 'Value', 'Unit', 'Type'])
+    csv_writer.writerow(['Address', 'Name', 'Value', 'Unit', 'Type', 'Accuracy'])
 
     current_section = ""
     for start_address in range(0, MAX_REGISTER + 1, BLOCK_SIZE):
@@ -122,7 +128,7 @@ def main():
         registers = read_register_block(client, start_address, end_address - start_address + 1)
         
         if registers:
-            for offset, value in enumerate(registers):
+            for offset in range(0, len(registers), 2):  # Process two registers at a time
                 address = start_address + offset
                 if address in register_info:
                     info = register_info[address]
@@ -132,21 +138,31 @@ def main():
                         csv_writer.writerow([])
                         csv_writer.writerow([f"--- {current_section} ---"])
                     
-                    decoded_value = decode_value([value], info['type'], info['accuracy'])
-                    if decoded_value is not None:
+                    if info['type'] == 'U32':
+                        # For U32, read two consecutive registers
+                        value = decode_value(registers[offset:offset+2], info['type'], info['accuracy'])
+                    else:
+                        value = decode_value([registers[offset]], info['type'], info['accuracy'])
+
+                    if value is not None:
                         # Format the value based on its type
-                        if isinstance(decoded_value, (int, float)):
-                            formatted_value = f"{decoded_value:.4f}"
+                        if isinstance(value, (int, float)):
+                            formatted_value = f"{value:.4f}"
                         else:
-                            formatted_value = str(decoded_value)
+                            formatted_value = str(value)
                         
                         csv_writer.writerow([
                             f"0x{address:04X}",
                             info['name'],
                             formatted_value,
                             info['unit'],
-                            info['type']
+                            info['type'],
+                            info['accuracy']
                         ])
+
+                    # If we processed a U32 value, skip the next register
+                    if info['type'] == 'U32':
+                        offset += 1
 
     client.close()
 
