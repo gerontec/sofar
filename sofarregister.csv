@@ -203,12 +203,12 @@ Real Time Data""";"0522";"Voltage_Output_L1N";"U16";0,1;"V"
 Voltage
 Current
 Power
-Data";"0584 -- 05B1";"Voltage_PV1 -- 16";"U16";0,1;"V"
-;"0585 -- 05B2";"Current_PV1 -- 16";"U16";0,01;"A"
-;"0586";"Power_PV1 -- 16";"U16";0,01;"kW"
-;"0587";"Voltage_PV2 -- 16";"U16";0,1;"V"
-;"0588";"Current_PV2 -- 16";"U16";0,01;"A"
-;"0589";"Power_PV2 -- 16";"U16";0,01;"kW"
+Data";"0584 -- 05B1";"Voltage_PV1";"U16";0,1;"V"
+;"0585 -- 05B2";"Current_PV1";"U16";0,01;"A"
+;"0586";"Power_PV1";"U16";0,01;"kW"
+;"0587";"Voltage_PV2";"U16";0,1;"V"
+;"0588";"Current_PV2";"U16";0,01;"A"
+;"0589";"Power_PV2";"U16";0,01;"kW"
 ;"05B4 -- 05B6";;;;
 ;"05C0 -- 05C3";"AddressMask_Realtime_Input_PV2";"U64";;
 "Total PV power";"05C4";"Power_PV_Total";"U16";0,1;"kW"
@@ -219,22 +219,22 @@ Data";"0584 -- 05B1";"Voltage_PV1 -- 16";"U16";0,1;"V"
 ;"0600 -- 0603";"AddressMask_Realtime_Input_Bat1";"U64";;
 "Battery pack 1-8
 Data";"0604 -- 0635";"Voltage_Bat1 -- 8";"U16";0,1;"V"
-;"0605 -- 0636";"Current_Bat1 -- 8";"I16";0,01;"A"
-;"0606 -- 0637";"Power_Bat1 -- 8";"I16";0,01;"kW"
-;"0607 -- 0638";"Temperature_Env_Bat1 -- 8";"I16";1;"℃"
-;"0608 -- 0639";"SOC_Bat1 -- 8";"U16";1;"%"
-;"0609 -- 063A";"SOH_Bat1 -- 8";"U16";1;"%"
-;"060A -- 063B";"ChargeCycle_Bat1 -- 8";"U16";1;"cycle"
+;"0605 -- 0636";"Current_Bat1";"I16";0,01;"A"
+;"0606 -- 0637";"Power_Bat1";"I16";0,01;"kW"
+;"0607 -- 0638";"Temperature_Env_Bat1";"I16";1;"℃"
+;"0608 -- 0639";"SOC_Bat1";"U16";1;"%"
+;"0609 -- 063A";"SOH_Bat1";"U16";1;"%"
+;"060A -- 063B";"ChargeCycle_Bat1";"U16";1;"cycle"
 ;"063C -- 063F";;;;
 ;"0640 -- 0643";"AddressMask_Realtime_Input_Bat2";"U64";;
 "Battery pack 9-12
 Data";"0644 -- 0659";"Voltage_Bat9 -- 12";"U16";0,1;"V"
-;"0645 -- 065A";"Current_Bat9 -- 12";"I16";0,01;"A"
-;"0646 -- 065B";"Power_Bat9 -- 12";"I16";0,01;"kW"
-;"0647 -- 065C";"Temperature_Env_Bat9 -- 12";"I16";1;"℃"
-;"0648 -- 065D";"SOC_Bat9 -- 12";"U16";1;"%"
-;"0649 -- 065E";"SOH_Bat9 -- 12";"U16";1;"%"
-;"064A --065F";"ChargeCycle_Bat9 -- 12";"U16";1;"cycle"
+;"0645 -- 065A";"Current_Bat9";"I16";0,01;"A"
+;"0646 -- 065B";"Power_Bat9";"I16";0,01;"kW"
+;"0647 -- 065C";"Temperature_Env_Bat9";"I16";1;"℃"
+;"0648 -- 065D";"SOC_Bat9";"U16";1;"%"
+;"0649 -- 065E";"SOH_Bat9";"U16";1;"%"
+;"064A --065F";"ChargeCycle_Bat9";"U16";1;"cycle"
 ;"0660 -- 0666";;;;
 "Battery pack
 Other data";"0667";"Power_Bat_Total";"I16";0,1;"kW"

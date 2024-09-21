@@ -6,26 +6,44 @@ import pymysql
 from db_config import get_db_connection
 from datetime import datetime
 
+def truncate_column_name(column_name):
+    return column_name.split()[0]
+
 def get_csv_columns(csv_file_path):
     with open(csv_file_path, 'r') as csv_file:
         csv_reader = csv.reader(csv_file)
-        return next(csv_reader)
+        columns = next(csv_reader)
+    return [truncate_column_name(col) for col in columns]
 
 def check_and_update_table(cursor, table_name, columns):
-    # Check if table exists
     cursor.execute(f"SHOW TABLES LIKE '{table_name}'")
     table_exists = cursor.fetchone()
 
     if table_exists:
-        # Check table structure
         cursor.execute(f"DESCRIBE {table_name}")
         existing_columns = [row[0] for row in cursor.fetchall()]
         
-        # Compare existing columns with CSV columns
-        if set(existing_columns) != set(['id', 'timestamp'] + columns):
-            print(f"Table structure mismatch. Dropping and recreating table {table_name}")
-            cursor.execute(f"DROP TABLE {table_name}")
-            create_table_if_not_exists(cursor, table_name, columns)
+        expected_columns = set(['id', 'timestamp'] + columns)
+        existing_columns_set = set(existing_columns)
+        
+        if existing_columns_set != expected_columns:
+            print(f"Table structure mismatch for {table_name}:")
+            missing_columns = expected_columns - existing_columns_set
+            extra_columns = existing_columns_set - expected_columns
+            
+            if missing_columns:
+                print(f"Missing columns: {', '.join(missing_columns)}")
+                for col in missing_columns:
+                    if col not in ['id', 'timestamp']:
+                        add_column_sql = f"ALTER TABLE `{table_name}` ADD COLUMN `{col}` FLOAT"
+                        cursor.execute(add_column_sql)
+                        print(f"Added new column: {col}")
+            
+            if extra_columns:
+                print(f"Extra columns: {', '.join(extra_columns)}")
+                print("Extra columns will be kept.")
+            
+            print("Table structure updated.")
         else:
             print(f"Table {table_name} structure is up to date")
     else:
@@ -58,7 +76,7 @@ def main():
     
     try:
         columns = get_csv_columns(csv_file_path)
-        print(f"CSV columns: {columns}")
+        print(f"CSV columns (truncated): {columns}")
         
         connection = get_db_connection()
         with connection.cursor() as cursor:
@@ -67,8 +85,10 @@ def main():
             with open(csv_file_path, 'r') as csv_file:
                 csv_reader = csv.DictReader(csv_file)
                 for row in csv_reader:
-                    row['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    insert_data(cursor, table_name, row)
+                    # Truncate column names in the row
+                    truncated_row = {truncate_column_name(k): v for k, v in row.items()}
+                    truncated_row['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    insert_data(cursor, table_name, truncated_row)
             
             connection.commit()
             print("Data inserted successfully")
