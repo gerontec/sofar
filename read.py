@@ -170,12 +170,25 @@ def main():
     current_section = ""
     register_data = []
 
+    # Define sections to read, including all relevant address ranges
     sections = [
-        (0x0480, 0x04BF, 0x0480),
-        (0x0500, 0x053F, 0x0500),
-        (0x0580, 0x05BF, 0x0580),
-        (0x0600, 0x063F, 0x0600),
-        (0x0680, 0x06BF, 0x0680),
+        (0x0040, 0x007F, 0x0040),  # I General（0x0040-0x007F）
+        (0x0400, 0x043F, 0x0400),  # Realtime SysInfo1
+        (0x0480, 0x04BF, 0x0480),  # Realtime GridOutput1
+        (0x0500, 0x053F, 0x0500),  # Realtime EmergencyOutput1
+        (0x0580, 0x05BF, 0x0580),  # Realtime Input PV1
+        (0x0600, 0x063F, 0x0600),  # Realtime Input Bat1
+        (0x0680, 0x06BF, 0x0680),  # Realtime ElectricityStatistics1
+        (0x0700, 0x073F, 0x0700),  # Realtime CombinerInfo1
+        (0x0800, 0x083F, 0x0800),  # Voltage Config
+        (0x0900, 0x093F, 0x0900),  # Remote Config
+        (0x1000, 0x103F, 0x1000),  # Config Basic1
+        (0x1100, 0x113F, 0x1100),  # Remote Config (includes Power Export Limit)
+        (0x1300, 0x133F, 0x1300),  # Config ReadOnly Result1
+        (0x2000, 0x203F, 0x2000),  # Config Core1
+        (0x5000, 0x503F, 0x5000),  # DCDC SysInfo
+        (0x6000, 0x603F, 0x6000),  # PCU1
+        (0x9000, 0x903F, 0x9000),  # BMS1 System
     ]
 
     for start, end, mask_address in sections:
