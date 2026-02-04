@@ -637,7 +637,10 @@ int main(int argc, char *argv[]) {
         uint64_t mask = ((uint64_t)tab_reg[0] << 48) | ((uint64_t)tab_reg[1] << 32) |
                        ((uint64_t)tab_reg[2] << 16) | tab_reg[3];
 
-        // Read valid registers
+        // Collect valid registers to read
+        uint16_t registers_to_read[64];
+        int num_to_read = 0;
+
         for (uint16_t addr = sec->start; addr <= sec->end; addr++) {
             // Check if register is valid in mask
             int bit_pos = addr - sec->start;
@@ -652,27 +655,52 @@ int main(int argc, char *argv[]) {
             // Filter by unit if needed
             if (!should_read_register(info->unit, &config)) continue;
 
+            registers_to_read[num_to_read++] = addr;
+        }
+
+        // Process collected registers
+        for (int i = 0; i < num_to_read; i++) {
+            uint16_t addr = registers_to_read[i];
+            RegisterInfo *info = &register_info[addr];
+
             // Print section header
             if (strcmp(info->section, current_section) != 0) {
                 strncpy(current_section, info->section, MAX_SECTION_LENGTH - 1);
                 printf("\n--- %s ---\n", current_section);
             }
 
-            // Read register
+            // Try bulk read of up to 16 registers first
             int reg_count = get_register_count(info->type);
-            rc = modbus_read_registers(ctx, addr, reg_count, tab_reg);
+            int bulk_size = 16;
+            uint16_t bulk_buffer[16];
+            int use_bulk = 0;
+
+            // Try bulk read
+            rc = modbus_read_registers(ctx, addr, bulk_size, bulk_buffer);
+            if (rc == bulk_size) {
+                // Bulk read successful, copy needed registers
+                use_bulk = 1;
+                for (int j = 0; j < reg_count && j < bulk_size; j++) {
+                    tab_reg[j] = bulk_buffer[j];
+                }
+            } else {
+                // Bulk read failed, fallback to single register read
+                rc = modbus_read_registers(ctx, addr, reg_count, tab_reg);
+            }
 
             if (rc == -1) {
-                printf("0x%04X: %s (%s) - %s : Unable to read register\n",
-                       addr, info->name, reg_type_to_string(info->type), info->unit);
+                printf("0x%04X: %s (%s) - %s : Unable to read register%s\n",
+                       addr, info->name, reg_type_to_string(info->type), info->unit,
+                       use_bulk ? "" : " (bulk read failed, single read also failed)");
                 continue;
             }
 
             // Decode value
             char value_str[256];
-            if (decode_value(tab_reg, rc, info->type, info->accuracy, value_str, sizeof(value_str))) {
-                printf("0x%04X: %s (%s) - %s : %s\n",
-                       addr, info->name, reg_type_to_string(info->type), info->unit, value_str);
+            if (decode_value(tab_reg, reg_count, info->type, info->accuracy, value_str, sizeof(value_str))) {
+                printf("0x%04X: %s (%s) - %s : %s%s\n",
+                       addr, info->name, reg_type_to_string(info->type), info->unit, value_str,
+                       use_bulk ? " [bulk]" : "");
                 add_register_data(info->section, info->name, value_str, info->unit);
             } else {
                 printf("0x%04X: %s (%s) - %s : Unable to decode value\n",
