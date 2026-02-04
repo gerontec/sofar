@@ -1,0 +1,6 @@
+*.o
+soyo1min
+*.log
+*.lock
+core
+vgcore.*
