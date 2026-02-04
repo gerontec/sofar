@@ -1,0 +1,5 @@
+*.o
+read_inverter
+*.log
+core
+vgcore.*

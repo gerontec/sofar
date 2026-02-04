@@ -4,3 +4,10 @@ soyo1min
 *.lock
 core
 vgcore.*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python

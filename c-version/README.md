@@ -1,32 +1,64 @@
 # Soyo1min - C Version
 
-C-Implementierung des soyo1min Batterie-Management-Systems.
+C-Implementierungen für Sofar Inverter Management.
 
-## Überblick
+## Programme
 
-Dies ist eine C-Portierung des ursprünglichen Python-Skripts `soyo1min.py`. Es verwaltet die Batterieentladung basierend auf:
+### soyo1min
+Batterie-Management-System - verwaltet die Batterieentladung basierend auf:
 - Grid-Status (Netzeinspeisung/-entnahme)
 - Batterie-SOC (State of Charge)
 - Sonnenauf-/-untergang (über Python-Skript `sunrise.py`)
 - MQTT-Wärmepumpendaten
 - Manuelle Leistungsvorgaben (`soyopower.txt`)
 
+### read-inverter
+Inverter-Register-Reader - liest Modbus-Register vom Sofar-Inverter:
+- CSV-basierte Register-Definitionen
+- Modbus RTU über Serial Port
+- Filterung nach kW/kWh/% oder alle Register
+- CSV-Export der Daten
+
+Siehe `read-inverter/README.md` für Details.
+
 ## Abhängigkeiten
 
-### Debian/Ubuntu/Raspberry Pi OS
+### C-Build-Abhängigkeiten
+
+**Debian/Ubuntu/Raspberry Pi OS:**
 ```bash
 sudo apt-get update
 sudo apt-get install -y build-essential libmosquitto-dev
 ```
 
-### Andere Distributionen
+**Andere Distributionen:**
 - **Fedora/RHEL**: `sudo dnf install gcc make mosquitto-devel`
 - **Arch**: `sudo pacman -S gcc make mosquitto`
+
+### Python-Abhängigkeiten (für sunrise.py)
+
+Das C-Programm ruft `sunrise.py` auf, um Sonnenauf- und -untergangszeiten zu berechnen:
+
+```bash
+# Python 3 und pip installieren (falls nicht vorhanden)
+sudo apt-get install python3 python3-pip
+
+# Python-Pakete installieren
+pip3 install -r requirements.txt
+
+# Oder einzeln:
+pip3 install astral pytz
+```
 
 ## Build
 
 ```bash
 cd c-version
+
+# Optional: Prüfe System-Requirements
+./configure
+
+# Kompilieren
 make
 ```
 

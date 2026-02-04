@@ -1,0 +1,3 @@
+# Python dependencies for sunrise.py
+astral>=2.2
+pytz

@@ -1,3 +1,6 @@
+#define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,9 +13,15 @@
 #include <stdarg.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
 #include <math.h>
 #include <mosquitto.h>
 #include "config.h"
+
+// CRTSCTS may not be defined on some systems
+#ifndef CRTSCTS
+#define CRTSCTS 020000000000
+#endif
 
 // Structures
 typedef struct {
@@ -159,6 +168,8 @@ int serial_open(const char *port, int baudrate) {
     struct termios tty;
     int fd;
 
+    (void)baudrate; // Currently hardcoded to 4800, parameter reserved for future use
+
     fd = open(port, O_RDWR | O_NOCTTY | O_SYNC);
     if (fd < 0) {
         LOG_ERROR("Failed to open serial port %s: %s", port, strerror(errno));
@@ -248,6 +259,8 @@ void set_generated_power(int power) {
 
 // MQTT callbacks
 void on_mqtt_connect(struct mosquitto *mosq, void *obj, int reason_code) {
+    (void)obj; // Unused parameter
+
     if (reason_code == 0) {
         LOG_INFO("Connected to MQTT broker");
         mosquitto_subscribe(mosq, NULL, MQTT_TOPIC, 0);
@@ -257,6 +270,9 @@ void on_mqtt_connect(struct mosquitto *mosq, void *obj, int reason_code) {
 }
 
 void on_mqtt_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg) {
+    (void)mosq; // Unused parameter
+    (void)obj;  // Unused parameter
+
     char *payload = (char*)msg->payload;
     float value;
 
@@ -681,6 +697,9 @@ void controller_update(InverterController *ctrl) {
 int main(int argc, char *argv[]) {
     InverterController controller;
     int rc;
+
+    (void)argc; // Unused parameter
+    (void)argv; // Unused parameter
 
     // Set up signal handlers
     signal(SIGINT, signal_handler);
