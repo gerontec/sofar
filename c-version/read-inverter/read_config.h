@@ -1,6 +1,8 @@
 #ifndef READ_CONFIG_H
 #define READ_CONFIG_H
 
+#include <stdint.h>
+
 // Version information
 #define VERSION "1.0.0"
 #define PROGRAM_NAME "read_inverter"
