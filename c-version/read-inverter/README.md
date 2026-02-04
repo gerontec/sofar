@@ -39,12 +39,22 @@ Editieren Sie `read_config.h` für Ihre Umgebung:
 
 ```bash
 cd read-inverter
+
+# Optional: System-Requirements prüfen
+./configure
+
+# Kompilieren
 make
 ```
 
 Für Debug-Build:
 ```bash
 make debug
+```
+
+**Hinweis:** Falls `configure` nicht existiert, holen Sie die neueste Version:
+```bash
+git pull origin claude/python-to-c-conversion-fDGGt
 ```
 
 ## Verwendung

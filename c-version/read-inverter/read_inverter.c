@@ -4,7 +4,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>
-#include <modbus.h>
+#include <modbus/modbus.h>
 #include <ctype.h>
 #include "read_config.h"
 
