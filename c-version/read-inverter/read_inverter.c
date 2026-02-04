@@ -12,6 +12,9 @@
 static RegisterInfo register_info[MAX_REGISTERS];
 static int register_count = 0;
 
+// Forward declaration for embedded registers (if available)
+extern int load_embedded_registers(RegisterInfo *register_info, int max_registers) __attribute__((weak));
+
 // Register data storage
 typedef struct {
     char section[MAX_SECTION_LENGTH];
@@ -409,9 +412,23 @@ int main(int argc, char *argv[]) {
 
     // Read register definitions
     memset(register_info, 0, sizeof(register_info));
-    if (read_register_info_from_csv(CSV_FILE) == 0) {
-        fprintf(stderr, "Error: No registers loaded from CSV\n");
-        return 1;
+
+    // Try embedded registers first (if available)
+    if (load_embedded_registers != NULL) {
+        register_count = load_embedded_registers(register_info, MAX_REGISTERS);
+        if (register_count > 0) {
+            printf("Using embedded register definitions (%d registers)\n\n", register_count);
+        }
+    }
+
+    // Fall back to CSV file if no embedded registers
+    if (register_count == 0) {
+        printf("Embedded registers not available, loading from CSV...\n");
+        register_count = read_register_info_from_csv(CSV_FILE);
+        if (register_count == 0) {
+            fprintf(stderr, "Error: No registers loaded from CSV\n");
+            return 1;
+        }
     }
 
     // Initialize Modbus

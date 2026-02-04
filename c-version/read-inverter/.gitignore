@@ -3,3 +3,6 @@ read_inverter
 *.log
 core
 vgcore.*
+
+# Generated files
+register_embedded.c

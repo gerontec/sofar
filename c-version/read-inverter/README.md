@@ -35,8 +35,13 @@ Die wichtigsten Einstellungen sind bereits konfiguriert für Produktionsumgebung
 #define ALLREG 0                                       // 0=nur kW/kWh/%, 1=alle Register
 ```
 
+**Embedded Register-Definitionen:**
+- Beim Build werden alle Register-Definitionen aus `/home/pi/python/sofarregister.csv` direkt ins Binary eingebettet
+- Das kompilierte Programm benötigt **keine externe CSV-Datei** mehr zur Laufzeit
+- Die Binary ist standalone und vollständig portabel
+- Falls die CSV zur Build-Zeit nicht verfügbar ist, fällt das Programm auf Runtime-CSV-Loading zurück
+
 **Standard-Konfiguration:**
-- CSV-Datei ist fest auf `/home/pi/python/sofarregister.csv` eingestellt
 - Filter-Modus: nur kW/kWh/% Register (schneller, weniger Daten)
 - Diese Werte sind produktionsreif und müssen normalerweise nicht geändert werden
 
