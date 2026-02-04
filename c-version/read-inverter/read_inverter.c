@@ -4,13 +4,16 @@
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>
-#include <modbus.h>
+#include <modbus/modbus.h>
 #include <ctype.h>
 #include "read_config.h"
 
 // Global register info array
 static RegisterInfo register_info[MAX_REGISTERS];
 static int register_count = 0;
+
+// Forward declaration for embedded registers (if available)
+extern int load_embedded_registers(RegisterInfo *register_info, int max_registers) __attribute__((weak));
 
 // Register data storage
 typedef struct {
@@ -356,19 +359,76 @@ void save_raw_csv(const char *filename) {
     printf("\nRaw register data saved to '%s' (%d registers)\n", filename, data_count);
 }
 
+// Print version information
+void print_version(void) {
+    printf("%s version %s\n", PROGRAM_NAME, VERSION);
+    printf("C implementation of Sofar Inverter Register Reader\n");
+    printf("Compiled: %s %s\n", __DATE__, __TIME__);
+}
+
+// Print help information
+void print_help(void) {
+    printf("Usage: %s [OPTIONS]\n", PROGRAM_NAME);
+    printf("\n");
+    printf("Sofar Inverter Register Reader - Reads Modbus RTU registers from inverter\n");
+    printf("\n");
+    printf("Options:\n");
+    printf("  -h, --help         Show this help message and exit\n");
+    printf("  -v, --version      Show version information and exit\n");
+    printf("\n");
+    printf("Configuration:\n");
+    printf("  Serial Port:       %s\n", SERIAL_PORT);
+    printf("  Baud Rate:         %d\n", BAUD_RATE);
+    printf("  Unit ID:           %d\n", UNIT_ID);
+    printf("  CSV File:          %s\n", CSV_FILE);
+    printf("  Output File:       %s\n", RAW_OUTPUT_FILE);
+    printf("  Filter Mode:       %s\n", ALLREG ? "All registers" : "kW/kWh/%% only");
+    printf("\n");
+    printf("To change settings, edit read_config.h and recompile.\n");
+}
+
 // Main function
-int main(void) {
+int main(int argc, char *argv[]) {
     modbus_t *ctx;
     uint16_t tab_reg[BLOCK_SIZE];
 
-    printf("Sofar Inverter Register Reader (C version)\n");
+    // Parse command line arguments
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            print_help();
+            return 0;
+        } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
+            print_version();
+            return 0;
+        } else {
+            fprintf(stderr, "Unknown option: %s\n", argv[i]);
+            fprintf(stderr, "Try '%s --help' for more information.\n", PROGRAM_NAME);
+            return 1;
+        }
+    }
+
+    printf("Sofar Inverter Register Reader (C version %s)\n", VERSION);
     printf("Reading mode: %s\n\n", ALLREG ? "all registers" : "filtered (kW, kWh, %% only)");
 
     // Read register definitions
     memset(register_info, 0, sizeof(register_info));
-    if (read_register_info_from_csv(CSV_FILE) == 0) {
-        fprintf(stderr, "Error: No registers loaded from CSV\n");
-        return 1;
+
+    // Try embedded registers first (if available)
+    if (load_embedded_registers != NULL) {
+        register_count = load_embedded_registers(register_info, MAX_REGISTERS);
+        if (register_count > 0) {
+            printf("Using embedded register definitions (%d registers)\n\n", register_count);
+        }
+    }
+
+    // Fall back to CSV file if no embedded registers
+    if (register_count == 0) {
+        printf("Embedded registers not available, loading from CSV...\n");
+        register_count = read_register_info_from_csv(CSV_FILE);
+        if (register_count == 0) {
+            fprintf(stderr, "Error: No registers loaded from CSV\n");
+            return 1;
+        }
     }
 
     // Initialize Modbus
