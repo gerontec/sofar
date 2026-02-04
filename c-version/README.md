@@ -1,15 +1,25 @@
 # Soyo1min - C Version
 
-C-Implementierung des soyo1min Batterie-Management-Systems.
+C-Implementierungen für Sofar Inverter Management.
 
-## Überblick
+## Programme
 
-Dies ist eine C-Portierung des ursprünglichen Python-Skripts `soyo1min.py`. Es verwaltet die Batterieentladung basierend auf:
+### soyo1min
+Batterie-Management-System - verwaltet die Batterieentladung basierend auf:
 - Grid-Status (Netzeinspeisung/-entnahme)
 - Batterie-SOC (State of Charge)
 - Sonnenauf-/-untergang (über Python-Skript `sunrise.py`)
 - MQTT-Wärmepumpendaten
 - Manuelle Leistungsvorgaben (`soyopower.txt`)
+
+### read-inverter
+Inverter-Register-Reader - liest Modbus-Register vom Sofar-Inverter:
+- CSV-basierte Register-Definitionen
+- Modbus RTU über Serial Port
+- Filterung nach kW/kWh/% oder alle Register
+- CSV-Export der Daten
+
+Siehe `read-inverter/README.md` für Details.
 
 ## Abhängigkeiten
 
