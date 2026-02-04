@@ -3,15 +3,24 @@
 ## Schnellstart
 
 ```bash
+# 0. Branch wechseln (falls noch nicht geschehen)
+cd ~/sofar
+git fetch origin
+git checkout claude/python-to-c-conversion-fDGGt
+git pull origin claude/python-to-c-conversion-fDGGt
+
 # 1. Abhängigkeiten installieren
 sudo apt-get update
 sudo apt-get install -y build-essential libmosquitto-dev
 
-# 2. Kompilieren
+# 2. System-Requirements prüfen
 cd c-version
+./configure
+
+# 3. Kompilieren
 make
 
-# 3. Testen (als User mit Zugriff auf /dev/ttyUSB32)
+# 4. Testen (als User mit Zugriff auf /dev/ttyUSB32)
 ./soyo1min
 
 # 4. Installation (optional)

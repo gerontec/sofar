@@ -27,6 +27,11 @@ sudo apt-get install -y build-essential libmosquitto-dev
 
 ```bash
 cd c-version
+
+# Optional: Prüfe System-Requirements
+./configure
+
+# Kompilieren
 make
 ```
 
