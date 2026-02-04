@@ -199,6 +199,7 @@ int read_register_info_from_csv(const char *csv_file) {
             // New section
             if (field0 && strlen(field0) > 0) {
                 strncpy(current_section, field0, MAX_SECTION_LENGTH - 1);
+                current_section[MAX_SECTION_LENGTH - 1] = '\0';
                 printf("New section: %s\n", current_section);
             }
         } else {
@@ -209,7 +210,11 @@ int read_register_info_from_csv(const char *csv_file) {
                     if (addr < MAX_REGISTERS) {
                         RegisterInfo *info = &register_info[addr];
                         strncpy(info->section, current_section, MAX_SECTION_LENGTH - 1);
-                        if (field2) strncpy(info->name, field2, MAX_NAME_LENGTH - 1);
+                        info->section[MAX_SECTION_LENGTH - 1] = '\0';
+                        if (field2) {
+                            strncpy(info->name, field2, MAX_NAME_LENGTH - 1);
+                            info->name[MAX_NAME_LENGTH - 1] = '\0';
+                        }
                         info->type = string_to_reg_type(field3);
 
                         // Parse accuracy
@@ -225,7 +230,10 @@ int read_register_info_from_csv(const char *csv_file) {
                             info->accuracy = 1.0;
                         }
 
-                        if (field5) strncpy(info->unit, field5, MAX_UNIT_LENGTH - 1);
+                        if (field5) {
+                            strncpy(info->unit, field5, MAX_UNIT_LENGTH - 1);
+                            info->unit[MAX_UNIT_LENGTH - 1] = '\0';
+                        }
                         info->valid = 1;
                         register_count++;
                     }
@@ -351,9 +359,13 @@ void add_register_data(const char *section, const char *name,
 
     RegisterData *data = &register_data[data_count++];
     strncpy(data->section, section, MAX_SECTION_LENGTH - 1);
+    data->section[MAX_SECTION_LENGTH - 1] = '\0';
     strncpy(data->name, name, MAX_NAME_LENGTH - 1);
+    data->name[MAX_NAME_LENGTH - 1] = '\0';
     strncpy(data->value, value, 255);
+    data->value[255] = '\0';
     strncpy(data->unit, unit, MAX_UNIT_LENGTH - 1);
+    data->unit[MAX_UNIT_LENGTH - 1] = '\0';
 }
 
 // Save raw data to CSV
@@ -385,13 +397,17 @@ void print_version(void) {
 // Initialize configuration with default values
 void init_config(Config *config) {
     strncpy(config->serial_port, SERIAL_PORT, sizeof(config->serial_port) - 1);
+    config->serial_port[sizeof(config->serial_port) - 1] = '\0';
     config->baud_rate = BAUD_RATE;
     config->unit_id = UNIT_ID;
     config->timeout_sec = TIMEOUT_SEC;
     config->timeout_usec = TIMEOUT_USEC;
     strncpy(config->csv_file, CSV_FILE, sizeof(config->csv_file) - 1);
+    config->csv_file[sizeof(config->csv_file) - 1] = '\0';
     strncpy(config->raw_output_file, RAW_OUTPUT_FILE, sizeof(config->raw_output_file) - 1);
+    config->raw_output_file[sizeof(config->raw_output_file) - 1] = '\0';
     strncpy(config->pivoted_output_file, PIVOTED_OUTPUT_FILE, sizeof(config->pivoted_output_file) - 1);
+    config->pivoted_output_file[sizeof(config->pivoted_output_file) - 1] = '\0';
     config->allreg = ALLREG;
     config->max_register = MAX_REGISTER;
     config->block_size = BLOCK_SIZE;

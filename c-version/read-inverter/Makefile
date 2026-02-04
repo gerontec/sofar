@@ -34,9 +34,6 @@ $(EMBEDDED_SOURCE): $(CSV_SOURCE) csv_to_c.py
 	./csv_to_c.py $(CSV_SOURCE) > $(EMBEDDED_SOURCE)
 	@echo "Generated $(EMBEDDED_SOURCE)"
 
-$(TARGET): $(OBJECTS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
 %.o: %.c read_config.h
 	$(CC) $(CFLAGS) -c $<
 
