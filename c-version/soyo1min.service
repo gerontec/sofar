@@ -1,0 +1,25 @@
+[Unit]
+Description=Soyo Battery Management System (C version)
+After=network.target mosquitto.service
+Wants=mosquitto.service
+
+[Service]
+Type=simple
+User=pi
+Group=dialout
+WorkingDirectory=/home/pi/sofar
+ExecStart=/usr/local/bin/soyo1min
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/user/1000
+
+[Install]
+WantedBy=multi-user.target
