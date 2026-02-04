@@ -25,15 +25,22 @@ sudo apt-get install -y build-essential libmodbus-dev
 
 ## Konfiguration
 
-Editieren Sie `read_config.h` für Ihre Umgebung:
+Die wichtigsten Einstellungen sind bereits konfiguriert für Produktionsumgebung:
 
 ```c
-#define SERIAL_PORT "/dev/ttyUSB32"        // Ihr serieller Port
-#define BAUD_RATE 9600                     // Baudrate
-#define UNIT_ID 1                          // Modbus Unit-ID
-#define CSV_FILE "/path/to/sofarregister.csv"  // CSV mit Registerdefinitionen
-#define ALLREG 0                           // 1=alle Register, 0=nur kW/kWh/%
+#define SERIAL_PORT "/dev/ttyUSB32"                    // Serieller Port
+#define BAUD_RATE 9600                                 // Baudrate
+#define UNIT_ID 1                                      // Modbus Unit-ID
+#define CSV_FILE "/home/pi/python/sofarregister.csv"  // Register-Definitionen (fest)
+#define ALLREG 0                                       // 0=nur kW/kWh/%, 1=alle Register
 ```
+
+**Standard-Konfiguration:**
+- CSV-Datei ist fest auf `/home/pi/python/sofarregister.csv` eingestellt
+- Filter-Modus: nur kW/kWh/% Register (schneller, weniger Daten)
+- Diese Werte sind produktionsreif und müssen normalerweise nicht geändert werden
+
+**Optional:** Nur falls Sie andere Werte benötigen, editieren Sie `read_config.h` und kompilieren neu.
 
 ## Build
 
@@ -60,12 +67,20 @@ git pull origin claude/python-to-c-conversion-fDGGt
 ## Verwendung
 
 ```bash
+# Hilfe anzeigen (zeigt alle Konfigurationswerte)
+./read_inverter --help
+
+# Version anzeigen
+./read_inverter --version
+
 # Direkt ausführen
 ./read_inverter
 
 # Als root falls Serial-Port Berechtigung benötigt
 sudo ./read_inverter
 ```
+
+**Tipp:** Mit `--help` sehen Sie alle aktuell kompilierten Einstellungen, ohne in die Quelldateien schauen zu müssen.
 
 ## Output-Dateien
 
