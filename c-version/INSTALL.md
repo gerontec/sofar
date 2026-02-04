@@ -11,22 +11,25 @@ git pull origin claude/python-to-c-conversion-fDGGt
 
 # 1. Abhängigkeiten installieren
 sudo apt-get update
-sudo apt-get install -y build-essential libmosquitto-dev
+sudo apt-get install -y build-essential libmosquitto-dev python3 python3-pip
 
-# 2. System-Requirements prüfen
+# 2. Python-Pakete für sunrise.py installieren
+pip3 install -r requirements.txt
+
+# 3. System-Requirements prüfen
 cd c-version
 ./configure
 
-# 3. Kompilieren
+# 4. Kompilieren
 make
 
-# 4. Testen (als User mit Zugriff auf /dev/ttyUSB32)
+# 5. Testen (als User mit Zugriff auf /dev/ttyUSB32)
 ./soyo1min
 
-# 4. Installation (optional)
+# 6. Installation (optional)
 sudo make install
 
-# 5. Systemd Service einrichten (optional)
+# 7. Systemd Service einrichten (optional)
 sudo cp soyo1min.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable soyo1min
@@ -44,6 +47,7 @@ sudo systemctl start soyo1min
 - GCC Compiler
 - libmosquitto-dev (MQTT-Bibliothek)
 - Python 3 (für sunrise.py)
+- Python-Pakete: astral, pytz (für sunrise.py)
 
 ### Berechtigungen
 User muss Mitglied der `dialout`-Gruppe sein:

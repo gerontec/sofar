@@ -117,10 +117,41 @@ if [ -f ../sunrise.py ]; then
     echo -e "${GREEN}✓${NC} sunrise.py found in parent directory"
 elif [ -f ./sunrise.py ]; then
     echo -e "${GREEN}✓${NC} sunrise.py found in current directory"
+
+    # Test if sunrise.py works
+    if python3 ./sunrise.py >/dev/null 2>&1; then
+        echo -e "${GREEN}✓${NC} sunrise.py executes successfully"
+    else
+        echo -e "${YELLOW}⚠${NC} sunrise.py found but execution failed"
+        echo "  Install Python dependencies with: pip3 install -r requirements.txt"
+        WARNINGS=$((WARNINGS + 1))
+    fi
 else
     echo -e "${YELLOW}⚠${NC} sunrise.py not found"
-    echo "  Make sure sunrise.py is in the working directory or PATH"
+    echo "  sunrise.py should be in the c-version directory"
     WARNINGS=$((WARNINGS + 1))
+fi
+
+# Check Python dependencies for sunrise.py
+if command -v python3 >/dev/null 2>&1 && [ -f ./sunrise.py ]; then
+    echo ""
+    echo "Checking Python dependencies for sunrise.py..."
+
+    if python3 -c "import astral" 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} Python package 'astral' found"
+    else
+        echo -e "${YELLOW}⚠${NC} Python package 'astral' not found"
+        echo "  Install with: pip3 install astral"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+
+    if python3 -c "import pytz" 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} Python package 'pytz' found"
+    else
+        echo -e "${YELLOW}⚠${NC} Python package 'pytz' not found"
+        echo "  Install with: pip3 install pytz"
+        WARNINGS=$((WARNINGS + 1))
+    fi
 fi
 
 # Check for MQTT broker connectivity (optional)

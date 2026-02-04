@@ -13,15 +13,32 @@ Dies ist eine C-Portierung des ursprünglichen Python-Skripts `soyo1min.py`. Es 
 
 ## Abhängigkeiten
 
-### Debian/Ubuntu/Raspberry Pi OS
+### C-Build-Abhängigkeiten
+
+**Debian/Ubuntu/Raspberry Pi OS:**
 ```bash
 sudo apt-get update
 sudo apt-get install -y build-essential libmosquitto-dev
 ```
 
-### Andere Distributionen
+**Andere Distributionen:**
 - **Fedora/RHEL**: `sudo dnf install gcc make mosquitto-devel`
 - **Arch**: `sudo pacman -S gcc make mosquitto`
+
+### Python-Abhängigkeiten (für sunrise.py)
+
+Das C-Programm ruft `sunrise.py` auf, um Sonnenauf- und -untergangszeiten zu berechnen:
+
+```bash
+# Python 3 und pip installieren (falls nicht vorhanden)
+sudo apt-get install python3 python3-pip
+
+# Python-Pakete installieren
+pip3 install -r requirements.txt
+
+# Oder einzeln:
+pip3 install astral pytz
+```
 
 ## Build
 
