@@ -6,7 +6,23 @@
 #include <errno.h>
 #include <modbus/modbus.h>
 #include <ctype.h>
+#include <getopt.h>
 #include "read_config.h"
+
+// Runtime configuration structure
+typedef struct {
+    char serial_port[256];
+    int baud_rate;
+    int unit_id;
+    int timeout_sec;
+    int timeout_usec;
+    char csv_file[512];
+    char raw_output_file[512];
+    char pivoted_output_file[512];
+    int allreg;
+    uint16_t max_register;
+    int block_size;
+} Config;
 
 // Global register info array
 static RegisterInfo register_info[MAX_REGISTERS];
@@ -230,9 +246,9 @@ int read_register_info_from_csv(const char *csv_file) {
     return register_count;
 }
 
-// Check if register should be read (based on ALLREG flag)
-int should_read_register(const char *unit) {
-    if (ALLREG) return 1;
+// Check if register should be read (based on config allreg flag)
+int should_read_register(const char *unit, const Config *config) {
+    if (config->allreg) return 1;
 
     if (!unit || !*unit) return 0;
 
@@ -366,49 +382,171 @@ void print_version(void) {
     printf("Compiled: %s %s\n", __DATE__, __TIME__);
 }
 
+// Initialize configuration with default values
+void init_config(Config *config) {
+    strncpy(config->serial_port, SERIAL_PORT, sizeof(config->serial_port) - 1);
+    config->baud_rate = BAUD_RATE;
+    config->unit_id = UNIT_ID;
+    config->timeout_sec = TIMEOUT_SEC;
+    config->timeout_usec = TIMEOUT_USEC;
+    strncpy(config->csv_file, CSV_FILE, sizeof(config->csv_file) - 1);
+    strncpy(config->raw_output_file, RAW_OUTPUT_FILE, sizeof(config->raw_output_file) - 1);
+    strncpy(config->pivoted_output_file, PIVOTED_OUTPUT_FILE, sizeof(config->pivoted_output_file) - 1);
+    config->allreg = ALLREG;
+    config->max_register = MAX_REGISTER;
+    config->block_size = BLOCK_SIZE;
+}
+
 // Print help information
-void print_help(void) {
+void print_help(const Config *config) {
     printf("Usage: %s [OPTIONS]\n", PROGRAM_NAME);
     printf("\n");
     printf("Sofar Inverter Register Reader - Reads Modbus RTU registers from inverter\n");
     printf("\n");
     printf("Options:\n");
-    printf("  -h, --help         Show this help message and exit\n");
-    printf("  -v, --version      Show version information and exit\n");
+    printf("  -h, --help                    Show this help message and exit\n");
+    printf("  -v, --version                 Show version information and exit\n");
     printf("\n");
-    printf("Configuration:\n");
-    printf("  Serial Port:       %s\n", SERIAL_PORT);
-    printf("  Baud Rate:         %d\n", BAUD_RATE);
-    printf("  Unit ID:           %d\n", UNIT_ID);
-    printf("  CSV File:          %s\n", CSV_FILE);
-    printf("  Output File:       %s\n", RAW_OUTPUT_FILE);
-    printf("  Filter Mode:       %s\n", ALLREG ? "All registers" : "kW/kWh/%% only");
+    printf("Serial Communication:\n");
+    printf("  -p, --port <device>           Serial port (default: %s)\n", config->serial_port);
+    printf("  -b, --baud <rate>             Baud rate (default: %d)\n", config->baud_rate);
+    printf("  -u, --unit-id <id>            Modbus unit ID (default: %d)\n", config->unit_id);
+    printf("  -t, --timeout <sec>           Response timeout in seconds (default: %d)\n", config->timeout_sec);
+    printf("      --timeout-usec <usec>     Response timeout microseconds (default: %d)\n", config->timeout_usec);
     printf("\n");
-    printf("To change settings, edit read_config.h and recompile.\n");
+    printf("File Paths:\n");
+    printf("  -c, --csv <file>              Register definitions CSV (default: %s)\n", config->csv_file);
+    printf("  -o, --output <file>           Raw output CSV file (default: %s)\n", config->raw_output_file);
+    printf("      --pivoted-output <file>   Pivoted output CSV file (default: %s)\n", config->pivoted_output_file);
+    printf("\n");
+    printf("Register Options:\n");
+    printf("  -a, --all-registers           Read all registers (default: %s)\n", config->allreg ? "yes" : "no");
+    printf("  -f, --filter                  Filter kW/kWh/%% only (opposite of --all-registers)\n");
+    printf("      --max-register <addr>     Maximum register address in hex (default: 0x%04X)\n", config->max_register);
+    printf("      --block-size <size>       Modbus read block size (default: %d)\n", config->block_size);
+    printf("\n");
+    printf("Examples:\n");
+    printf("  %s -p /dev/ttyUSB0 -b 9600 -u 1\n", PROGRAM_NAME);
+    printf("  %s --all-registers --output /tmp/inverter.csv\n", PROGRAM_NAME);
+    printf("  %s -c custom_registers.csv -o output.csv\n", PROGRAM_NAME);
+    printf("\n");
 }
 
 // Main function
 int main(int argc, char *argv[]) {
     modbus_t *ctx;
-    uint16_t tab_reg[BLOCK_SIZE];
+    Config config;
+
+    // Initialize configuration with defaults
+    init_config(&config);
+
+    // Define long options
+    static struct option long_options[] = {
+        {"help",            no_argument,       0, 'h'},
+        {"version",         no_argument,       0, 'v'},
+        {"port",            required_argument, 0, 'p'},
+        {"baud",            required_argument, 0, 'b'},
+        {"unit-id",         required_argument, 0, 'u'},
+        {"timeout",         required_argument, 0, 't'},
+        {"timeout-usec",    required_argument, 0, 128},
+        {"csv",             required_argument, 0, 'c'},
+        {"output",          required_argument, 0, 'o'},
+        {"pivoted-output",  required_argument, 0, 129},
+        {"all-registers",   no_argument,       0, 'a'},
+        {"filter",          no_argument,       0, 'f'},
+        {"max-register",    required_argument, 0, 130},
+        {"block-size",      required_argument, 0, 131},
+        {0, 0, 0, 0}
+    };
 
     // Parse command line arguments
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            print_help();
-            return 0;
-        } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
-            print_version();
-            return 0;
-        } else {
-            fprintf(stderr, "Unknown option: %s\n", argv[i]);
-            fprintf(stderr, "Try '%s --help' for more information.\n", PROGRAM_NAME);
-            return 1;
+    int opt;
+    int option_index = 0;
+    while ((opt = getopt_long(argc, argv, "hvp:b:u:t:c:o:af", long_options, &option_index)) != -1) {
+        switch (opt) {
+            case 'h':
+                print_help(&config);
+                return 0;
+            case 'v':
+                print_version();
+                return 0;
+            case 'p':
+                strncpy(config.serial_port, optarg, sizeof(config.serial_port) - 1);
+                config.serial_port[sizeof(config.serial_port) - 1] = '\0';
+                break;
+            case 'b':
+                config.baud_rate = atoi(optarg);
+                if (config.baud_rate <= 0) {
+                    fprintf(stderr, "Error: Invalid baud rate: %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 'u':
+                config.unit_id = atoi(optarg);
+                if (config.unit_id < 0 || config.unit_id > 247) {
+                    fprintf(stderr, "Error: Invalid unit ID (must be 0-247): %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 't':
+                config.timeout_sec = atoi(optarg);
+                if (config.timeout_sec < 0) {
+                    fprintf(stderr, "Error: Invalid timeout: %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 128: // --timeout-usec
+                config.timeout_usec = atoi(optarg);
+                if (config.timeout_usec < 0) {
+                    fprintf(stderr, "Error: Invalid timeout microseconds: %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 'c':
+                strncpy(config.csv_file, optarg, sizeof(config.csv_file) - 1);
+                config.csv_file[sizeof(config.csv_file) - 1] = '\0';
+                break;
+            case 'o':
+                strncpy(config.raw_output_file, optarg, sizeof(config.raw_output_file) - 1);
+                config.raw_output_file[sizeof(config.raw_output_file) - 1] = '\0';
+                break;
+            case 129: // --pivoted-output
+                strncpy(config.pivoted_output_file, optarg, sizeof(config.pivoted_output_file) - 1);
+                config.pivoted_output_file[sizeof(config.pivoted_output_file) - 1] = '\0';
+                break;
+            case 'a':
+                config.allreg = 1;
+                break;
+            case 'f':
+                config.allreg = 0;
+                break;
+            case 130: // --max-register
+                config.max_register = (uint16_t)strtol(optarg, NULL, 16);
+                break;
+            case 131: // --block-size
+                config.block_size = atoi(optarg);
+                if (config.block_size <= 0 || config.block_size > 125) {
+                    fprintf(stderr, "Error: Invalid block size (must be 1-125): %s\n", optarg);
+                    return 1;
+                }
+                break;
+            default:
+                fprintf(stderr, "Try '%s --help' for more information.\n", PROGRAM_NAME);
+                return 1;
         }
     }
 
+    // Check for unexpected arguments
+    if (optind < argc) {
+        fprintf(stderr, "Error: Unexpected argument: %s\n", argv[optind]);
+        fprintf(stderr, "Try '%s --help' for more information.\n", PROGRAM_NAME);
+        return 1;
+    }
+
     printf("Sofar Inverter Register Reader (C version %s)\n", VERSION);
-    printf("Reading mode: %s\n\n", ALLREG ? "all registers" : "filtered (kW, kWh, %% only)");
+    printf("Reading mode: %s\n", config.allreg ? "all registers" : "filtered (kW, kWh, %% only)");
+    printf("Serial port: %s @ %d baud\n", config.serial_port, config.baud_rate);
+    printf("Unit ID: %d, Timeout: %ds %dus\n\n", config.unit_id, config.timeout_sec, config.timeout_usec);
 
     // Read register definitions
     memset(register_info, 0, sizeof(register_info));
@@ -424,24 +562,24 @@ int main(int argc, char *argv[]) {
     // Fall back to CSV file if no embedded registers
     if (register_count == 0) {
         printf("Embedded registers not available, loading from CSV...\n");
-        register_count = read_register_info_from_csv(CSV_FILE);
+        register_count = read_register_info_from_csv(config.csv_file);
         if (register_count == 0) {
-            fprintf(stderr, "Error: No registers loaded from CSV\n");
+            fprintf(stderr, "Error: No registers loaded from CSV: %s\n", config.csv_file);
             return 1;
         }
     }
 
     // Initialize Modbus
-    ctx = modbus_new_rtu(SERIAL_PORT, BAUD_RATE, 'N', 8, 1);
+    ctx = modbus_new_rtu(config.serial_port, config.baud_rate, 'N', 8, 1);
     if (!ctx) {
         fprintf(stderr, "Error: Failed to create Modbus context: %s\n", modbus_strerror(errno));
         return 1;
     }
 
-    modbus_set_slave(ctx, UNIT_ID);
+    modbus_set_slave(ctx, config.unit_id);
     struct timeval timeout;
-    timeout.tv_sec = TIMEOUT_SEC;
-    timeout.tv_usec = TIMEOUT_USEC;
+    timeout.tv_sec = config.timeout_sec;
+    timeout.tv_usec = config.timeout_usec;
     modbus_set_response_timeout(ctx, timeout.tv_sec, timeout.tv_usec);
 
     if (modbus_connect(ctx) == -1) {
@@ -452,6 +590,15 @@ int main(int argc, char *argv[]) {
 
     printf("Connected to inverter\n");
     printf("\nRegisters with specified names:\n");
+
+    // Allocate buffer for reading registers
+    uint16_t *tab_reg = (uint16_t *)malloc(config.block_size * sizeof(uint16_t));
+    if (!tab_reg) {
+        fprintf(stderr, "Error: Memory allocation failed\n");
+        modbus_close(ctx);
+        modbus_free(ctx);
+        return 1;
+    }
 
     // Define sections to read
     Section sections[] = {
@@ -503,7 +650,7 @@ int main(int argc, char *argv[]) {
             RegisterInfo *info = &register_info[addr];
 
             // Filter by unit if needed
-            if (!should_read_register(info->unit)) continue;
+            if (!should_read_register(info->unit, &config)) continue;
 
             // Print section header
             if (strcmp(info->section, current_section) != 0) {
@@ -535,9 +682,10 @@ int main(int argc, char *argv[]) {
     }
 
     // Save results
-    save_raw_csv(RAW_OUTPUT_FILE);
+    save_raw_csv(config.raw_output_file);
 
     // Cleanup
+    free(tab_reg);
     modbus_close(ctx);
     modbus_free(ctx);
     free(register_data);
