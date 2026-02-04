@@ -693,13 +693,55 @@ void controller_update(InverterController *ctrl) {
     if (raw_line) free(raw_line);
 }
 
+// Print version information
+void print_version(void) {
+    printf("soyo1min version %s\n", VERSION);
+    printf("C implementation of Sofar Battery Management System\n");
+    printf("Compiled: %s %s\n", __DATE__, __TIME__);
+}
+
+// Print help information
+void print_help(void) {
+    printf("Usage: soyo1min [OPTIONS]\n");
+    printf("\n");
+    printf("Sofar Battery Management System - Controls battery discharge based on\n");
+    printf("grid status, battery SOC, sun times, MQTT data, and manual settings.\n");
+    printf("\n");
+    printf("Options:\n");
+    printf("  -h, --help         Show this help message and exit\n");
+    printf("  -v, --version      Show version information and exit\n");
+    printf("\n");
+    printf("Configuration:\n");
+    printf("  Serial Port:       %s\n", SERIAL_PORT);
+    printf("  MQTT Broker:       %s:%d\n", MQTT_BROKER, MQTT_PORT);
+    printf("  MQTT Topic:        %s\n", MQTT_TOPIC);
+    printf("  Battery Capacity:  %d kWh\n", BATTERY_CAPACITY_KWH);
+    printf("  Min SOC:           %d%%\n", BAT2_SOC_MIN);
+    printf("  Night Power:       %d W\n", NIGHT_STANDARD_POWER);
+    printf("  Log File:          %s\n", LOG_FILE);
+    printf("\n");
+    printf("To change settings, edit config.h and recompile.\n");
+}
+
 // Main function
 int main(int argc, char *argv[]) {
     InverterController controller;
     int rc;
 
-    (void)argc; // Unused parameter
-    (void)argv; // Unused parameter
+    // Parse command line arguments
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            print_help();
+            return 0;
+        } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
+            print_version();
+            return 0;
+        } else {
+            fprintf(stderr, "Unknown option: %s\n", argv[i]);
+            fprintf(stderr, "Try 'soyo1min --help' for more information.\n");
+            return 1;
+        }
+    }
 
     // Set up signal handlers
     signal(SIGINT, signal_handler);

@@ -1,6 +1,10 @@
 #ifndef READ_CONFIG_H
 #define READ_CONFIG_H
 
+// Version information
+#define VERSION "1.0.0"
+#define PROGRAM_NAME "read_inverter"
+
 // Serial port configuration
 #define SERIAL_PORT "/dev/ttyUSB32"
 #define BAUD_RATE 9600
