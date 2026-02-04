@@ -1,68 +1,70 @@
 # Installation Guide - Soyo1min C Version
 
-## Schnellstart
+[🇩🇪 Deutsche Version](INSTALL.de.md)
+
+## Quick Start
 
 ```bash
-# 0. Branch wechseln (falls noch nicht geschehen)
+# 0. Switch branch (if not already done)
 cd ~/sofar
 git fetch origin
 git checkout claude/python-to-c-conversion-fDGGt
 git pull origin claude/python-to-c-conversion-fDGGt
 
-# 1. Abhängigkeiten installieren
+# 1. Install dependencies
 sudo apt-get update
 sudo apt-get install -y build-essential libmosquitto-dev python3 python3-pip
 
-# 2. Python-Pakete für sunrise.py installieren
+# 2. Install Python packages for sunrise.py
 pip3 install -r requirements.txt
 
-# 3. System-Requirements prüfen
+# 3. Check system requirements
 cd c-version
 ./configure
 
-# 4. Kompilieren
+# 4. Compile
 make
 
-# 5. Testen (als User mit Zugriff auf /dev/ttyUSB32)
+# 5. Test (as user with access to /dev/ttyUSB32)
 ./soyo1min
 
 # 6. Installation (optional)
 sudo make install
 
-# 7. Systemd Service einrichten (optional)
+# 7. Set up systemd service (optional)
 sudo cp soyo1min.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable soyo1min
 sudo systemctl start soyo1min
 ```
 
-## Voraussetzungen
+## Prerequisites
 
 ### Hardware
-- Serieller Port `/dev/ttyUSB32` (oder in `config.h` anpassen)
-- MQTT-Broker erreichbar unter `192.168.178.218`
+- Serial port `/dev/ttyUSB32` (or adjust in `config.h`)
+- MQTT broker accessible at `192.168.178.218`
 
 ### Software
 - Linux (Raspberry Pi OS, Debian, Ubuntu, etc.)
-- GCC Compiler
-- libmosquitto-dev (MQTT-Bibliothek)
-- Python 3 (für sunrise.py)
-- Python-Pakete: astral, pytz (für sunrise.py)
+- GCC compiler
+- libmosquitto-dev (MQTT library)
+- Python 3 (for sunrise.py)
+- Python packages: astral, pytz (for sunrise.py)
 
-### Berechtigungen
-User muss Mitglied der `dialout`-Gruppe sein:
+### Permissions
+User must be member of the `dialout` group:
 ```bash
 sudo usermod -a -G dialout $USER
-# Neu anmelden erforderlich!
+# Login again required!
 ```
 
-## Detaillierte Installation
+## Detailed Installation
 
-### 1. Repository klonen / Dateien kopieren
+### 1. Clone Repository / Copy Files
 
-Die C-Version befindet sich im `c-version/`-Verzeichnis.
+The C version is located in the `c-version/` directory.
 
-### 2. Abhängigkeiten installieren
+### 2. Install Dependencies
 
 **Debian/Ubuntu/Raspberry Pi OS:**
 ```bash
@@ -79,18 +81,18 @@ sudo dnf install gcc make mosquitto-devel
 sudo pacman -S gcc make mosquitto
 ```
 
-### 3. Konfiguration anpassen
+### 3. Adjust Configuration
 
-Editieren Sie `config.h` und passen Sie folgende Werte an:
+Edit `config.h` and adjust the following values:
 
 ```c
-#define SERIAL_PORT "/dev/ttyUSB32"      // Ihr serieller Port
-#define MQTT_BROKER "192.168.178.218"    // Ihre MQTT-Broker-IP
-#define MQTT_TOPIC "em0/54"              // Ihr MQTT-Topic
-#define BATTERY_CAPACITY_KWH 30          // Ihre Batteriekapazität
+#define SERIAL_PORT "/dev/ttyUSB32"      // Your serial port
+#define MQTT_BROKER "192.168.178.218"    // Your MQTT broker IP
+#define MQTT_TOPIC "em0/54"              // Your MQTT topic
+#define BATTERY_CAPACITY_KWH 30          // Your battery capacity
 ```
 
-### 4. Kompilieren
+### 4. Compile
 
 ```bash
 cd c-version
@@ -98,132 +100,132 @@ make clean
 make
 ```
 
-Bei Erfolg wird die ausführbare Datei `soyo1min` erstellt.
+On success, the executable `soyo1min` is created.
 
-**Debug-Version (mit Debugging-Symbolen):**
+**Debug version (with debugging symbols):**
 ```bash
 make debug
 ```
 
-### 5. Manueller Test
+### 5. Manual Test
 
 ```bash
-# Prüfen, ob sunrise.py im PATH oder im gleichen Verzeichnis liegt
+# Check if sunrise.py is in PATH or same directory
 which sunrise.py
-# oder
+# or
 ls ../sunrise.py
 
-# Programm starten
+# Start program
 ./soyo1min
 
-# Mit Strg+C beenden
+# Stop with Ctrl+C
 ```
 
-### 6. Installation als Systemdienst
+### 6. Install as System Service
 
 ```bash
-# Binary installieren
+# Install binary
 sudo make install
 
-# Service-Datei kopieren
+# Copy service file
 sudo cp soyo1min.service /etc/systemd/system/
 
-# Pfade in Service-Datei ggf. anpassen
+# Adjust paths in service file if needed
 sudo nano /etc/systemd/system/soyo1min.service
-# Ändern Sie User, Group und WorkingDirectory
+# Change User, Group and WorkingDirectory
 
-# Service aktivieren und starten
+# Enable and start service
 sudo systemctl daemon-reload
 sudo systemctl enable soyo1min
 sudo systemctl start soyo1min
 
-# Status prüfen
+# Check status
 sudo systemctl status soyo1min
 
-# Logs ansehen
+# View logs
 sudo journalctl -u soyo1min -f
 ```
 
-## Deinstallation
+## Uninstallation
 
 ```bash
-# Service stoppen und deaktivieren
+# Stop and disable service
 sudo systemctl stop soyo1min
 sudo systemctl disable soyo1min
 sudo rm /etc/systemd/system/soyo1min.service
 sudo systemctl daemon-reload
 
-# Binary entfernen
+# Remove binary
 sudo rm /usr/local/bin/soyo1min
 
-# Lock-Datei entfernen (falls vorhanden)
+# Remove lock file (if present)
 rm /run/user/1000/soyo1min.lock
 ```
 
-## Parallelbetrieb mit Python-Version
+## Running in Parallel with Python Version
 
-Beide Versionen verwenden unterschiedliche Lock-Dateien:
+Both versions use different lock files:
 - Python: `/run/user/1000/soyo1min.lock`
-- C: `/run/user/1000/soyo1min.lock` (gleich!)
+- C: `/run/user/1000/soyo1min.lock` (same!)
 
-**WICHTIG:** Nur eine Version gleichzeitig ausführen!
+**IMPORTANT:** Only run one version at a time!
 
-Die C-Version schreibt Logs nach:
+The C version writes logs to:
 - `/run/user/1000/soyo1min_c.log`
 
-Die Python-Version schreibt nach:
+The Python version writes to:
 - `/run/user/1000/soyo1min.log`
 
 ## Troubleshooting
 
-### Fehler: "mosquitto.h: No such file or directory"
+### Error: "mosquitto.h: No such file or directory"
 ```bash
 sudo apt-get install libmosquitto-dev
 ```
 
-### Fehler: "Permission denied" beim Zugriff auf /dev/ttyUSB32
+### Error: "Permission denied" accessing /dev/ttyUSB32
 ```bash
-# User zur dialout-Gruppe hinzufügen
+# Add user to dialout group
 sudo usermod -a -G dialout $USER
-# Neu anmelden!
+# Login again!
 ```
 
-### Fehler: "Another instance is running"
+### Error: "Another instance is running"
 ```bash
-# Laufende Instanz prüfen
+# Check running instance
 ps aux | grep soyo1min
 
-# Falls keine läuft, Lock-Datei löschen
+# If none running, remove lock file
 rm /run/user/1000/soyo1min.lock
 ```
 
-### MQTT verbindet nicht
+### MQTT won't connect
 ```bash
-# Broker testen
+# Test broker
 mosquitto_sub -h 192.168.178.218 -t em0/54 -v
 
-# In config.h MQTT_BROKER-IP prüfen
+# Check MQTT_BROKER IP in config.h
 ```
 
-### sunrise.py nicht gefunden
+### sunrise.py not found
 ```bash
-# Prüfen wo sunrise.py liegt
+# Find where sunrise.py is located
 find ~ -name sunrise.py
 
-# Symlink erstellen oder in config.h Pfad anpassen
-ln -s /pfad/zu/sunrise.py ./sunrise.py
+# Create symlink or adjust path in config.h
+ln -s /path/to/sunrise.py ./sunrise.py
 ```
 
 ## Performance
 
-Die C-Version ist:
-- ~10-20x schneller beim Start
-- ~50% weniger Speicherverbrauch (ca. 2-3 MB statt 15-20 MB)
-- Gleiche Funktionalität wie Python-Version
+The C version is:
+- ~10-20x faster at startup
+- ~50% less memory usage (about 2-3 MB vs 15-20 MB)
+- Same functionality as Python version
 
-## Nächste Schritte
+## Next Steps
 
-Nach erfolgreicher Installation:
-1. Logs überwachen: `tail -f /run/user/1000/soyo1min_c.log`
-2. Verhalten beobachten (Grid-Werte, Power-Settings)
-3. Bei Bedarf Konfiguration in `config.h` anpassen und neu kompilieren
+After successful installation:
+1. Monitor logs: `tail -f /run/user/1000/soyo1min_c.log`
+2. Observe behavior (Grid values, Power settings)
+3. If needed, adjust configuration in `config.h` and recompile

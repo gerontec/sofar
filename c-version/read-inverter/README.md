@@ -1,17 +1,20 @@
 # Read Inverter - C Version
 
-C-Implementierung des Sofar-Inverter Register-Readers (read.py).
+[🇩🇪 Deutsche Version](README.de.md)
 
-## Überblick
+C implementation of the Sofar Inverter Register Reader (read.py).
 
-Dieses Programm liest Register von einem Sofar-Inverter über Modbus RTU aus:
-- Liest Register-Definitionen aus CSV-Datei
-- Verbindet sich über seriellen Port (Modbus RTU)
-- Liest verschiedene Register-Bereiche mit Mask-Filterung
-- Dekodiert Werte (U16, I16, U32, I32, U64, BCD16, ASCII)
-- Speichert Ergebnisse in CSV-Dateien
+## Overview
 
-## Abhängigkeiten
+This program reads registers from a Sofar inverter via Modbus RTU:
+- Reads register definitions from CSV file (embedded at build time)
+- Connects via serial port (Modbus RTU)
+- Reads various register ranges with mask filtering
+- Decodes values (U16, I16, U32, I32, U64, BCD16, ASCII)
+- Saves results to CSV files
+- **Full command-line configuration** (NEW!)
+
+## Dependencies
 
 ### Debian/Ubuntu
 ```bash
@@ -19,160 +22,269 @@ sudo apt-get update
 sudo apt-get install -y build-essential libmodbus-dev
 ```
 
-### Andere Distributionen
+### Other Distributions
 - **Fedora/RHEL**: `sudo dnf install gcc make libmodbus-devel`
 - **Arch**: `sudo pacman -S gcc make libmodbus`
 
-## Konfiguration
+## Configuration
 
-Die wichtigsten Einstellungen sind bereits konfiguriert für Produktionsumgebung:
+### NEW: Command-Line Arguments
 
-```c
-#define SERIAL_PORT "/dev/ttyUSB32"                    // Serieller Port
-#define BAUD_RATE 9600                                 // Baudrate
-#define UNIT_ID 1                                      // Modbus Unit-ID
-#define CSV_FILE "/home/pi/python/sofarregister.csv"  // Register-Definitionen (fest)
-#define ALLREG 0                                       // 0=nur kW/kWh/%, 1=alle Register
+All configuration can now be done via command-line without recompiling:
+
+```bash
+# View all options and current defaults
+./read_inverter --help
+
+# Serial Communication
+./read_inverter --port /dev/ttyUSB0 --baud 9600 --unit-id 1
+./read_inverter -p /dev/ttyUSB0 -b 9600 -u 1      # short form
+
+# Timeout settings
+./read_inverter --timeout 2                        # seconds
+./read_inverter --timeout-usec 500000              # microseconds
+
+# File Paths
+./read_inverter --csv /path/to/custom_registers.csv
+./read_inverter --output /tmp/my_output.csv
+./read_inverter --pivoted-output /tmp/pivoted.csv
+
+# Register Options
+./read_inverter --all-registers                    # Read all registers
+./read_inverter -a                                 # short form
+./read_inverter --filter                           # Only kW/kWh/% (default)
+./read_inverter -f                                 # short form
+
+# Advanced Options
+./read_inverter --max-register 0x3000              # Maximum register address (hex)
+./read_inverter --block-size 64                    # Modbus block size (1-125)
+
+# Combine options
+./read_inverter -p /dev/ttyUSB0 -b 9600 -a -o /tmp/full_scan.csv
 ```
 
-**Embedded Register-Definitionen:**
-- Beim Build werden alle Register-Definitionen aus `/home/pi/python/sofarregister.csv` direkt ins Binary eingebettet
-- Das kompilierte Programm benötigt **keine externe CSV-Datei** mehr zur Laufzeit
-- Die Binary ist standalone und vollständig portabel
-- Falls die CSV zur Build-Zeit nicht verfügbar ist, fällt das Programm auf Runtime-CSV-Loading zurück
+### Default Configuration
 
-**Standard-Konfiguration:**
-- Filter-Modus: nur kW/kWh/% Register (schneller, weniger Daten)
-- Diese Werte sind produktionsreif und müssen normalerweise nicht geändert werden
+Most important settings are pre-configured for production use in `read_config.h`:
 
-**Optional:** Nur falls Sie andere Werte benötigen, editieren Sie `read_config.h` und kompilieren neu.
+```c
+#define SERIAL_PORT "/dev/ttyUSB32"                    // Serial port
+#define BAUD_RATE 9600                                 // Baud rate
+#define UNIT_ID 1                                      // Modbus Unit ID
+#define CSV_FILE "/home/pi/python/sofarregister.csv"  // Register definitions
+#define ALLREG 0                                       // 0=only kW/kWh/%, 1=all registers
+```
+
+**Embedded Register Definitions:**
+- During build, all register definitions from `/home/pi/python/sofarregister.csv` are embedded directly into the binary
+- The compiled program **does not need an external CSV file** at runtime
+- The binary is standalone and fully portable
+- If CSV is not available at build time, the program falls back to runtime CSV loading
+
+**Standard Configuration:**
+- Filter mode: only kW/kWh/% registers (faster, less data)
+- These values are production-ready and normally don't need changes
+
+**Optional:** Only if you need different values, edit `read_config.h` and recompile.
 
 ## Build
 
 ```bash
 cd read-inverter
 
-# Optional: System-Requirements prüfen
+# Optional: Check system requirements
 ./configure
 
-# Kompilieren
+# Compile
 make
 ```
 
-Für Debug-Build:
+For debug build:
 ```bash
 make debug
 ```
 
-**Hinweis:** Falls `configure` nicht existiert, holen Sie die neueste Version:
+**Note:** If `configure` doesn't exist, get the latest version:
 ```bash
 git pull origin claude/python-to-c-conversion-fDGGt
 ```
 
-## Verwendung
+## Usage
 
 ```bash
-# Hilfe anzeigen (zeigt alle Konfigurationswerte)
+# Show help (displays all configuration values)
 ./read_inverter --help
 
-# Version anzeigen
+# Show version
 ./read_inverter --version
 
-# Direkt ausführen
+# Run directly with defaults
 ./read_inverter
 
-# Als root falls Serial-Port Berechtigung benötigt
+# Run with custom settings
+./read_inverter --port /dev/ttyUSB0 --all-registers --output /tmp/data.csv
+
+# As root if serial port permission required
 sudo ./read_inverter
 ```
 
-**Tipp:** Mit `--help` sehen Sie alle aktuell kompilierten Einstellungen, ohne in die Quelldateien schauen zu müssen.
+**Tip:** Use `--help` to see all currently compiled settings without looking at source files.
 
-## Output-Dateien
+## Command-Line Options
 
-- `/tmp/raw.csv` - Rohe Registerdaten im CSV-Format
-- Konsolenausgabe mit allen gelesenen Registern
+### General Options
+- `-h, --help` - Show help message and exit
+- `-v, --version` - Show version information and exit
 
-## Register-Filter
+### Serial Communication
+- `-p, --port <device>` - Serial port (default: /dev/ttyUSB32)
+- `-b, --baud <rate>` - Baud rate (default: 9600)
+- `-u, --unit-id <id>` - Modbus unit ID 0-247 (default: 1)
+- `-t, --timeout <sec>` - Response timeout in seconds (default: 1)
+- `--timeout-usec <usec>` - Response timeout microseconds (default: 0)
 
-Standardmäßig (`ALLREG=0`) werden nur Register mit folgenden Einheiten gelesen:
-- `kW` (Kilowatt)
-- `kWh` (Kilowattstunden)
-- `%` (Prozent, für SOC)
+### File Paths
+- `-c, --csv <file>` - Register definitions CSV (default: /home/pi/python/sofarregister.csv)
+- `-o, --output <file>` - Raw output CSV file (default: /tmp/raw.csv)
+- `--pivoted-output <file>` - Pivoted output CSV file (default: /tmp/pivoted_registers.csv)
 
-Setzen Sie `ALLREG=1` in `read_config.h` um alle Register zu lesen.
+### Register Options
+- `-a, --all-registers` - Read all registers (default: no)
+- `-f, --filter` - Filter kW/kWh/% only (opposite of --all-registers)
+- `--max-register <addr>` - Maximum register address in hex (default: 0x203F)
+- `--block-size <size>` - Modbus read block size 1-125 (default: 32)
 
-## CSV-Format
+## Examples
 
-Die Register-Definitions-CSV (`sofarregister.csv`) muss folgendes Format haben:
+```bash
+# Use different serial port and unit ID
+./read_inverter -p /dev/ttyUSB0 -u 2
+
+# Read all registers and save to custom location
+./read_inverter --all-registers --output /home/user/inverter_data.csv
+
+# Use custom register definitions
+./read_inverter -c /path/to/my_registers.csv -o /tmp/output.csv
+
+# Adjust timeout for slow connections
+./read_inverter --timeout 3 --timeout-usec 0
+
+# Full custom configuration
+./read_inverter \
+  --port /dev/ttyUSB0 \
+  --baud 9600 \
+  --unit-id 1 \
+  --all-registers \
+  --output /tmp/full_scan.csv \
+  --max-register 0x3000 \
+  --block-size 64
 ```
-Sektion;Adresse;Name;Typ;Genauigkeit;Einheit
+
+## Output Files
+
+- Default: `/tmp/raw.csv` - Raw register data in CSV format
+- Console output with all read registers
+
+## Register Filter
+
+By default (`ALLREG=0` or `--filter`), only registers with the following units are read:
+- `kW` (Kilowatt)
+- `kWh` (Kilowatt hours)
+- `%` (Percent, for SOC)
+
+Use `--all-registers` or `-a` to read all registers.
+
+## CSV Format
+
+The register definition CSV (`sofarregister.csv`) must have this format:
+```
+Section;Address;Name;Type;Accuracy;Unit
 I General;0x0040-0x007F;Register Name;U16;1;kW
 ```
 
-Spalten (durch `;` getrennt):
-1. Sektion (leer für Register-Zeilen)
-2. Adresse (Hex, kann Range sein: `0x0040-0x007F` oder `0x0040____0x007F`)
+Columns (separated by `;`):
+1. Section (empty for register lines)
+2. Address (Hex, can be range: `0x0040-0x007F` or `0x0040____0x007F`)
 3. Name
-4. Typ (U16, I16, U32, I32, U64, BCD16, ASCII)
-5. Genauigkeit (Multiplikator, z.B. 0.1)
-6. Einheit (z.B. kW, kWh, %, V, A)
+4. Type (U16, I16, U32, I32, U64, BCD16, ASCII)
+5. Accuracy (Multiplier, e.g., 0.1)
+6. Unit (e.g., kW, kWh, %, V, A)
 
-## Berechtigungen
+## Permissions
 
-User muss Zugriff auf den seriellen Port haben:
+User must have access to the serial port:
 ```bash
 sudo usermod -a -G dialout $USER
-# Dann neu anmelden
+# Then login again
 ```
 
 ## Troubleshooting
 
 ### Error: Cannot open serial port
 ```bash
-# Prüfen ob Port existiert
+# Check if port exists
 ls -l /dev/ttyUSB32
 
-# Berechtigung prüfen
-groups  # sollte "dialout" enthalten
+# Check permissions
+groups  # should contain "dialout"
+```
+
+### Error: Invalid option
+```bash
+# Make sure you're using the latest version
+git pull
+
+# Check available options
+./read_inverter --help
 ```
 
 ### Error: Failed to create Modbus context
 ```bash
-# libmodbus installieren
+# Install libmodbus
 sudo apt-get install libmodbus-dev
 ```
 
 ### Error: Cannot open CSV file
 ```bash
-# Pfad in read_config.h anpassen
-# CSV-Datei muss existieren und lesbar sein
+# Specify CSV file location
+./read_inverter --csv /path/to/sofarregister.csv
+
+# Or adjust path in read_config.h and recompile
 ```
 
 ### No registers read
 ```bash
-# ALLREG auf 1 setzen in read_config.h
-# Oder sicherstellen dass CSV Register mit kW/kWh/% enthält
+# Use --all-registers flag
+./read_inverter --all-registers
+
+# Or ensure CSV contains registers with kW/kWh/% units
 ```
 
 ## Performance
 
-- Extrem schnell (C-native)
-- Geringer Speicherverbrauch (~2-5 MB)
-- Keine Python-Abhängigkeiten
+- Extremely fast (C-native)
+- Low memory usage (~2-5 MB)
+- No Python dependencies
+- Production-ready
 
-## Unterschiede zur Python-Version
+## Differences from Python Version
 
-✅ **Gleiche Funktionalität:**
-- CSV-Parsing
-- Modbus RTU Kommunikation
-- Register-Dekodierung (alle Typen)
-- Mask-basierte Register-Filterung
-- CSV-Output
+✅ **Same Functionality:**
+- CSV parsing
+- Modbus RTU communication
+- Register decoding (all types)
+- Mask-based register filtering
+- CSV output
 
-❌ **Nicht implementiert:**
-- Pivotierte CSV-Ausgabe (nur raw.csv)
-- Pandas-Integration
-- Logging in Datei (nur stdout/stderr)
+➕ **New Features:**
+- Full command-line configuration
+- No recompilation needed for parameter changes
+- Embedded register definitions (optional)
+
+❌ **Not Implemented:**
+- Pivoted CSV output (only raw.csv)
+- Pandas integration
+- File logging (only stdout/stderr)
 
 ## Installation (optional)
 
@@ -180,8 +292,22 @@ sudo apt-get install libmodbus-dev
 sudo make install
 ```
 
-Installiert nach `/usr/local/bin/read_inverter`.
+Installs to `/usr/local/bin/read_inverter`.
 
 ## Version
 
-C-Portierung von read.py v1.0
+C port of read.py v1.0 with command-line configuration support.
+
+## Changelog
+
+### v1.1 (Latest)
+- Added comprehensive command-line argument support
+- All configuration parameters now available via CLI
+- Maintained backward compatibility with header defaults
+- Added detailed help text with examples
+- Improved error messages for invalid parameters
+
+### v1.0
+- Initial C port from Python
+- Embedded register definitions
+- Production-ready configuration
