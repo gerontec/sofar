@@ -1,7 +1,7 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#define VERSION "v1.12_CLI_EXAMPLES"
+#define VERSION "v1.13_CONFIGURABLE_LOCATION"
 
 // File paths
 #define LOCK_FILE "/tmp/soyo1min.lock"
@@ -30,6 +30,12 @@
 
 // Timing
 #define UPDATE_INTERVAL_SEC 2
+
+// Location (Lenggries, Germany)
+#define LATITUDE 47.6811
+#define LONGITUDE 11.5732
+#define SUNRISE_OFFSET_MIN 60   // Add 60 minutes to calculated sunrise
+#define SUNSET_OFFSET_MIN -60   // Subtract 60 minutes from calculated sunset
 
 // Status bytes
 #define STATUS_ENTLADESCHUTZ    (1 << 0)  // 1

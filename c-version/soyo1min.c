@@ -50,6 +50,10 @@ typedef struct {
     char inverter_file[512];
     char soyopower_file[512];
     char sunrise_script[512];
+    double latitude;
+    double longitude;
+    int sunrise_offset_min;
+    int sunset_offset_min;
 } Config;
 
 // Structures
@@ -444,7 +448,7 @@ static double julian_day(int year, int month, int day) {
 }
 
 // Calculate sunrise and sunset times using simplified algorithm
-// Coordinates for Lenggries: lat=47.6811, lon=11.5732
+// Works for any location on Earth
 static void calculate_sun_times(double jd, double lat, double lon, double *sunrise_utc, double *sunset_utc) {
     double n = jd - 2451545.0 + 0.0008;
     double J_star = n - lon / 360.0;
@@ -482,7 +486,7 @@ static void calculate_sun_times(double jd, double lat, double lon, double *sunri
     *sunset_utc = fmod(*sunset_utc + 24.0, 24.0);
 }
 
-// Get sunrise/sunset times for Lenggries with +60/-60 minute offset
+// Get sunrise/sunset times with configurable location and offsets
 int get_sun_times(char *sunrise, char *sunset, size_t bufsize) {
     time_t now;
     struct tm *tm_info;
@@ -491,12 +495,7 @@ int get_sun_times(char *sunrise, char *sunset, size_t bufsize) {
     int sunrise_hour, sunrise_min, sunrise_sec;
     int sunset_hour, sunset_min, sunset_sec;
 
-    // Lenggries coordinates
-    const double LAT = 47.6811;
-    const double LON = 11.5732;
     const double UTC_OFFSET = 1.0; // CET (Central European Time)
-    const int SUNRISE_OFFSET_MIN = 60; // +60 minutes
-    const int SUNSET_OFFSET_MIN = -60; // -60 minutes
 
     time(&now);
     tm_info = localtime(&now);
@@ -510,12 +509,12 @@ int get_sun_times(char *sunrise, char *sunset, size_t bufsize) {
     // Calculate Julian Day
     jd = julian_day(tm_info->tm_year + 1900, tm_info->tm_mon + 1, tm_info->tm_mday);
 
-    // Calculate sun times in UTC
-    calculate_sun_times(jd, LAT, LON, &sunrise_utc, &sunset_utc);
+    // Calculate sun times in UTC using configured location
+    calculate_sun_times(jd, config.latitude, config.longitude, &sunrise_utc, &sunset_utc);
 
-    // Convert to local time and add offsets
-    sunrise_local = sunrise_utc + tz_offset + (SUNRISE_OFFSET_MIN / 60.0);
-    sunset_local = sunset_utc + tz_offset + (SUNSET_OFFSET_MIN / 60.0);
+    // Convert to local time and add configured offsets
+    sunrise_local = sunrise_utc + tz_offset + (config.sunrise_offset_min / 60.0);
+    sunset_local = sunset_utc + tz_offset + (config.sunset_offset_min / 60.0);
 
     // Normalize to 0-24 range
     sunrise_local = fmod(sunrise_local + 24.0, 24.0);
@@ -802,6 +801,10 @@ void init_config(Config *cfg) {
     strncpy(cfg->inverter_file, INVERTER_FILE, sizeof(cfg->inverter_file) - 1);
     strncpy(cfg->soyopower_file, SOYOPOWER_FILE, sizeof(cfg->soyopower_file) - 1);
     strncpy(cfg->sunrise_script, SUNRISE_SCRIPT, sizeof(cfg->sunrise_script) - 1);
+    cfg->latitude = LATITUDE;
+    cfg->longitude = LONGITUDE;
+    cfg->sunrise_offset_min = SUNRISE_OFFSET_MIN;
+    cfg->sunset_offset_min = SUNSET_OFFSET_MIN;
 }
 
 void print_version(void) {
@@ -845,6 +848,12 @@ void print_help(const Config *cfg) {
     printf("      --inverter-file <path>        Inverter data file (default: %s)\n", cfg->inverter_file);
     printf("      --soyopower-file <path>       Manual power override file (default: %s)\n", cfg->soyopower_file);
     printf("\n");
+    printf("Location & Sun Times:\n");
+    printf("      --latitude <degrees>          Latitude in decimal degrees (default: %.4f)\n", cfg->latitude);
+    printf("      --longitude <degrees>         Longitude in decimal degrees (default: %.4f)\n", cfg->longitude);
+    printf("      --sunrise-offset <minutes>    Minutes to add to sunrise (default: %d)\n", cfg->sunrise_offset_min);
+    printf("      --sunset-offset <minutes>     Minutes to add to sunset (default: %d)\n", cfg->sunset_offset_min);
+    printf("\n");
     printf("Timing:\n");
     printf("  -i, --interval <seconds>          Update interval (default: %d sec)\n", cfg->update_interval_sec);
     printf("\n");
@@ -855,6 +864,8 @@ void print_help(const Config *cfg) {
     printf("  soyo1min -i 5 --night-power 500\n");
     printf("  soyo1min --lock-file /tmp/soyo.lock --log-file /tmp/soyo.log\n");
     printf("  soyo1min --inverter-file /tmp/inverter.csv --soyopower-file /home/pi/power.txt\n");
+    printf("  soyo1min --latitude 48.1351 --longitude 11.5820  # Munich coordinates\n");
+    printf("  soyo1min --sunrise-offset 30 --sunset-offset -30  # Custom time offsets\n");
     printf("\n");
     printf("Priority System:\n");
     printf("  1. Discharge Protection (SOC < min-soc)\n");
@@ -895,6 +906,10 @@ int main(int argc, char *argv[]) {
         {"inverter-file",       required_argument, 0, 140},
         {"soyopower-file",      required_argument, 0, 141},
         {"sunrise-script",      required_argument, 0, 142},
+        {"latitude",            required_argument, 0, 143},
+        {"longitude",           required_argument, 0, 144},
+        {"sunrise-offset",      required_argument, 0, 145},
+        {"sunset-offset",       required_argument, 0, 146},
         {"interval",            required_argument, 0, 'i'},
         {0, 0, 0, 0}
     };
@@ -985,6 +1000,26 @@ int main(int argc, char *argv[]) {
                 strncpy(config.sunrise_script, optarg, sizeof(config.sunrise_script) - 1);
                 config.sunrise_script[sizeof(config.sunrise_script) - 1] = '\0';
                 break;
+            case 143: // --latitude
+                config.latitude = atof(optarg);
+                if (config.latitude < -90.0 || config.latitude > 90.0) {
+                    fprintf(stderr, "Error: Invalid latitude (must be -90 to 90): %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 144: // --longitude
+                config.longitude = atof(optarg);
+                if (config.longitude < -180.0 || config.longitude > 180.0) {
+                    fprintf(stderr, "Error: Invalid longitude (must be -180 to 180): %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 145: // --sunrise-offset
+                config.sunrise_offset_min = atoi(optarg);
+                break;
+            case 146: // --sunset-offset
+                config.sunset_offset_min = atoi(optarg);
+                break;
             case 'i':
                 config.update_interval_sec = atoi(optarg);
                 if (config.update_interval_sec <= 0) {
@@ -1013,6 +1048,8 @@ int main(int argc, char *argv[]) {
     LOG_INFO("Configuration: port=%s, baud=%d, mqtt=%s:%d, topic=%s",
              config.serial_port, config.serial_baudrate,
              config.mqtt_broker, config.mqtt_port, config.mqtt_topic);
+    LOG_INFO("Location: lat=%.4f, lon=%.4f, sunrise_offset=%d min, sunset_offset=%d min",
+             config.latitude, config.longitude, config.sunrise_offset_min, config.sunset_offset_min);
 
     // Acquire lock
     if (!acquire_lock()) {
