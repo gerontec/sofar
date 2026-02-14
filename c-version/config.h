@@ -1,14 +1,14 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#define VERSION "v1.10_TMP_PATHS"
+#define VERSION "v1.11_NATIVE_SUN_CALC"
 
 // File paths
 #define LOCK_FILE "/tmp/soyo1min.lock"
 #define LOG_FILE "/tmp/soyo1min_c.log"
 #define INVERTER_FILE "/tmp/inverter.csv"
 #define SOYOPOWER_FILE "/home/pi/soyopower.txt"
-#define SUNRISE_SCRIPT "./sunrise.py"
+#define SUNRISE_SCRIPT "./sunrise.py" // Deprecated: using native C calculation
 
 // Serial configuration
 #define SERIAL_PORT "/dev/ttyUSB32"

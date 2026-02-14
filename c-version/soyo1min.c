@@ -25,6 +25,11 @@
 #define CRTSCTS 020000000000
 #endif
 
+// M_PI may not be defined on some systems
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 // Runtime configuration structure
 typedef struct {
     char serial_port[256];
@@ -427,49 +432,107 @@ int read_soyopower(void) {
     return power;
 }
 
-// Get sunrise/sunset times
+// Calculate Julian Day Number
+static double julian_day(int year, int month, int day) {
+    if (month <= 2) {
+        year -= 1;
+        month += 12;
+    }
+    int A = year / 100;
+    int B = 2 - A + (A / 4);
+    return floor(365.25 * (year + 4716)) + floor(30.6001 * (month + 1)) + day + B - 1524.5;
+}
+
+// Calculate sunrise and sunset times using simplified algorithm
+// Coordinates for Lenggries: lat=47.6811, lon=11.5732
+static void calculate_sun_times(double jd, double lat, double lon, double *sunrise_utc, double *sunset_utc) {
+    double n = jd - 2451545.0 + 0.0008;
+    double J_star = n - lon / 360.0;
+    double M = fmod(357.5291 + 0.98560028 * J_star, 360.0);
+    double M_rad = M * M_PI / 180.0;
+    double C = 1.9148 * sin(M_rad) + 0.0200 * sin(2 * M_rad) + 0.0003 * sin(3 * M_rad);
+    double lambda = fmod(M + C + 180.0 + 102.9372, 360.0);
+    double J_transit = 2451545.0 + J_star + 0.0053 * sin(M_rad) - 0.0069 * sin(2 * lambda * M_PI / 180.0);
+
+    double lambda_rad = lambda * M_PI / 180.0;
+    double sin_dec = sin(lambda_rad) * sin(23.44 * M_PI / 180.0);
+    double cos_dec = sqrt(1 - sin_dec * sin_dec);
+
+    double lat_rad = lat * M_PI / 180.0;
+    double cos_omega = (sin(-0.83 * M_PI / 180.0) - sin(lat_rad) * sin_dec) / (cos(lat_rad) * cos_dec);
+
+    // Handle polar day/night
+    if (cos_omega > 1.0) {
+        *sunrise_utc = 0.0;
+        *sunset_utc = 0.0;
+        return;
+    }
+    if (cos_omega < -1.0) {
+        *sunrise_utc = 12.0;
+        *sunset_utc = 12.0;
+        return;
+    }
+
+    double omega = acos(cos_omega) * 180.0 / M_PI;
+    *sunrise_utc = (J_transit - 2451545.0 - omega / 360.0) * 24.0;
+    *sunset_utc = (J_transit - 2451545.0 + omega / 360.0) * 24.0;
+
+    // Normalize to 0-24 range
+    *sunrise_utc = fmod(*sunrise_utc + 24.0, 24.0);
+    *sunset_utc = fmod(*sunset_utc + 24.0, 24.0);
+}
+
+// Get sunrise/sunset times for Lenggries with +60/-60 minute offset
 int get_sun_times(char *sunrise, char *sunset, size_t bufsize) {
-    FILE *fp;
-    char line[256];
-    char *token;
-    int field = 0;
+    time_t now;
+    struct tm *tm_info;
+    double jd, sunrise_utc, sunset_utc;
+    double sunrise_local, sunset_local;
+    int sunrise_hour, sunrise_min, sunrise_sec;
+    int sunset_hour, sunset_min, sunset_sec;
 
-    fp = popen(config.sunrise_script, "r");
-    if (!fp) {
-        LOG_ERROR("Failed to execute %s: %s", config.sunrise_script, strerror(errno));
-        return 0;
+    // Lenggries coordinates
+    const double LAT = 47.6811;
+    const double LON = 11.5732;
+    const double UTC_OFFSET = 1.0; // CET (Central European Time)
+    const int SUNRISE_OFFSET_MIN = 60; // +60 minutes
+    const int SUNSET_OFFSET_MIN = -60; // -60 minutes
+
+    time(&now);
+    tm_info = localtime(&now);
+
+    // Check for daylight saving time (CEST = UTC+2)
+    double tz_offset = UTC_OFFSET;
+    if (tm_info->tm_isdst > 0) {
+        tz_offset = 2.0; // CEST
     }
 
-    if (fgets(line, sizeof(line), fp) == NULL) {
-        LOG_ERROR("Failed to read from %s", config.sunrise_script);
-        pclose(fp);
-        return 0;
-    }
+    // Calculate Julian Day
+    jd = julian_day(tm_info->tm_year + 1900, tm_info->tm_mon + 1, tm_info->tm_mday);
 
-    pclose(fp);
+    // Calculate sun times in UTC
+    calculate_sun_times(jd, LAT, LON, &sunrise_utc, &sunset_utc);
 
-    // Remove newline
-    char *newline = strchr(line, '\n');
-    if (newline) *newline = '\0';
+    // Convert to local time and add offsets
+    sunrise_local = sunrise_utc + tz_offset + (SUNRISE_OFFSET_MIN / 60.0);
+    sunset_local = sunset_utc + tz_offset + (SUNSET_OFFSET_MIN / 60.0);
 
-    // Parse CSV: field 1 is sunrise, field 2 is sunset
-    token = strtok(line, ",");
-    while (token && field < 3) {
-        if (field == 1) {
-            strncpy(sunrise, token, bufsize - 1);
-            sunrise[bufsize - 1] = '\0';
-        } else if (field == 2) {
-            strncpy(sunset, token, bufsize - 1);
-            sunset[bufsize - 1] = '\0';
-        }
-        field++;
-        token = strtok(NULL, ",");
-    }
+    // Normalize to 0-24 range
+    sunrise_local = fmod(sunrise_local + 24.0, 24.0);
+    sunset_local = fmod(sunset_local + 24.0, 24.0);
 
-    if (field < 3) {
-        LOG_ERROR("Incomplete sun data from %s", config.sunrise_script);
-        return 0;
-    }
+    // Convert decimal hours to HH:MM:SS
+    sunrise_hour = (int)sunrise_local;
+    sunrise_min = (int)((sunrise_local - sunrise_hour) * 60);
+    sunrise_sec = (int)(((sunrise_local - sunrise_hour) * 60 - sunrise_min) * 60);
+
+    sunset_hour = (int)sunset_local;
+    sunset_min = (int)((sunset_local - sunset_hour) * 60);
+    sunset_sec = (int)(((sunset_local - sunset_hour) * 60 - sunset_min) * 60);
+
+    // Format times as HH:MM:SS
+    snprintf(sunrise, bufsize, "%02d:%02d:%02d", sunrise_hour, sunrise_min, sunrise_sec);
+    snprintf(sunset, bufsize, "%02d:%02d:%02d", sunset_hour, sunset_min, sunset_sec);
 
     return 1;
 }
