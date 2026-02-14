@@ -844,7 +844,6 @@ void print_help(const Config *cfg) {
     printf("      --log-file <path>             Log file path (default: %s)\n", cfg->log_file);
     printf("      --inverter-file <path>        Inverter data file (default: %s)\n", cfg->inverter_file);
     printf("      --soyopower-file <path>       Manual power override file (default: %s)\n", cfg->soyopower_file);
-    printf("      --sunrise-script <path>       Sunrise calculation script (default: %s)\n", cfg->sunrise_script);
     printf("\n");
     printf("Timing:\n");
     printf("  -i, --interval <seconds>          Update interval (default: %d sec)\n", cfg->update_interval_sec);
