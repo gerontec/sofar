@@ -1,12 +1,12 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#define VERSION "v1.9_FIXED_GRID_SIGN_DATETIME_C"
+#define VERSION "v1.10_TMP_PATHS"
 
 // File paths
-#define LOCK_FILE "/run/user/1000/soyo1min.lock"
-#define LOG_FILE "/run/user/1000/soyo1min_c.log"
-#define INVERTER_FILE "/run/user/1000/inverter.csv"
+#define LOCK_FILE "/tmp/soyo1min.lock"
+#define LOG_FILE "/tmp/soyo1min_c.log"
+#define INVERTER_FILE "/tmp/inverter.csv"
 #define SOYOPOWER_FILE "/home/pi/soyopower.txt"
 #define SUNRISE_SCRIPT "./sunrise.py"
 
