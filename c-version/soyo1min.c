@@ -854,6 +854,8 @@ void print_help(const Config *cfg) {
     printf("  soyo1min --mqtt-broker 192.168.1.100 --mqtt-topic power/heatpump\n");
     printf("  soyo1min --battery-capacity 40 --min-soc 10\n");
     printf("  soyo1min -i 5 --night-power 500\n");
+    printf("  soyo1min --lock-file /tmp/soyo.lock --log-file /tmp/soyo.log\n");
+    printf("  soyo1min --inverter-file /tmp/inverter.csv --soyopower-file /home/pi/power.txt\n");
     printf("\n");
     printf("Priority System:\n");
     printf("  1. Discharge Protection (SOC < min-soc)\n");

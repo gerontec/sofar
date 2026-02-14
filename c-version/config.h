@@ -1,7 +1,7 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#define VERSION "v1.11_NATIVE_SUN_CALC"
+#define VERSION "v1.12_CLI_EXAMPLES"
 
 // File paths
 #define LOCK_FILE "/tmp/soyo1min.lock"
