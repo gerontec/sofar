@@ -35,10 +35,12 @@
  */
 
 #define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE  // For usleep and other BSD extensions
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <getopt.h>
 #include <time.h>
@@ -55,7 +57,7 @@
 //                             VERSION & CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-#define VERSION "v1.50-C"
+#define VERSION "v1.51-C"
 #define MAX_PATH_LEN 512
 #define MAX_LOG_MSG 1024
 #define MAX_TOPIC_LEN 256
