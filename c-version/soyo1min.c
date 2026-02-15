@@ -1,3 +1,6 @@
+#define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,11 +11,50 @@
 #include <signal.h>
 #include <time.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
 #include <math.h>
+#include <getopt.h>
 #include <mosquitto.h>
 #include "config.h"
+
+// CRTSCTS may not be defined on some systems
+#ifndef CRTSCTS
+#define CRTSCTS 020000000000
+#endif
+
+// M_PI may not be defined on some systems
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+// Runtime configuration structure
+typedef struct {
+    char serial_port[256];
+    int serial_baudrate;
+    int serial_timeout;
+    char mqtt_broker[256];
+    int mqtt_port;
+    char mqtt_topic[256];
+    float wp_power_default;
+    int battery_capacity_kwh;
+    int max_power;
+    int max_bat2_current;
+    int night_standard_power;
+    int bat2_soc_min;
+    int update_interval_sec;
+    char lock_file[512];
+    char log_file[512];
+    char inverter_file[512];
+    char soyopower_file[512];
+    char sunrise_script[512];
+    double latitude;
+    double longitude;
+    int sunrise_offset_min;
+    int sunset_offset_min;
+} Config;
 
 // Structures
 typedef struct {
@@ -38,6 +80,7 @@ typedef struct {
 } InverterController;
 
 // Global variables
+static Config config;
 static int serial_fd = -1;
 static struct mosquitto *mqtt_client = NULL;
 static float mqtt_power_value = WP_POWER_DEFAULT;
@@ -65,18 +108,48 @@ static const char* priority_names[] = {
 };
 
 // Logging functions
+void rotate_log_if_needed(void) {
+    struct stat st;
+
+    // Check if log file exists and get its size
+    if (stat(config.log_file, &st) == 0) {
+        // If file size exceeds limit, rotate it
+        if (st.st_size >= MAX_LOG_SIZE_BYTES) {
+            // Close current log file if open
+            if (log_file != NULL) {
+                fclose(log_file);
+                log_file = NULL;
+            }
+
+            // Delete old log file (simple rotation)
+            // Alternative: rename to .old if you want to keep one backup
+            unlink(config.log_file);
+
+            fprintf(stderr, "Log rotated: size was %ld bytes, limit is %d bytes\n",
+                    st.st_size, MAX_LOG_SIZE_BYTES);
+        }
+    }
+}
+
 void log_message(const char *level, const char *fmt, ...) {
     time_t now;
     struct tm *tm_info;
     char timestamp[26];
     va_list args;
+    static int log_counter = 0;
 
     time(&now);
     tm_info = localtime(&now);
     strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
 
+    // Check log rotation every 100 logs or if file is not open
+    if (log_file == NULL || (++log_counter % 100 == 0)) {
+        rotate_log_if_needed();
+    }
+
+    // Open log file if not already open
     if (log_file == NULL) {
-        log_file = fopen(LOG_FILE, "a");
+        log_file = fopen(config.log_file, "a");
     }
 
     if (log_file) {
@@ -116,7 +189,7 @@ int acquire_lock(void) {
     pid_t existing_pid;
 
     // Check if lock file exists
-    fp = fopen(LOCK_FILE, "r");
+    fp = fopen(config.lock_file, "r");
     if (fp) {
         if (fscanf(fp, "%d", &existing_pid) == 1) {
             fclose(fp);
@@ -126,7 +199,7 @@ int acquire_lock(void) {
                 return 0;
             } else {
                 LOG_WARNING("Stale lock file found for PID %d, removing it", existing_pid);
-                unlink(LOCK_FILE);
+                unlink(config.lock_file);
             }
         } else {
             fclose(fp);
@@ -134,23 +207,23 @@ int acquire_lock(void) {
     }
 
     // Create lock file
-    fp = fopen(LOCK_FILE, "w");
+    fp = fopen(config.lock_file, "w");
     if (!fp) {
-        LOG_ERROR("Failed to create lock file %s: %s", LOCK_FILE, strerror(errno));
+        LOG_ERROR("Failed to create lock file %s: %s", config.lock_file, strerror(errno));
         return 0;
     }
 
     fprintf(fp, "%d\n", my_pid);
     fclose(fp);
-    LOG_DEBUG("Lock acquired, PID %d written to %s", my_pid, LOCK_FILE);
+    LOG_DEBUG("Lock acquired, PID %d written to %s", my_pid, config.lock_file);
     return 1;
 }
 
 void release_lock(void) {
-    if (unlink(LOCK_FILE) == 0) {
-        LOG_DEBUG("Lock file %s removed", LOCK_FILE);
+    if (unlink(config.lock_file) == 0) {
+        LOG_DEBUG("Lock file %s removed", config.lock_file);
     } else {
-        LOG_ERROR("Failed to remove lock file %s: %s", LOCK_FILE, strerror(errno));
+        LOG_ERROR("Failed to remove lock file %s: %s", config.lock_file, strerror(errno));
     }
 }
 
@@ -158,6 +231,8 @@ void release_lock(void) {
 int serial_open(const char *port, int baudrate) {
     struct termios tty;
     int fd;
+
+    (void)baudrate; // Currently hardcoded to 4800, parameter reserved for future use
 
     fd = open(port, O_RDWR | O_NOCTTY | O_SYNC);
     if (fd < 0) {
@@ -206,7 +281,7 @@ void set_generated_power(int power) {
 
     // Clamp power
     if (power < 0) power = 0;
-    if (power > MAX_POWER) power = MAX_POWER;
+    if (power > config.max_power) power = config.max_power;
 
     pu = (power >> 8) & 0xFF;
     pl = power & 0xFF;
@@ -248,6 +323,8 @@ void set_generated_power(int power) {
 
 // MQTT callbacks
 void on_mqtt_connect(struct mosquitto *mosq, void *obj, int reason_code) {
+    (void)obj; // Unused parameter
+
     if (reason_code == 0) {
         LOG_INFO("Connected to MQTT broker");
         mosquitto_subscribe(mosq, NULL, MQTT_TOPIC, 0);
@@ -257,6 +334,9 @@ void on_mqtt_connect(struct mosquitto *mosq, void *obj, int reason_code) {
 }
 
 void on_mqtt_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg) {
+    (void)mosq; // Unused parameter
+    (void)obj;  // Unused parameter
+
     char *payload = (char*)msg->payload;
     float value;
 
@@ -364,9 +444,9 @@ int read_soyopower(void) {
     FILE *fp;
     int power;
 
-    fp = fopen(SOYOPOWER_FILE, "r");
+    fp = fopen(config.soyopower_file, "r");
     if (!fp) {
-        LOG_DEBUG("Soyopower file not found: %s", SOYOPOWER_FILE);
+        LOG_DEBUG("Soyopower file not found: %s", config.soyopower_file);
         return -1;
     }
 
@@ -378,57 +458,110 @@ int read_soyopower(void) {
 
     fclose(fp);
 
-    if (power < 0 || power > MAX_POWER) {
-        LOG_WARNING("Invalid soyopower value, out of range [0, %d]: %d", MAX_POWER, power);
+    if (power < 0 || power > config.max_power) {
+        LOG_WARNING("Invalid soyopower value, out of range [0, %d]: %d", config.max_power, power);
         return -1;
     }
 
     return power;
 }
 
-// Get sunrise/sunset times
+// Calculate Julian Day Number
+static double julian_day(int year, int month, int day) {
+    if (month <= 2) {
+        year -= 1;
+        month += 12;
+    }
+    int A = year / 100;
+    int B = 2 - A + (A / 4);
+    return floor(365.25 * (year + 4716)) + floor(30.6001 * (month + 1)) + day + B - 1524.5;
+}
+
+// Calculate sunrise and sunset times using simplified algorithm
+// Works for any location on Earth
+static void calculate_sun_times(double jd, double lat, double lon, double *sunrise_utc, double *sunset_utc) {
+    double n = jd - 2451545.0 + 0.0008;
+    double J_star = n - lon / 360.0;
+    double M = fmod(357.5291 + 0.98560028 * J_star, 360.0);
+    double M_rad = M * M_PI / 180.0;
+    double C = 1.9148 * sin(M_rad) + 0.0200 * sin(2 * M_rad) + 0.0003 * sin(3 * M_rad);
+    double lambda = fmod(M + C + 180.0 + 102.9372, 360.0);
+    double J_transit = 2451545.0 + J_star + 0.0053 * sin(M_rad) - 0.0069 * sin(2 * lambda * M_PI / 180.0);
+
+    double lambda_rad = lambda * M_PI / 180.0;
+    double sin_dec = sin(lambda_rad) * sin(23.44 * M_PI / 180.0);
+    double cos_dec = sqrt(1 - sin_dec * sin_dec);
+
+    double lat_rad = lat * M_PI / 180.0;
+    double cos_omega = (sin(-0.83 * M_PI / 180.0) - sin(lat_rad) * sin_dec) / (cos(lat_rad) * cos_dec);
+
+    // Handle polar day/night
+    if (cos_omega > 1.0) {
+        *sunrise_utc = 0.0;
+        *sunset_utc = 0.0;
+        return;
+    }
+    if (cos_omega < -1.0) {
+        *sunrise_utc = 12.0;
+        *sunset_utc = 12.0;
+        return;
+    }
+
+    double omega = acos(cos_omega) * 180.0 / M_PI;
+    *sunrise_utc = (J_transit - 2451545.0 - omega / 360.0) * 24.0;
+    *sunset_utc = (J_transit - 2451545.0 + omega / 360.0) * 24.0;
+
+    // Normalize to 0-24 range
+    *sunrise_utc = fmod(*sunrise_utc + 24.0, 24.0);
+    *sunset_utc = fmod(*sunset_utc + 24.0, 24.0);
+}
+
+// Get sunrise/sunset times with configurable location and offsets
 int get_sun_times(char *sunrise, char *sunset, size_t bufsize) {
-    FILE *fp;
-    char line[256];
-    char *token;
-    int field = 0;
+    time_t now;
+    struct tm *tm_info;
+    double jd, sunrise_utc, sunset_utc;
+    double sunrise_local, sunset_local;
+    int sunrise_hour, sunrise_min, sunrise_sec;
+    int sunset_hour, sunset_min, sunset_sec;
 
-    fp = popen(SUNRISE_SCRIPT, "r");
-    if (!fp) {
-        LOG_ERROR("Failed to execute %s: %s", SUNRISE_SCRIPT, strerror(errno));
-        return 0;
+    const double UTC_OFFSET = 1.0; // CET (Central European Time)
+
+    time(&now);
+    tm_info = localtime(&now);
+
+    // Check for daylight saving time (CEST = UTC+2)
+    double tz_offset = UTC_OFFSET;
+    if (tm_info->tm_isdst > 0) {
+        tz_offset = 2.0; // CEST
     }
 
-    if (fgets(line, sizeof(line), fp) == NULL) {
-        LOG_ERROR("Failed to read from %s", SUNRISE_SCRIPT);
-        pclose(fp);
-        return 0;
-    }
+    // Calculate Julian Day
+    jd = julian_day(tm_info->tm_year + 1900, tm_info->tm_mon + 1, tm_info->tm_mday);
 
-    pclose(fp);
+    // Calculate sun times in UTC using configured location
+    calculate_sun_times(jd, config.latitude, config.longitude, &sunrise_utc, &sunset_utc);
 
-    // Remove newline
-    char *newline = strchr(line, '\n');
-    if (newline) *newline = '\0';
+    // Convert to local time and add configured offsets
+    sunrise_local = sunrise_utc + tz_offset + (config.sunrise_offset_min / 60.0);
+    sunset_local = sunset_utc + tz_offset + (config.sunset_offset_min / 60.0);
 
-    // Parse CSV: field 1 is sunrise, field 2 is sunset
-    token = strtok(line, ",");
-    while (token && field < 3) {
-        if (field == 1) {
-            strncpy(sunrise, token, bufsize - 1);
-            sunrise[bufsize - 1] = '\0';
-        } else if (field == 2) {
-            strncpy(sunset, token, bufsize - 1);
-            sunset[bufsize - 1] = '\0';
-        }
-        field++;
-        token = strtok(NULL, ",");
-    }
+    // Normalize to 0-24 range
+    sunrise_local = fmod(sunrise_local + 24.0, 24.0);
+    sunset_local = fmod(sunset_local + 24.0, 24.0);
 
-    if (field < 3) {
-        LOG_ERROR("Incomplete sun data from %s", SUNRISE_SCRIPT);
-        return 0;
-    }
+    // Convert decimal hours to HH:MM:SS
+    sunrise_hour = (int)sunrise_local;
+    sunrise_min = (int)((sunrise_local - sunrise_hour) * 60);
+    sunrise_sec = (int)(((sunrise_local - sunrise_hour) * 60 - sunrise_min) * 60);
+
+    sunset_hour = (int)sunset_local;
+    sunset_min = (int)((sunset_local - sunset_hour) * 60);
+    sunset_sec = (int)(((sunset_local - sunset_hour) * 60 - sunset_min) * 60);
+
+    // Format times as HH:MM:SS
+    snprintf(sunrise, bufsize, "%02d:%02d:%02d", sunrise_hour, sunrise_min, sunrise_sec);
+    snprintf(sunset, bufsize, "%02d:%02d:%02d", sunset_hour, sunset_min, sunset_sec);
 
     return 1;
 }
@@ -476,7 +609,7 @@ void controller_update(InverterController *ctrl) {
     is_time_window = is_night_time();
 
     // Read inverter data
-    raw_line = read_last_line(INVERTER_FILE);
+    raw_line = read_last_line(config.inverter_file);
     if (raw_line && parse_inverter(raw_line, &inverter_data)) {
         grid_w = inverter_data.grid_w;
         sofarbat_w = inverter_data.sofarbat_w;
@@ -516,7 +649,7 @@ void controller_update(InverterController *ctrl) {
         set_generated_power(power);
         ctrl->last_power = power;
 
-        remaining_kwh = (soc_bat2 / 100.0) * BATTERY_CAPACITY_KWH;
+        remaining_kwh = (soc_bat2 / 100.0) * config.battery_capacity_kwh;
         LOG_INFO("State: Raw_Inverter_Data=%s, Grid_W=%d, SoFarBat_W=%d, "
                  "SOC_Bat2=%d%% (%.2f kWh), SOC_Bat1=%d%% (ignored), "
                  "Power=%dW, Bat2_Current=%.2fA, State=%d, SoyoPower=%s",
@@ -529,14 +662,14 @@ void controller_update(InverterController *ctrl) {
     }
 
     estimated_grid_w = grid_w_valid ? grid_w : ctrl->last_grid_w;
-    remaining_kwh = (soc_bat2 / 100.0) * BATTERY_CAPACITY_KWH;
+    remaining_kwh = (soc_bat2 / 100.0) * config.battery_capacity_kwh;
 
     if (grid_w_valid && grid_w < -100) {
         LOG_WARNING("Buying from grid: %dW, SOC_Bat2=%d%%", abs(grid_w), soc_bat2);
     }
 
     // Calculate status byte
-    if (soc_bat2 < BAT2_SOC_MIN) {
+    if (soc_bat2 < config.bat2_soc_min) {
         status_byte |= STATUS_ENTLADESCHUTZ;
         snprintf(debug_msg, sizeof(debug_msg),
                  "Entladeschutz (status_byte=%d, SOC_Bat2=%d%%)",
@@ -581,7 +714,7 @@ void controller_update(InverterController *ctrl) {
             break;
         }
         else if (prio == PRIO_SOYOPOWER && soyopower >= 0) {
-            power = soyopower < MAX_POWER ? soyopower : MAX_POWER;
+            power = soyopower < config.max_power ? soyopower : config.max_power;
             strcpy(ctrl->active_condition, priority_names[prio]);
             LOG_DEBUG("Power set to %dW from soyopower.txt", power);
             break;
@@ -597,8 +730,8 @@ void controller_update(InverterController *ctrl) {
             int grid_value = grid_w_valid ? grid_w : estimated_grid_w;
             int error = abs(grid_value);
             float kp = 1.01;
-            power = (int)(error * kp) + (is_time_window ? NIGHT_STANDARD_POWER : 0);
-            if (power > MAX_POWER) power = MAX_POWER;
+            power = (int)(error * kp) + (is_time_window ? config.night_standard_power : 0);
+            if (power > config.max_power) power = config.max_power;
             strcpy(ctrl->active_condition, priority_names[prio]);
             LOG_DEBUG("Power set to %dW to offset grid purchase (Grid_W=%d, Error=%d)",
                      power, grid_value, error);
@@ -606,7 +739,7 @@ void controller_update(InverterController *ctrl) {
         }
         else if (prio == PRIO_DEFAULT && (status_byte & STATUS_DEFAULT)) {
             if (is_time_window) {
-                power = NIGHT_STANDARD_POWER;
+                power = config.night_standard_power;
                 strcpy(ctrl->active_condition, priority_names[prio]);
                 LOG_DEBUG("Power set to %dW for default system support during night", power);
             } else {
@@ -629,24 +762,24 @@ void controller_update(InverterController *ctrl) {
         (current_month == 9 || current_month == 10 || current_month == 11 ||
          current_month == 12 || current_month == 1 || current_month == 2)) {
 
-        if (wp_power > NIGHT_STANDARD_POWER) {
+        if (wp_power > config.night_standard_power) {
             if (strcmp(ctrl->active_condition, "default") == 0) {
-                power = NIGHT_STANDARD_POWER;
+                power = config.night_standard_power;
                 LOG_DEBUG("WP power (%.2f W) > %d in month %d, setting power to %d W for WP support (active: %s)",
-                         wp_power, NIGHT_STANDARD_POWER, current_month, NIGHT_STANDARD_POWER, ctrl->active_condition);
+                         wp_power, config.night_standard_power, current_month, config.night_standard_power, ctrl->active_condition);
             } else {
-                if (power > NIGHT_STANDARD_POWER) power = NIGHT_STANDARD_POWER;
+                if (power > config.night_standard_power) power = config.night_standard_power;
                 LOG_DEBUG("WP power (%.2f W) > %d in month %d, capping power to %d W (active: %s)",
-                         wp_power, NIGHT_STANDARD_POWER, current_month, NIGHT_STANDARD_POWER, ctrl->active_condition);
+                         wp_power, config.night_standard_power, current_month, config.night_standard_power, ctrl->active_condition);
             }
         } else {
             if (power < 0) power = 0;
             LOG_DEBUG("WP power (%.2f W) <= %d in month %d, keeping power: %d W (active: %s)",
-                     wp_power, NIGHT_STANDARD_POWER, current_month, power, ctrl->active_condition);
+                     wp_power, config.night_standard_power, current_month, power, ctrl->active_condition);
         }
     } else {
         if (power < 0) power = 0;
-        if (power > MAX_POWER) power = MAX_POWER;
+        if (power > config.max_power) power = config.max_power;
         if (current_month >= 3 && current_month <= 8) {
             LOG_DEBUG("Month %d (March-August), supporting WP fully, power: %d W", current_month, power);
         }
@@ -677,28 +810,281 @@ void controller_update(InverterController *ctrl) {
     if (raw_line) free(raw_line);
 }
 
+// Print version information
+// Initialize configuration with default values
+void init_config(Config *cfg) {
+    strncpy(cfg->serial_port, SERIAL_PORT, sizeof(cfg->serial_port) - 1);
+    cfg->serial_baudrate = SERIAL_BAUDRATE;
+    cfg->serial_timeout = SERIAL_TIMEOUT;
+    strncpy(cfg->mqtt_broker, MQTT_BROKER, sizeof(cfg->mqtt_broker) - 1);
+    cfg->mqtt_port = MQTT_PORT;
+    strncpy(cfg->mqtt_topic, MQTT_TOPIC, sizeof(cfg->mqtt_topic) - 1);
+    cfg->wp_power_default = WP_POWER_DEFAULT;
+    cfg->battery_capacity_kwh = BATTERY_CAPACITY_KWH;
+    cfg->max_power = MAX_POWER;
+    cfg->max_bat2_current = MAX_BAT2_CURRENT;
+    cfg->night_standard_power = NIGHT_STANDARD_POWER;
+    cfg->bat2_soc_min = BAT2_SOC_MIN;
+    cfg->update_interval_sec = UPDATE_INTERVAL_SEC;
+    strncpy(cfg->lock_file, LOCK_FILE, sizeof(cfg->lock_file) - 1);
+    strncpy(cfg->log_file, LOG_FILE, sizeof(cfg->log_file) - 1);
+    strncpy(cfg->inverter_file, INVERTER_FILE, sizeof(cfg->inverter_file) - 1);
+    strncpy(cfg->soyopower_file, SOYOPOWER_FILE, sizeof(cfg->soyopower_file) - 1);
+    strncpy(cfg->sunrise_script, SUNRISE_SCRIPT, sizeof(cfg->sunrise_script) - 1);
+    cfg->latitude = LATITUDE;
+    cfg->longitude = LONGITUDE;
+    cfg->sunrise_offset_min = SUNRISE_OFFSET_MIN;
+    cfg->sunset_offset_min = SUNSET_OFFSET_MIN;
+}
+
+void print_version(void) {
+    printf("soyo1min version %s\n", VERSION);
+    printf("C implementation of Sofar Battery Management System\n");
+    printf("Compiled: %s %s\n", __DATE__, __TIME__);
+}
+
+// Print help information
+void print_help(const Config *cfg) {
+    printf("Usage: soyo1min [OPTIONS]\n");
+    printf("\n");
+    printf("Sofar Battery Management System - Controls battery discharge based on\n");
+    printf("grid status, battery SOC, sun times, MQTT data, and manual settings.\n");
+    printf("\n");
+    printf("Options:\n");
+    printf("  -h, --help                        Show this help message and exit\n");
+    printf("  -v, --version                     Show version information and exit\n");
+    printf("\n");
+    printf("Serial Communication:\n");
+    printf("  -p, --port <device>               Serial port (default: %s)\n", cfg->serial_port);
+    printf("  -b, --baud <rate>                 Baud rate (default: %d)\n", cfg->serial_baudrate);
+    printf("      --serial-timeout <sec>        Serial timeout in seconds (default: %d)\n", cfg->serial_timeout);
+    printf("\n");
+    printf("MQTT Configuration:\n");
+    printf("      --mqtt-broker <host>          MQTT broker IP/hostname (default: %s)\n", cfg->mqtt_broker);
+    printf("      --mqtt-port <port>            MQTT broker port (default: %d)\n", cfg->mqtt_port);
+    printf("      --mqtt-topic <topic>          MQTT topic for heat pump power (default: %s)\n", cfg->mqtt_topic);
+    printf("      --wp-power-default <watts>    Default heat pump power if MQTT unavailable (default: %.0f W)\n", cfg->wp_power_default);
+    printf("\n");
+    printf("Battery Configuration:\n");
+    printf("      --battery-capacity <kwh>      Battery capacity in kWh (default: %d)\n", cfg->battery_capacity_kwh);
+    printf("      --min-soc <percent>           Minimum SOC for discharge protection (default: %d%%)\n", cfg->bat2_soc_min);
+    printf("      --max-power <watts>           Maximum power setting (default: %d W)\n", cfg->max_power);
+    printf("      --max-bat2-current <amps>     Maximum battery current (default: %d A)\n", cfg->max_bat2_current);
+    printf("      --night-power <watts>         Standard power during night (default: %d W)\n", cfg->night_standard_power);
+    printf("\n");
+    printf("File Paths:\n");
+    printf("      --lock-file <path>            Lock file path (default: %s)\n", cfg->lock_file);
+    printf("      --log-file <path>             Log file path (default: %s)\n", cfg->log_file);
+    printf("      --inverter-file <path>        Inverter data file (default: %s)\n", cfg->inverter_file);
+    printf("      --soyopower-file <path>       Manual power override file (default: %s)\n", cfg->soyopower_file);
+    printf("\n");
+    printf("Location & Sun Times:\n");
+    printf("      --latitude <degrees>          Latitude in decimal degrees (default: %.4f)\n", cfg->latitude);
+    printf("      --longitude <degrees>         Longitude in decimal degrees (default: %.4f)\n", cfg->longitude);
+    printf("      --sunrise-offset <minutes>    Minutes to add to sunrise (default: %d)\n", cfg->sunrise_offset_min);
+    printf("      --sunset-offset <minutes>     Minutes to add to sunset (default: %d)\n", cfg->sunset_offset_min);
+    printf("\n");
+    printf("Timing:\n");
+    printf("  -i, --interval <seconds>          Update interval (default: %d sec)\n", cfg->update_interval_sec);
+    printf("\n");
+    printf("Examples:\n");
+    printf("  soyo1min -p /dev/ttyUSB0 -b 4800\n");
+    printf("  soyo1min --mqtt-broker 192.168.1.100 --mqtt-topic power/heatpump\n");
+    printf("  soyo1min --battery-capacity 40 --min-soc 10\n");
+    printf("  soyo1min -i 5 --night-power 500\n");
+    printf("  soyo1min --lock-file /tmp/soyo.lock --log-file /tmp/soyo.log\n");
+    printf("  soyo1min --inverter-file /tmp/inverter.csv --soyopower-file /home/pi/power.txt\n");
+    printf("  soyo1min --latitude 48.1351 --longitude 11.5820  # Munich coordinates\n");
+    printf("  soyo1min --sunrise-offset 30 --sunset-offset -30  # Custom time offsets\n");
+    printf("\n");
+    printf("Priority System:\n");
+    printf("  1. Discharge Protection (SOC < min-soc)\n");
+    printf("  2. Battery Charging (current > 2A)\n");
+    printf("  3. Manual Override (soyopower file)\n");
+    printf("  4. Grid Feeding (PV surplus > 200W)\n");
+    printf("  5. Grid Buying (grid draw < -100W)\n");
+    printf("  6. Default (night power support)\n");
+    printf("\n");
+}
+
 // Main function
 int main(int argc, char *argv[]) {
     InverterController controller;
     int rc;
 
+    // Initialize configuration with defaults
+    init_config(&config);
+
+    // Define long options
+    static struct option long_options[] = {
+        {"help",                no_argument,       0, 'h'},
+        {"version",             no_argument,       0, 'v'},
+        {"port",                required_argument, 0, 'p'},
+        {"baud",                required_argument, 0, 'b'},
+        {"serial-timeout",      required_argument, 0, 128},
+        {"mqtt-broker",         required_argument, 0, 129},
+        {"mqtt-port",           required_argument, 0, 130},
+        {"mqtt-topic",          required_argument, 0, 131},
+        {"wp-power-default",    required_argument, 0, 132},
+        {"battery-capacity",    required_argument, 0, 133},
+        {"min-soc",             required_argument, 0, 134},
+        {"max-power",           required_argument, 0, 135},
+        {"max-bat2-current",    required_argument, 0, 136},
+        {"night-power",         required_argument, 0, 137},
+        {"lock-file",           required_argument, 0, 138},
+        {"log-file",            required_argument, 0, 139},
+        {"inverter-file",       required_argument, 0, 140},
+        {"soyopower-file",      required_argument, 0, 141},
+        {"sunrise-script",      required_argument, 0, 142},
+        {"latitude",            required_argument, 0, 143},
+        {"longitude",           required_argument, 0, 144},
+        {"sunrise-offset",      required_argument, 0, 145},
+        {"sunset-offset",       required_argument, 0, 146},
+        {"interval",            required_argument, 0, 'i'},
+        {0, 0, 0, 0}
+    };
+
+    // Parse command line arguments
+    int opt;
+    int option_index = 0;
+    while ((opt = getopt_long(argc, argv, "hvp:b:i:", long_options, &option_index)) != -1) {
+        switch (opt) {
+            case 'h':
+                print_help(&config);
+                return 0;
+            case 'v':
+                print_version();
+                return 0;
+            case 'p':
+                strncpy(config.serial_port, optarg, sizeof(config.serial_port) - 1);
+                config.serial_port[sizeof(config.serial_port) - 1] = '\0';
+                break;
+            case 'b':
+                config.serial_baudrate = atoi(optarg);
+                if (config.serial_baudrate <= 0) {
+                    fprintf(stderr, "Error: Invalid baud rate: %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 128: // --serial-timeout
+                config.serial_timeout = atoi(optarg);
+                break;
+            case 129: // --mqtt-broker
+                strncpy(config.mqtt_broker, optarg, sizeof(config.mqtt_broker) - 1);
+                config.mqtt_broker[sizeof(config.mqtt_broker) - 1] = '\0';
+                break;
+            case 130: // --mqtt-port
+                config.mqtt_port = atoi(optarg);
+                if (config.mqtt_port <= 0 || config.mqtt_port > 65535) {
+                    fprintf(stderr, "Error: Invalid MQTT port: %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 131: // --mqtt-topic
+                strncpy(config.mqtt_topic, optarg, sizeof(config.mqtt_topic) - 1);
+                config.mqtt_topic[sizeof(config.mqtt_topic) - 1] = '\0';
+                break;
+            case 132: // --wp-power-default
+                config.wp_power_default = atof(optarg);
+                break;
+            case 133: // --battery-capacity
+                config.battery_capacity_kwh = atoi(optarg);
+                if (config.battery_capacity_kwh <= 0) {
+                    fprintf(stderr, "Error: Invalid battery capacity: %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 134: // --min-soc
+                config.bat2_soc_min = atoi(optarg);
+                if (config.bat2_soc_min < 0 || config.bat2_soc_min > 100) {
+                    fprintf(stderr, "Error: Invalid min SOC (must be 0-100): %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 135: // --max-power
+                config.max_power = atoi(optarg);
+                break;
+            case 136: // --max-bat2-current
+                config.max_bat2_current = atoi(optarg);
+                break;
+            case 137: // --night-power
+                config.night_standard_power = atoi(optarg);
+                break;
+            case 138: // --lock-file
+                strncpy(config.lock_file, optarg, sizeof(config.lock_file) - 1);
+                config.lock_file[sizeof(config.lock_file) - 1] = '\0';
+                break;
+            case 139: // --log-file
+                strncpy(config.log_file, optarg, sizeof(config.log_file) - 1);
+                config.log_file[sizeof(config.log_file) - 1] = '\0';
+                break;
+            case 140: // --inverter-file
+                strncpy(config.inverter_file, optarg, sizeof(config.inverter_file) - 1);
+                config.inverter_file[sizeof(config.inverter_file) - 1] = '\0';
+                break;
+            case 141: // --soyopower-file
+                strncpy(config.soyopower_file, optarg, sizeof(config.soyopower_file) - 1);
+                config.soyopower_file[sizeof(config.soyopower_file) - 1] = '\0';
+                break;
+            case 142: // --sunrise-script
+                strncpy(config.sunrise_script, optarg, sizeof(config.sunrise_script) - 1);
+                config.sunrise_script[sizeof(config.sunrise_script) - 1] = '\0';
+                break;
+            case 143: // --latitude
+                config.latitude = atof(optarg);
+                if (config.latitude < -90.0 || config.latitude > 90.0) {
+                    fprintf(stderr, "Error: Invalid latitude (must be -90 to 90): %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 144: // --longitude
+                config.longitude = atof(optarg);
+                if (config.longitude < -180.0 || config.longitude > 180.0) {
+                    fprintf(stderr, "Error: Invalid longitude (must be -180 to 180): %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 145: // --sunrise-offset
+                config.sunrise_offset_min = atoi(optarg);
+                break;
+            case 146: // --sunset-offset
+                config.sunset_offset_min = atoi(optarg);
+                break;
+            case 'i':
+                config.update_interval_sec = atoi(optarg);
+                if (config.update_interval_sec <= 0) {
+                    fprintf(stderr, "Error: Invalid interval: %s\n", optarg);
+                    return 1;
+                }
+                break;
+            default:
+                fprintf(stderr, "Try 'soyo1min --help' for more information.\n");
+                return 1;
+        }
+    }
+
+    // Check for unexpected arguments
+    if (optind < argc) {
+        fprintf(stderr, "Error: Unexpected argument: %s\n", argv[optind]);
+        fprintf(stderr, "Try 'soyo1min --help' for more information.\n");
+        return 1;
+    }
+
     // Set up signal handlers
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    LOG_INFO("Starting soyo1min %s", VERSION);
-
-    // Acquire lock
-    if (!acquire_lock()) {
-        LOG_ERROR("Exiting due to existing instance");
-        return 1;
-    }
+    LOG_INFO("Starting soyo1min %s (built: %s %s)", VERSION, __DATE__, __TIME__);
+    LOG_INFO("Configuration: port=%s, baud=%d, mqtt=%s:%d, topic=%s",
+             config.serial_port, config.serial_baudrate,
+             config.mqtt_broker, config.mqtt_port, config.mqtt_topic);
+    LOG_INFO("Location: lat=%.4f, lon=%.4f, sunrise_offset=%d min, sunset_offset=%d min",
+             config.latitude, config.longitude, config.sunrise_offset_min, config.sunset_offset_min);
 
     // Open serial port
-    serial_fd = serial_open(SERIAL_PORT, SERIAL_BAUDRATE);
+    serial_fd = serial_open(config.serial_port, config.serial_baudrate);
     if (serial_fd < 0) {
-        LOG_ERROR("Failed to initialize serial port %s", SERIAL_PORT);
-        release_lock();
+        LOG_ERROR("Failed to initialize serial port %s", config.serial_port);
         return 1;
     }
 
@@ -708,17 +1094,16 @@ int main(int argc, char *argv[]) {
     if (!mqtt_client) {
         LOG_ERROR("Failed to create MQTT client");
         close(serial_fd);
-        release_lock();
         return 1;
     }
 
     mosquitto_connect_callback_set(mqtt_client, on_mqtt_connect);
     mosquitto_message_callback_set(mqtt_client, on_mqtt_message);
 
-    rc = mosquitto_connect(mqtt_client, MQTT_BROKER, MQTT_PORT, 60);
+    rc = mosquitto_connect(mqtt_client, config.mqtt_broker, config.mqtt_port, 60);
     if (rc != MOSQ_ERR_SUCCESS) {
-        LOG_ERROR("Failed to connect to MQTT broker %s: %s", MQTT_BROKER, mosquitto_strerror(rc));
-        mqtt_power_value = WP_POWER_DEFAULT;
+        LOG_ERROR("Failed to connect to MQTT broker %s: %s", config.mqtt_broker, mosquitto_strerror(rc));
+        mqtt_power_value = config.wp_power_default;
     } else {
         mosquitto_loop_start(mqtt_client);
     }
@@ -733,15 +1118,15 @@ int main(int argc, char *argv[]) {
     // Main loop
     while (running) {
         controller_update(&controller);
-        sleep(UPDATE_INTERVAL_SEC);
+        sleep(config.update_interval_sec);
     }
 
     // Cleanup
     LOG_INFO("Shutting down...");
 
     if (mqtt_client) {
-        mosquitto_loop_stop(mqtt_client, false);
         mosquitto_disconnect(mqtt_client);
+        mosquitto_loop_stop(mqtt_client, true);  // Force stop to avoid blocking
         mosquitto_destroy(mqtt_client);
     }
     mosquitto_lib_cleanup();
@@ -754,7 +1139,6 @@ int main(int argc, char *argv[]) {
         fclose(log_file);
     }
 
-    release_lock();
     LOG_INFO("Serial and MQTT connections closed");
 
     return 0;

@@ -1,36 +1,71 @@
 # Soyo1min - C Version
 
-C-Implementierung des soyo1min Batterie-Management-Systems.
+[🇩🇪 Deutsche Version](README.de.md)
 
-## Überblick
+C implementations for Sofar Inverter Management.
 
-Dies ist eine C-Portierung des ursprünglichen Python-Skripts `soyo1min.py`. Es verwaltet die Batterieentladung basierend auf:
-- Grid-Status (Netzeinspeisung/-entnahme)
-- Batterie-SOC (State of Charge)
-- Sonnenauf-/-untergang (über Python-Skript `sunrise.py`)
-- MQTT-Wärmepumpendaten
-- Manuelle Leistungsvorgaben (`soyopower.txt`)
+## Programs
 
-## Abhängigkeiten
+### soyo1min
+Battery Management System - manages battery discharge based on:
+- Grid status (grid feeding/drawing)
+- Battery SOC (State of Charge)
+- Sunrise/sunset (via Python script `sunrise.py`)
+- MQTT heat pump data
+- Manual power settings (`soyopower.txt`)
 
-### Debian/Ubuntu/Raspberry Pi OS
+### read-inverter
+Inverter Register Reader - reads Modbus registers from Sofar inverter:
+- CSV-based register definitions
+- Modbus RTU via serial port
+- Filter by kW/kWh/% or all registers
+- **Full command-line configuration** (NEW!)
+- CSV export of data
+
+See `read-inverter/README.md` for details.
+
+## Dependencies
+
+### C Build Dependencies
+
+**Debian/Ubuntu/Raspberry Pi OS:**
 ```bash
 sudo apt-get update
 sudo apt-get install -y build-essential libmosquitto-dev
 ```
 
-### Andere Distributionen
+**Other Distributions:**
 - **Fedora/RHEL**: `sudo dnf install gcc make mosquitto-devel`
 - **Arch**: `sudo pacman -S gcc make mosquitto`
+
+### Python Dependencies (for sunrise.py)
+
+The C program calls `sunrise.py` to calculate sunrise and sunset times:
+
+```bash
+# Install Python 3 and pip (if not present)
+sudo apt-get install python3 python3-pip
+
+# Install Python packages
+pip3 install -r requirements.txt
+
+# Or individually:
+pip3 install astral pytz
+```
 
 ## Build
 
 ```bash
 cd c-version
+
+# Optional: Check system requirements
+./configure
+
+# Compile
 make
 ```
 
-Für Debug-Build:
+For debug build:
 ```bash
 make debug
 ```
@@ -41,97 +76,119 @@ make debug
 sudo make install
 ```
 
-Dies installiert die Binärdatei nach `/usr/local/bin/soyo1min`.
+This installs the binary to `/usr/local/bin/soyo1min`.
 
-## Konfiguration
+## Configuration
 
-Alle Konfigurationsparameter befinden sich in `config.h`:
+All configuration parameters are in `config.h`:
 
-- **SERIAL_PORT**: Serieller Port für Inverter-Kommunikation (Standard: `/dev/ttyUSB32`)
-- **MQTT_BROKER**: MQTT-Broker-IP (Standard: `192.168.178.218`)
-- **MQTT_TOPIC**: MQTT-Topic für Wärmepumpen-Leistung (Standard: `em0/54`)
-- **BATTERY_CAPACITY_KWH**: Batteriekapazität in kWh (Standard: `30`)
-- **NIGHT_STANDARD_POWER**: Grundlast während Nachtzeit in W (Standard: `390`)
-- **BAT2_SOC_MIN**: Minimaler SOC für Entladeschutz (Standard: `9%`)
+- **SERIAL_PORT**: Serial port for inverter communication (default: `/dev/ttyUSB32`)
+- **MQTT_BROKER**: MQTT broker IP (default: `192.168.178.218`)
+- **MQTT_TOPIC**: MQTT topic for heat pump power (default: `em0/54`)
+- **BATTERY_CAPACITY_KWH**: Battery capacity in kWh (default: `30`)
+- **NIGHT_STANDARD_POWER**: Base load during night time in W (default: `390`)
+- **BAT2_SOC_MIN**: Minimum SOC for discharge protection (default: `9%`)
 
-Nach Änderungen neu kompilieren:
+After changes, recompile:
 ```bash
 make clean
 make
 ```
 
-## Verwendung
+## Usage
 
 ```bash
-# Direkt starten
+# Run directly
 ./soyo1min
 
-# Mit systemd (empfohlen)
+# With systemd (recommended for production)
 sudo systemctl start soyo1min
+sudo systemctl status soyo1min
 ```
+
+## systemd Service (Production Setup)
+
+For automatic startup on boot and proper process management, install as a systemd service:
+
+📖 **See [SYSTEMD_SERVICE.md](SYSTEMD_SERVICE.md) for complete installation guide**
+
+Quick setup:
+```bash
+sudo make install                          # Install binary to /usr/local/bin
+sudo cp soyo1min.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable soyo1min.service
+sudo systemctl start soyo1min.service
+```
+
+Benefits:
+- ✅ Automatic startup on boot
+- ✅ Automatic restart on crashes
+- ✅ Proper logging via journald
+- ✅ Security hardening
 
 ## Logging
 
-Logs werden geschrieben nach: `/run/user/1000/soyo1min_c.log`
+Logs are written to: `/run/user/1000/soyo1min_c.log`
 
-Log-Level:
-- **DEBUG**: Detaillierte Informationen
-- **INFO**: Normale Betriebsmeldungen
-- **WARNING**: Warnungen (z.B. ungültige Daten)
-- **ERROR**: Fehler
+Log levels:
+- **DEBUG**: Detailed information
+- **INFO**: Normal operation messages
+- **WARNING**: Warnings (e.g., invalid data)
+- **ERROR**: Errors
 
-## Externe Abhängigkeiten
+## External Dependencies
 
-Das C-Programm ruft externe Skripte auf:
-- **sunrise.py**: Muss im gleichen Verzeichnis liegen oder im PATH vorhanden sein
+The C program calls external scripts:
+- **sunrise.py**: Must be in the same directory or in PATH
 
-## Prioritäten-System
+## Priority System
 
-Das System arbeitet mit folgenden Prioritäten (von höchster bis niedrigster):
+The system works with the following priorities (from highest to lowest):
 
-1. **Entladeschutz**: SOC < 9% → Leistung = 0W
-2. **Bat2 Charging**: Batterie lädt (>2A) → Leistung = 0W
-3. **Soyopower**: Manuelle Vorgabe aus `soyopower.txt`
-4. **Feeding to Grid**: PV-Überschuss (Grid > 200W) → Leistung = 0W
-5. **Buying from Grid**: Netzbezug (Grid < -100W) → Ausgleich durch Batterie
-6. **Default**: Grundlast-Unterstützung
+1. **Discharge Protection**: SOC < 9% → Power = 0W
+2. **Bat2 Charging**: Battery is charging (>2A) → Power = 0W
+3. **Soyopower**: Manual setting from `soyopower.txt`
+4. **Feeding to Grid**: PV surplus (Grid > 200W) → Power = 0W
+5. **Buying from Grid**: Drawing from grid (Grid < -100W) → Compensate with battery
+6. **Default**: Base load support
 
-## Unterschiede zur Python-Version
+## Differences from Python Version
 
-- Logging erfolgt in separate Datei (`soyo1min_c.log`)
-- Geringerer Speicher-Footprint
-- Schnellere Ausführung
-- Gleiche Funktionalität
+- Logging to separate file (`soyo1min_c.log`)
+- Lower memory footprint
+- Faster execution
+- Same functionality
 
-## Fehlersuche
+## Troubleshooting
 
-### Programm startet nicht
+### Program won't start
 ```bash
-# Lock-File prüfen
+# Check lock file
 cat /run/user/1000/soyo1min.lock
 
-# Lock-File löschen (nur wenn sicher keine Instanz läuft)
+# Remove lock file (only if sure no instance is running)
 rm /run/user/1000/soyo1min.lock
 ```
 
-### Serielle Port-Fehler
+### Serial port errors
 ```bash
-# Berechtigungen prüfen
+# Check permissions
 ls -l /dev/ttyUSB32
 
-# User zur dialout-Gruppe hinzufügen
+# Add user to dialout group
 sudo usermod -a -G dialout $USER
 ```
 
-### MQTT-Verbindungsprobleme
+### MQTT connection problems
 ```bash
-# MQTT-Broker testen
+# Test MQTT broker
 mosquitto_sub -h 192.168.178.218 -t em0/54 -v
 ```
 
 ## Systemd Service
 
-Beispiel-Service-Datei (`/etc/systemd/system/soyo1min.service`):
+Example service file (`/etc/systemd/system/soyo1min.service`):
 
 ```ini
 [Unit]
@@ -150,16 +207,16 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-Aktivieren:
+Enable:
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable soyo1min
 sudo systemctl start soyo1min
 ```
 
-## Lizenz
+## License
 
-Wie Original-Python-Version.
+Same as original Python version.
 
 ## Version
 

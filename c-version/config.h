@@ -1,14 +1,14 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#define VERSION "v1.9_FIXED_GRID_SIGN_DATETIME_C"
+#define VERSION "v1.13_CONFIGURABLE_LOCATION"
 
 // File paths
-#define LOCK_FILE "/run/user/1000/soyo1min.lock"
-#define LOG_FILE "/run/user/1000/soyo1min_c.log"
-#define INVERTER_FILE "/run/user/1000/inverter.csv"
+#define LOCK_FILE "/tmp/soyo1min.lock"
+#define LOG_FILE "/tmp/soyo1min_c.log"
+#define INVERTER_FILE "/tmp/inverter.csv"
 #define SOYOPOWER_FILE "/home/pi/soyopower.txt"
-#define SUNRISE_SCRIPT "./sunrise.py"
+#define SUNRISE_SCRIPT "./sunrise.py" // Deprecated: using native C calculation
 
 // Serial configuration
 #define SERIAL_PORT "/dev/ttyUSB32"
@@ -30,6 +30,15 @@
 
 // Timing
 #define UPDATE_INTERVAL_SEC 2
+
+// Logging
+#define MAX_LOG_SIZE_BYTES 102400  // 100 KB
+
+// Location (Lenggries, Germany)
+#define LATITUDE 47.6811
+#define LONGITUDE 11.5732
+#define SUNRISE_OFFSET_MIN 60   // Add 60 minutes to calculated sunrise
+#define SUNSET_OFFSET_MIN -60   // Subtract 60 minutes from calculated sunset
 
 // Status bytes
 #define STATUS_ENTLADESCHUTZ    (1 << 0)  // 1
