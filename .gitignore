@@ -1,0 +1,28 @@
+# Compiled binaries
+fox2db
+ebox
+fox2mqtt
+
+# Object files
+*.o
+*.so
+*.a
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Backup files
+*~
+*.swp
+*.swo
+.DS_Store
+
+# Log files
+*.log
+
+# Temporary files
+tmp/
+temp/
