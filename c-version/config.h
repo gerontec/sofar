@@ -31,6 +31,9 @@
 // Timing
 #define UPDATE_INTERVAL_SEC 2
 
+// Logging
+#define MAX_LOG_SIZE_BYTES 102400  // 100 KB
+
 // Location (Lenggries, Germany)
 #define LATITUDE 47.6811
 #define LONGITUDE 11.5732

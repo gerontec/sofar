@@ -108,6 +108,29 @@ static const char* priority_names[] = {
 };
 
 // Logging functions
+void rotate_log_if_needed(void) {
+    struct stat st;
+
+    // Check if log file exists and get its size
+    if (stat(config.log_file, &st) == 0) {
+        // If file size exceeds limit, rotate it
+        if (st.st_size >= MAX_LOG_SIZE_BYTES) {
+            // Close current log file if open
+            if (log_file != NULL) {
+                fclose(log_file);
+                log_file = NULL;
+            }
+
+            // Delete old log file (simple rotation)
+            // Alternative: rename to .old if you want to keep one backup
+            unlink(config.log_file);
+
+            fprintf(stderr, "Log rotated: size was %ld bytes, limit is %d bytes\n",
+                    st.st_size, MAX_LOG_SIZE_BYTES);
+        }
+    }
+}
+
 void log_message(const char *level, const char *fmt, ...) {
     time_t now;
     struct tm *tm_info;
@@ -118,6 +141,10 @@ void log_message(const char *level, const char *fmt, ...) {
     tm_info = localtime(&now);
     strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
 
+    // Always check if log rotation is needed
+    rotate_log_if_needed();
+
+    // Open log file if not already open
     if (log_file == NULL) {
         log_file = fopen(config.log_file, "a");
     }
