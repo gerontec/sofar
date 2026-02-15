@@ -27,9 +27,10 @@ echo ""
 
 # Show which scripts will be used
 echo "Configuration:"
-echo "  EBox Script:         /home/pi/python/ebox1arg.py  (Python - battery data)"
+echo "  EBox Script:         /usr/local/bin/ebox         (C - battery data)"
 echo "  EByte Script:        /usr/local/bin/ebyte         (C - relay control)"
 echo "  MQTT Publish Script: /usr/local/bin/fox2mqtt      (C - MQTT publisher)"
+echo "  🎯 ALL C - NO PYTHON DEPENDENCIES!"
 echo ""
 
 # Run fox2db with C programs
@@ -55,7 +56,7 @@ time ./fox2db \
   --deep-discharge-lower 6 \
   --deep-discharge-upper 8 \
   --deep-discharge-target 7 \
-  --ebox-script "/home/pi/python/ebox1arg.py" \
+  --ebox-script "/usr/local/bin/ebox" \
   --ebyte-script "/usr/local/bin/ebyte" \
   --mqtt-publish-script "/usr/local/bin/fox2mqtt"
 

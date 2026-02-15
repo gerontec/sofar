@@ -57,7 +57,7 @@
 //                             VERSION & CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-#define VERSION "v1.51-C"
+#define VERSION "v1.52-C"
 #define MAX_PATH_LEN 512
 #define MAX_LOG_MSG 1024
 #define MAX_TOPIC_LEN 256
@@ -699,7 +699,8 @@ void main_loop(void) {
 
     // 1. Update EBox data
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "%s pwr 1 > %s", config.path_ebox_script, config.path_ebox_data);
+    // Fixed: Use "pwr" without "1" argument to get all batteries and proper SOC parsing
+    snprintf(cmd, sizeof(cmd), "%s pwr > %s", config.path_ebox_script, config.path_ebox_data);
 
     char output[256];
     int ret = execute_command(cmd, output, sizeof(output), 10);
