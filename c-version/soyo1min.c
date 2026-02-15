@@ -136,13 +136,16 @@ void log_message(const char *level, const char *fmt, ...) {
     struct tm *tm_info;
     char timestamp[26];
     va_list args;
+    static int log_counter = 0;
 
     time(&now);
     tm_info = localtime(&now);
     strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
 
-    // Always check if log rotation is needed
-    rotate_log_if_needed();
+    // Check log rotation every 100 logs or if file is not open
+    if (log_file == NULL || (++log_counter % 100 == 0)) {
+        rotate_log_if_needed();
+    }
 
     // Open log file if not already open
     if (log_file == NULL) {
