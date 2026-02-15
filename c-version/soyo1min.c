@@ -1071,7 +1071,7 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    LOG_INFO("Starting soyo1min %s", VERSION);
+    LOG_INFO("Starting soyo1min %s (built: %s %s)", VERSION, __DATE__, __TIME__);
     LOG_INFO("Configuration: port=%s, baud=%d, mqtt=%s:%d, topic=%s",
              config.serial_port, config.serial_baudrate,
              config.mqtt_broker, config.mqtt_port, config.mqtt_topic);
