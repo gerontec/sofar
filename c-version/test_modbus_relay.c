@@ -327,6 +327,49 @@ void multiplex_test(modbus_t *ctx, int soyo_power) {
     printf("\n");
 }
 
+// Send Soyo command only (no relay control)
+// Optimized for production: switches baud, sends Soyo, switches back
+void send_soyo_only(modbus_t *ctx, int soyo_power) {
+    int fd;
+    long long t_start, t1, t2, t3;
+
+    // Get file descriptor
+    fd = modbus_get_socket(ctx);
+    if (fd == -1) {
+        fprintf(stderr, "Error: Could not get file descriptor from Modbus context\n");
+        return;
+    }
+
+    t_start = get_timestamp_us();
+
+    // Step 1: Switch to 4800 baud
+    if (set_baudrate(fd, B4800, "4800") != 0) {
+        fprintf(stderr, "Failed to switch to 4800 baud\n");
+        return;
+    }
+    usleep(10000); // 10ms settle time
+    t1 = get_timestamp_us();
+
+    // Step 2: Send Soyo command @ 4800
+    if (send_soyo_command(fd, soyo_power) != 0) {
+        fprintf(stderr, "Failed to send Soyo command\n");
+    }
+    t2 = get_timestamp_us();
+
+    // Step 3: Switch back to 9600 baud
+    if (set_baudrate(fd, B9600, "9600") != 0) {
+        fprintf(stderr, "Failed to switch back to 9600 baud\n");
+        return;
+    }
+    usleep(10000); // 10ms settle time
+    t3 = get_timestamp_us();
+
+    // Print result (compact for production)
+    long long total = t3 - t_start;
+    printf("Soyo: %dW sent (Device %d) - %.2f ms\n",
+           soyo_power, soyo_device_id, total / 1000.0);
+}
+
 // Benchmark: Compare C vs Python timing
 void benchmark_mode(modbus_t *ctx) {
     printf("\n=== MODBUS RELAY BENCHMARK (C vs Python) ===\n\n");
@@ -408,6 +451,7 @@ void print_usage(const char *prog) {
     printf("  -s, --status              Show current status\n");
     printf("  -b, --benchmark           Run performance benchmark\n");
     printf("  -r, --read                Read current relay state\n");
+    printf("      --soyo POWER          Send Soyo command only (no relay control)\n");
     printf("  -m, --multiplex POWER     Test multiplexing (Soyo @ 4800 + Relay @ 9600)\n");
     printf("\n");
     printf("Configuration:\n");
@@ -421,9 +465,10 @@ void print_usage(const char *prog) {
     printf("  %s 7                             # Set all relays ON\n", prog);
     printf("  %s 0                             # Set all relays OFF\n", prog);
     printf("  %s --benchmark                   # Performance test\n", prog);
+    printf("  %s --soyo 200                    # Send 200W to Soyo (production)\n", prog);
     printf("  %s --multiplex 300               # Multiplex: Soyo 300W + Relay\n", prog);
     printf("  %s --slave-id 2 --status         # Status with slave ID 2\n", prog);
-    printf("  %s --soyo-id 1 --multiplex 500   # Multiplex with Soyo ID 1, 500W\n", prog);
+    printf("  %s --soyo-id 1 --soyo 500        # Soyo: Device 1, 500W\n", prog);
 }
 
 int main(int argc, char *argv[]) {
@@ -507,6 +552,23 @@ int main(int argc, char *argv[]) {
     }
     else if (strcmp(argv[1], "-b") == 0 || strcmp(argv[1], "--benchmark") == 0) {
         benchmark_mode(ctx);
+    }
+    else if (strcmp(argv[1], "--soyo") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Error: --soyo requires POWER argument\n");
+            fprintf(stderr, "Usage: %s --soyo POWER\n", argv[0]);
+            fprintf(stderr, "Example: %s --soyo 200\n", argv[0]);
+            modbus_close(ctx);
+            modbus_free(ctx);
+            return 1;
+        }
+
+        int power = atoi(argv[2]);
+        if (power < 0 || power > 3000) {
+            fprintf(stderr, "Warning: Power %dW out of typical range (0-3000W)\n", power);
+        }
+
+        send_soyo_only(ctx, power);
     }
     else if (strcmp(argv[1], "-m") == 0 || strcmp(argv[1], "--multiplex") == 0) {
         if (argc < 3) {
