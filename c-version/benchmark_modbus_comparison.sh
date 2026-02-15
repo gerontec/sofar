@@ -3,7 +3,7 @@
 
 set -e
 
-PYTHON_SCRIPT="../ebyteserrequest.py"
+PYTHON_SCRIPT="/home/user/sofar/ebyteserrequest.py"
 C_BINARY="./test_modbus_relay"
 ITERATIONS=10
 
@@ -13,10 +13,14 @@ echo "Python vs C Implementation"
 echo "========================================================"
 echo ""
 
-# Check if binaries exist
-if [ ! -f "$PYTHON_SCRIPT" ]; then
-    echo "Error: Python script not found: $PYTHON_SCRIPT"
-    exit 1
+# Check if Python script exists
+PYTHON_AVAILABLE=false
+if [ -f "$PYTHON_SCRIPT" ]; then
+    PYTHON_AVAILABLE=true
+else
+    echo "⚠️  Python script not found: $PYTHON_SCRIPT"
+    echo "    Skipping Python benchmark (C-only mode)"
+    echo ""
 fi
 
 if [ ! -f "$C_BINARY" ]; then
@@ -34,12 +38,13 @@ echo "  Port: /dev/ttyAMA0 @ 9600 baud"
 echo ""
 
 # Python benchmark
-echo "=== PYTHON BENCHMARK ==="
-echo ""
+if [ "$PYTHON_AVAILABLE" = true ]; then
+    echo "=== PYTHON BENCHMARK ==="
+    echo ""
 
-PYTHON_TOTAL=0
+    PYTHON_TOTAL=0
 
-for state in "${TEST_STATES[@]}"; do
+    for state in "${TEST_STATES[@]}"; do
     echo -n "State $state: "
 
     TIMES=()
@@ -73,12 +78,16 @@ for state in "${TEST_STATES[@]}"; do
     echo "avg=${AVG}ms, min=${MIN}ms, max=${MAX}ms"
 done
 
-PYTHON_AVG=$((PYTHON_TOTAL / (${#TEST_STATES[@]} * ITERATIONS)))
+    PYTHON_AVG=$((PYTHON_TOTAL / (${#TEST_STATES[@]} * ITERATIONS)))
 
-echo ""
-echo "Python total: $PYTHON_TOTAL ms"
-echo "Python average: $PYTHON_AVG ms per write"
-echo ""
+    echo ""
+    echo "Python total: $PYTHON_TOTAL ms"
+    echo "Python average: $PYTHON_AVG ms per write"
+    echo ""
+else
+    PYTHON_AVG=60  # Estimated default
+    PYTHON_TOTAL=$((PYTHON_AVG * ${#TEST_STATES[@]} * ITERATIONS))
+fi
 
 # C benchmark
 echo "=== C BENCHMARK ==="
@@ -141,7 +150,11 @@ echo "========================================================"
 echo ""
 printf "%-20s %10s %10s\n" "Implementation" "Avg Time" "Total Time"
 printf "%-20s %10s %10s\n" "----------------" "--------" "----------"
-printf "%-20s %8d ms %8d ms\n" "Python" $PYTHON_AVG $PYTHON_TOTAL
+if [ "$PYTHON_AVAILABLE" = true ]; then
+    printf "%-20s %8d ms %8d ms\n" "Python" $PYTHON_AVG $PYTHON_TOTAL
+else
+    printf "%-20s %8d ms %8d ms (estimated)\n" "Python" $PYTHON_AVG $PYTHON_TOTAL
+fi
 printf "%-20s %8d ms %8d ms\n" "C" $C_AVG $C_TOTAL
 echo ""
 
