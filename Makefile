@@ -19,12 +19,15 @@ SRC2 = ebox.c
 TARGET3 = fox2mqtt
 SRC3 = fox2mqtt.c
 
+TARGET4 = ebyte
+SRC4 = ebyte.c
+
 # Installation paths
 PREFIX = /usr/local
 BINDIR = $(PREFIX)/bin
 
 # Build
-all: $(TARGET1) $(TARGET2) $(TARGET3)
+all: $(TARGET1) $(TARGET2) $(TARGET3) $(TARGET4)
 
 $(TARGET1): $(SRC1)
 	$(CC) $(CFLAGS) -o $(TARGET1) $(SRC1) $(LIBS)
@@ -35,21 +38,26 @@ $(TARGET2): $(SRC2)
 $(TARGET3): $(SRC3)
 	$(CC) $(CFLAGS) -o $(TARGET3) $(SRC3) $(LIBS)
 
+$(TARGET4): $(SRC4)
+	$(CC) $(CFLAGS) -o $(TARGET4) $(SRC4) -lmodbus
+
 # Install
-install: $(TARGET1) $(TARGET2) $(TARGET3)
+install: $(TARGET1) $(TARGET2) $(TARGET3) $(TARGET4)
 	install -D -m 0755 $(TARGET1) $(DESTDIR)$(BINDIR)/$(TARGET1)
 	install -D -m 0755 $(TARGET2) $(DESTDIR)$(BINDIR)/$(TARGET2)
 	install -D -m 0755 $(TARGET3) $(DESTDIR)$(BINDIR)/$(TARGET3)
+	install -D -m 0755 $(TARGET4) $(DESTDIR)$(BINDIR)/$(TARGET4)
 
 # Uninstall
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET1)
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET2)
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET3)
+	rm -f $(DESTDIR)$(BINDIR)/$(TARGET4)
 
 # Clean
 clean:
-	rm -f $(TARGET1) $(TARGET2) $(TARGET3)
+	rm -f $(TARGET1) $(TARGET2) $(TARGET3) $(TARGET4)
 
 # Run with default config
 run: $(TARGET1)
@@ -73,6 +81,7 @@ help:
 	@echo "  fox2db       - MQTT-based inverter power management"
 	@echo "  ebox         - Serial battery communication tool"
 	@echo "  fox2mqtt     - JSON to MQTT publisher"
+	@echo "  ebyte        - Modbus RTU relay control with Soyo support"
 	@echo ""
 	@echo "Targets:"
 	@echo "  all          - Build all programs (default)"
