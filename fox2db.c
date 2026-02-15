@@ -239,6 +239,18 @@ int file_exists(const char *path) {
 //                             SUBPROCESS EXECUTION
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Helper: Build command string with auto-detection for Python scripts vs binaries
+static void build_script_command(char *cmd_buf, size_t buf_size, const char *script_path, const char *args) {
+    size_t script_len = strlen(script_path);
+    bool is_python = (script_len > 3 && strcmp(script_path + script_len - 3, ".py") == 0);
+
+    if (is_python) {
+        snprintf(cmd_buf, buf_size, "python3 %s %s", script_path, args);
+    } else {
+        snprintf(cmd_buf, buf_size, "%s %s", script_path, args);
+    }
+}
+
 int execute_command(const char *cmd, char *output, size_t output_size, int timeout_sec) {
     char full_cmd[2048];
     snprintf(full_cmd, sizeof(full_cmd), "timeout %d %s 2>&1", timeout_sec, cmd);
@@ -651,9 +663,17 @@ void publish_mqtt_data(double soc, double soc_bat1, double pcc, double bat1,
 
     char *json_str = cJSON_PrintUnformatted(json);
 
-    // Call MQTT publish script
+    // Call MQTT publish script (support both Python scripts and C binaries)
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "python3 %s '%s'", config.path_mqtt_publish_script, json_str);
+    size_t script_len = strlen(config.path_mqtt_publish_script);
+    bool is_python = (script_len > 3 &&
+                      strcmp(config.path_mqtt_publish_script + script_len - 3, ".py") == 0);
+
+    if (is_python) {
+        snprintf(cmd, sizeof(cmd), "python3 %s '%s'", config.path_mqtt_publish_script, json_str);
+    } else {
+        snprintf(cmd, sizeof(cmd), "%s '%s'", config.path_mqtt_publish_script, json_str);
+    }
 
     char output[256];
     int ret = execute_command(cmd, output, sizeof(output), 5);
@@ -691,7 +711,7 @@ void main_loop(void) {
         // MQTT failed → Emergency shutdown
         log_msg("EMERGENCY SHUTDOWN: MQTT failed");
 
-        snprintf(cmd, sizeof(cmd), "%s 0", config.path_ebyte_script);
+        build_script_command(cmd, sizeof(cmd), config.path_ebyte_script, "0");
         execute_command(cmd, NULL, 0, 10);
         write_file_value(config.path_relay_state, "0");
         log_msg("→ Forced State 0 (safe mode)");
@@ -808,7 +828,9 @@ void main_loop(void) {
     // UPDATE RELAY STATE - v1.50: improved error handling
     if (changed) {
         char relay_cmd[1024];
-        snprintf(relay_cmd, sizeof(relay_cmd), "%s %d", config.path_ebyte_script, final);
+        char args[32];
+        snprintf(args, sizeof(args), "%d", final);
+        build_script_command(relay_cmd, sizeof(relay_cmd), config.path_ebyte_script, args);
 
         char relay_output[512];
         int relay_ret = execute_command(relay_cmd, relay_output, sizeof(relay_output), 10);
