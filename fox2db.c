@@ -34,6 +34,8 @@
  *   --help                        Show this help
  */
 
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -235,7 +237,7 @@ int file_exists(const char *path) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 int execute_command(const char *cmd, char *output, size_t output_size, int timeout_sec) {
-    char full_cmd[1024];
+    char full_cmd[2048];
     snprintf(full_cmd, sizeof(full_cmd), "timeout %d %s 2>&1", timeout_sec, cmd);
 
     FILE *fp = popen(full_cmd, "r");
@@ -261,6 +263,7 @@ int execute_command(const char *cmd, char *output, size_t output_size, int timeo
 
 int mqtt_message_arrived(void *context, char *topicName, int topicLen, MQTTClient_message *message) {
     MqttData *data = (MqttData *)context;
+    (void)topicLen;  // Unused parameter
 
     char *payload = malloc(message->payloadlen + 1);
     if (!payload) {
@@ -558,6 +561,7 @@ typedef struct {
 
 void check_blocking_rules(double pcc, double bat1, int stable, double drop_rate,
                           int pwr_diff, Direction dir, BlockingRule *rules, int *num_rules) {
+    (void)dir;  // Unused - rules apply themselves based on direction
     *num_rules = 0;
 
     // SWEET_SPOT_HOLD
@@ -669,7 +673,7 @@ void main_loop(void) {
     // INPUT LAYER
 
     // 1. Update EBox data
-    char cmd[1024];
+    char cmd[2048];
     snprintf(cmd, sizeof(cmd), "%s pwr 1 > %s", config.path_ebox_script, config.path_ebox_data);
 
     char output[256];
@@ -800,7 +804,7 @@ void main_loop(void) {
 
     // UPDATE RELAY STATE - v1.50: improved error handling
     if (changed) {
-        char relay_cmd[512];
+        char relay_cmd[1024];
         snprintf(relay_cmd, sizeof(relay_cmd), "%s %d", config.path_ebyte_script, final);
 
         char relay_output[512];
