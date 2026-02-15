@@ -7,10 +7,16 @@ Wants=mosquitto.service
 Type=simple
 User=pi
 Group=dialout
-WorkingDirectory=/home/pi/sofar
+
+# Note: WorkingDirectory is not needed since all files are in /tmp
+# If you uncomment it, you must also set ProtectHome=false
+# WorkingDirectory=/home/pi/sofar
+
 ExecStart=/usr/local/bin/soyo1min
 Restart=always
 RestartSec=10
+
+# Logging
 StandardOutput=journal
 StandardError=journal
 

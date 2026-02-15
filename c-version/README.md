@@ -101,9 +101,31 @@ make
 # Run directly
 ./soyo1min
 
-# With systemd (recommended)
+# With systemd (recommended for production)
 sudo systemctl start soyo1min
+sudo systemctl status soyo1min
 ```
+
+## systemd Service (Production Setup)
+
+For automatic startup on boot and proper process management, install as a systemd service:
+
+📖 **See [SYSTEMD_SERVICE.md](SYSTEMD_SERVICE.md) for complete installation guide**
+
+Quick setup:
+```bash
+sudo make install                          # Install binary to /usr/local/bin
+sudo cp soyo1min.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable soyo1min.service
+sudo systemctl start soyo1min.service
+```
+
+Benefits:
+- ✅ Automatic startup on boot
+- ✅ Automatic restart on crashes
+- ✅ Proper logging via journald
+- ✅ Security hardening
 
 ## Logging
 
