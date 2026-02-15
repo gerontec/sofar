@@ -10,34 +10,45 @@ CFLAGS = -Wall -Wextra -O2 -std=c11
 LIBS = -lpaho-mqtt3c -lcjson -lm
 
 # Targets
-TARGET = fox2db
-SRC = fox2db.c
+TARGET1 = fox2db
+SRC1 = fox2db.c
+
+TARGET2 = ebox
+SRC2 = ebox.c
 
 # Installation paths
 PREFIX = /usr/local
 BINDIR = $(PREFIX)/bin
 
 # Build
-all: $(TARGET)
+all: $(TARGET1) $(TARGET2)
 
-$(TARGET): $(SRC)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LIBS)
+$(TARGET1): $(SRC1)
+	$(CC) $(CFLAGS) -o $(TARGET1) $(SRC1) $(LIBS)
+
+$(TARGET2): $(SRC2)
+	$(CC) $(CFLAGS) -o $(TARGET2) $(SRC2)
 
 # Install
-install: $(TARGET)
-	install -D -m 0755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
+install: $(TARGET1) $(TARGET2)
+	install -D -m 0755 $(TARGET1) $(DESTDIR)$(BINDIR)/$(TARGET1)
+	install -D -m 0755 $(TARGET2) $(DESTDIR)$(BINDIR)/$(TARGET2)
 
 # Uninstall
 uninstall:
-	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
+	rm -f $(DESTDIR)$(BINDIR)/$(TARGET1)
+	rm -f $(DESTDIR)$(BINDIR)/$(TARGET2)
 
 # Clean
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET1) $(TARGET2)
 
 # Run with default config
-run: $(TARGET)
-	./$(TARGET)
+run: $(TARGET1)
+	./$(TARGET1)
+
+run-ebox: $(TARGET2)
+	./$(TARGET2) --help
 
 # Test build dependencies
 check-deps:
@@ -48,15 +59,20 @@ check-deps:
 
 # Help
 help:
-	@echo "fox2db Makefile"
+	@echo "Sofar Tools Makefile"
+	@echo ""
+	@echo "Programs:"
+	@echo "  fox2db       - MQTT-based inverter power management"
+	@echo "  ebox         - Serial battery communication tool"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all          - Build fox2db (default)"
+	@echo "  all          - Build all programs (default)"
 	@echo "  install      - Install to $(BINDIR)"
 	@echo "  uninstall    - Remove from $(BINDIR)"
 	@echo "  clean        - Remove built files"
-	@echo "  run          - Build and run with default config"
+	@echo "  run          - Build and run fox2db with default config"
+	@echo "  run-ebox     - Build and show ebox help"
 	@echo "  check-deps   - Check if dependencies are installed"
 	@echo "  help         - Show this help"
 
-.PHONY: all install uninstall clean run check-deps help
+.PHONY: all install uninstall clean run run-ebox check-deps help
