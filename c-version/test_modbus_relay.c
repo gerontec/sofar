@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 199309L
+#define _DEFAULT_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -249,7 +250,7 @@ void print_usage(const char *prog) {
 
 int main(int argc, char *argv[]) {
     modbus_t *ctx;
-    int rc;
+    int rc = 0;
 
     // Parse arguments
     if (argc < 2) {
