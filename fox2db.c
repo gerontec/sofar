@@ -34,9 +34,13 @@
  *   --help                        Show this help
  */
 
+#define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE  // For usleep and other BSD extensions
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <getopt.h>
 #include <time.h>
@@ -53,7 +57,7 @@
 //                             VERSION & CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-#define VERSION "v1.50-C"
+#define VERSION "v1.52-C"
 #define MAX_PATH_LEN 512
 #define MAX_LOG_MSG 1024
 #define MAX_TOPIC_LEN 256
@@ -116,41 +120,44 @@ typedef struct {
     char path_mqtt_publish_script[MAX_PATH_LEN];
 } Config;
 
-// Default configuration
-static Config config = {
+// Global configuration instance
+static Config config;
+
+// Initialize configuration with default values
+static void init_config(void) {
     // Regelwerk defaults
-    .min_excess = 1010,
-    .max_grid_draw = 1500,
-    .max_soc = 99,
-    .hysteresis = 505,
-    .stabilization_cycles = 2,
-    .emergency_import = 1020,
-    .bat_discharge_threshold = -220,
-    .sweet_spot_pcc = 160,
-    .sweet_spot_bat = -310,
-    .max_drop_rate = -20,
-    .deep_discharge_lower = 6,
-    .deep_discharge_upper = 8,
-    .deep_discharge_charge_target = 7,
+    config.min_excess = 1010;
+    config.max_grid_draw = 1500;
+    config.max_soc = 99;
+    config.hysteresis = 505;
+    config.stabilization_cycles = 2;
+    config.emergency_import = 1020;
+    config.bat_discharge_threshold = -220;
+    config.sweet_spot_pcc = 160;
+    config.sweet_spot_bat = -310;
+    config.max_drop_rate = -20;
+    config.deep_discharge_lower = 6;
+    config.deep_discharge_upper = 8;
+    config.deep_discharge_charge_target = 7;
 
     // MQTT defaults
-    .mqtt_broker = "kellertreppe.fritz.box",
-    .mqtt_port = 1883,
-    .mqtt_topic = "inverter/power_grid_exchange/json",
-    .mqtt_timeout = 43,
+    strncpy(config.mqtt_broker, "kellertreppe.fritz.box", sizeof(config.mqtt_broker) - 1);
+    config.mqtt_port = 1883;
+    strncpy(config.mqtt_topic, "inverter/power_grid_exchange/json", sizeof(config.mqtt_topic) - 1);
+    config.mqtt_timeout = 43;
 
     // Path defaults
-    .path_deep_discharge = "/run/user/1000/deep_discharge_protection_active.txt",
-    .path_log = "/run/user/1000/fox2db.log",
-    .path_relay_state = "/run/user/1000/current_relay_state.txt",
-    .path_last_change = "/run/user/1000/last_relay_change.txt",
-    .path_last_excess = "/run/user/1000/last_excess.txt",
-    .path_ebox_data = "/run/user/1000/ebox15k.txt",
-    .path_inverter_csv = "/tmp/inverter.csv",
-    .path_ebox_script = "/home/pi/python/ebox1arg.py",
-    .path_ebyte_script = "/home/pi/python/ebyteserrequest.py",
-    .path_mqtt_publish_script = "/home/pi/python/fox2mqtt.py"
-};
+    strncpy(config.path_deep_discharge, "/run/user/1000/deep_discharge_protection_active.txt", sizeof(config.path_deep_discharge) - 1);
+    strncpy(config.path_log, "/run/user/1000/fox2db.log", sizeof(config.path_log) - 1);
+    strncpy(config.path_relay_state, "/run/user/1000/current_relay_state.txt", sizeof(config.path_relay_state) - 1);
+    strncpy(config.path_last_change, "/run/user/1000/last_relay_change.txt", sizeof(config.path_last_change) - 1);
+    strncpy(config.path_last_excess, "/run/user/1000/last_excess.txt", sizeof(config.path_last_excess) - 1);
+    strncpy(config.path_ebox_data, "/run/user/1000/ebox15k.txt", sizeof(config.path_ebox_data) - 1);
+    strncpy(config.path_inverter_csv, "/tmp/inverter.csv", sizeof(config.path_inverter_csv) - 1);
+    strncpy(config.path_ebox_script, "/home/pi/python/ebox1arg.py", sizeof(config.path_ebox_script) - 1);
+    strncpy(config.path_ebyte_script, "/home/pi/python/ebyteserrequest.py", sizeof(config.path_ebyte_script) - 1);
+    strncpy(config.path_mqtt_publish_script, "/home/pi/python/fox2mqtt.py", sizeof(config.path_mqtt_publish_script) - 1);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 //                             MQTT DATA STRUCTURE
@@ -234,8 +241,20 @@ int file_exists(const char *path) {
 //                             SUBPROCESS EXECUTION
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Helper: Build command string with auto-detection for Python scripts vs binaries
+static void build_script_command(char *cmd_buf, size_t buf_size, const char *script_path, const char *args) {
+    size_t script_len = strlen(script_path);
+    bool is_python = (script_len > 3 && strcmp(script_path + script_len - 3, ".py") == 0);
+
+    if (is_python) {
+        snprintf(cmd_buf, buf_size, "python3 %s %s", script_path, args);
+    } else {
+        snprintf(cmd_buf, buf_size, "%s %s", script_path, args);
+    }
+}
+
 int execute_command(const char *cmd, char *output, size_t output_size, int timeout_sec) {
-    char full_cmd[1024];
+    char full_cmd[2048];
     snprintf(full_cmd, sizeof(full_cmd), "timeout %d %s 2>&1", timeout_sec, cmd);
 
     FILE *fp = popen(full_cmd, "r");
@@ -261,6 +280,7 @@ int execute_command(const char *cmd, char *output, size_t output_size, int timeo
 
 int mqtt_message_arrived(void *context, char *topicName, int topicLen, MQTTClient_message *message) {
     MqttData *data = (MqttData *)context;
+    (void)topicLen;  // Unused parameter
 
     char *payload = malloc(message->payloadlen + 1);
     if (!payload) {
@@ -558,6 +578,7 @@ typedef struct {
 
 void check_blocking_rules(double pcc, double bat1, int stable, double drop_rate,
                           int pwr_diff, Direction dir, BlockingRule *rules, int *num_rules) {
+    (void)dir;  // Unused - rules apply themselves based on direction
     *num_rules = 0;
 
     // SWEET_SPOT_HOLD
@@ -644,9 +665,17 @@ void publish_mqtt_data(double soc, double soc_bat1, double pcc, double bat1,
 
     char *json_str = cJSON_PrintUnformatted(json);
 
-    // Call MQTT publish script
+    // Call MQTT publish script (support both Python scripts and C binaries)
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "python3 %s '%s'", config.path_mqtt_publish_script, json_str);
+    size_t script_len = strlen(config.path_mqtt_publish_script);
+    bool is_python = (script_len > 3 &&
+                      strcmp(config.path_mqtt_publish_script + script_len - 3, ".py") == 0);
+
+    if (is_python) {
+        snprintf(cmd, sizeof(cmd), "python3 %s '%s'", config.path_mqtt_publish_script, json_str);
+    } else {
+        snprintf(cmd, sizeof(cmd), "%s '%s'", config.path_mqtt_publish_script, json_str);
+    }
 
     char output[256];
     int ret = execute_command(cmd, output, sizeof(output), 5);
@@ -669,8 +698,9 @@ void main_loop(void) {
     // INPUT LAYER
 
     // 1. Update EBox data
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "%s pwr 1 > %s", config.path_ebox_script, config.path_ebox_data);
+    char cmd[2048];
+    // Fixed: Use "pwr" without "1" argument to get all batteries and proper SOC parsing
+    snprintf(cmd, sizeof(cmd), "%s pwr > %s", config.path_ebox_script, config.path_ebox_data);
 
     char output[256];
     int ret = execute_command(cmd, output, sizeof(output), 10);
@@ -684,7 +714,7 @@ void main_loop(void) {
         // MQTT failed → Emergency shutdown
         log_msg("EMERGENCY SHUTDOWN: MQTT failed");
 
-        snprintf(cmd, sizeof(cmd), "%s 0", config.path_ebyte_script);
+        build_script_command(cmd, sizeof(cmd), config.path_ebyte_script, "0");
         execute_command(cmd, NULL, 0, 10);
         write_file_value(config.path_relay_state, "0");
         log_msg("→ Forced State 0 (safe mode)");
@@ -800,8 +830,10 @@ void main_loop(void) {
 
     // UPDATE RELAY STATE - v1.50: improved error handling
     if (changed) {
-        char relay_cmd[512];
-        snprintf(relay_cmd, sizeof(relay_cmd), "%s %d", config.path_ebyte_script, final);
+        char relay_cmd[1024];
+        char args[32];
+        snprintf(args, sizeof(args), "%d", final);
+        build_script_command(relay_cmd, sizeof(relay_cmd), config.path_ebyte_script, args);
 
         char relay_output[512];
         int relay_ret = execute_command(relay_cmd, relay_output, sizeof(relay_output), 10);
@@ -920,6 +952,10 @@ void parse_args(int argc, char **argv) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 int main(int argc, char **argv) {
+    // Initialize configuration with defaults
+    init_config();
+
+    // Parse command-line arguments (override defaults)
     parse_args(argc, argv);
 
     log_msg("=== fox2db %s started ===", VERSION);
