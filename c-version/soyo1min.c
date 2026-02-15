@@ -1125,8 +1125,8 @@ int main(int argc, char *argv[]) {
     LOG_INFO("Shutting down...");
 
     if (mqtt_client) {
-        mosquitto_loop_stop(mqtt_client, false);
         mosquitto_disconnect(mqtt_client);
+        mosquitto_loop_stop(mqtt_client, true);  // Force stop to avoid blocking
         mosquitto_destroy(mqtt_client);
     }
     mosquitto_lib_cleanup();
