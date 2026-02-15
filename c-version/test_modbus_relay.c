@@ -7,6 +7,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <time.h>
+#include <fcntl.h>
+#include <termios.h>
 #include <modbus/modbus.h>
 
 // Configuration
@@ -35,6 +37,72 @@ long long get_timestamp_us(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (long long)ts.tv_sec * 1000000LL + ts.tv_nsec / 1000LL;
+}
+
+// Set baudrate on file descriptor
+int set_baudrate(int fd, speed_t speed, const char *label) {
+    struct termios tty;
+
+    if (tcgetattr(fd, &tty) != 0) {
+        fprintf(stderr, "tcgetattr error: %s\n", strerror(errno));
+        return -1;
+    }
+
+    cfsetospeed(&tty, speed);
+    cfsetispeed(&tty, speed);
+
+    if (tcsetattr(fd, TCSANOW, &tty) != 0) {
+        fprintf(stderr, "tcsetattr error (%s): %s\n", label, strerror(errno));
+        return -1;
+    }
+
+    printf("  Baudrate switched to %s\n", label);
+    return 0;
+}
+
+// Send Soyo power command (from soyo1min.c)
+int send_soyo_command(int fd, int power) {
+    unsigned char cmd[8];
+    unsigned char pu, pl, crc;
+    int n;
+
+    // Build command packet
+    pu = (power >> 8) & 0xFF;
+    pl = power & 0xFF;
+    crc = (264 - pu - pl) & 0xFF;
+
+    cmd[0] = 0x24;  // Header
+    cmd[1] = 0x56;  // Header
+    cmd[2] = 0x00;  // Reserved
+    cmd[3] = 0x21;  // Command: Set power limit
+    cmd[4] = pu;    // Power upper byte
+    cmd[5] = pl;    // Power lower byte
+    cmd[6] = 0x80;  // Fixed
+    cmd[7] = crc;   // Checksum
+
+    // Send command
+    n = write(fd, cmd, 8);
+    if (n != 8) {
+        fprintf(stderr, "Soyo write error: wrote %d/8 bytes\n", n);
+        return -1;
+    }
+
+    printf("  Soyo command sent: %dW [%02X %02X %02X %02X %02X %02X %02X %02X]\n",
+           power, cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6], cmd[7]);
+
+    // Optional: Read response (7 bytes expected)
+    unsigned char response[100];
+    usleep(50000); // 50ms for response
+    n = read(fd, response, sizeof(response));
+    if (n > 0) {
+        printf("  Soyo response: %d bytes [", n);
+        for (int i = 0; i < n; i++) {
+            printf("%02X%s", response[i], (i < n-1) ? " " : "");
+        }
+        printf("]\n");
+    }
+
+    return 0;
 }
 
 // Find bits for state
@@ -157,6 +225,98 @@ void show_status(modbus_t *ctx) {
     printf("============================================================\n");
 }
 
+// Multiplexing test: Soyo @ 4800 + Relay @ 9600
+void multiplex_test(modbus_t *ctx, int soyo_power) {
+    int fd;
+    long long t_start, t1, t2, t3, t4, t5;
+
+    printf("\n=== MULTIPLEXING TEST: Soyo @ 4800 + Relay @ 9600 ===\n\n");
+    printf("Scenario: Alternating between Soyo inverter and Relay control\n");
+    printf("  1. Relay command @ 9600 baud (Modbus)\n");
+    printf("  2. Switch to 4800 baud\n");
+    printf("  3. Soyo command @ 4800 baud\n");
+    printf("  4. Switch back to 9600 baud\n");
+    printf("  5. Relay command @ 9600 baud (Modbus)\n");
+    printf("\n");
+
+    // Get underlying file descriptor from modbus context
+    fd = modbus_get_socket(ctx);
+    if (fd == -1) {
+        fprintf(stderr, "Error: Could not get file descriptor from Modbus context\n");
+        return;
+    }
+
+    t_start = get_timestamp_us();
+
+    // Step 1: Relay command @ 9600 (already connected)
+    printf("Step 1: Relay @ 9600 baud (Modbus)\n");
+    t1 = get_timestamp_us();
+    if (write_relay_status(ctx, 7) == 0) {
+        printf("  ✓ Relay set to state 7 (all ON)\n");
+    }
+    t2 = get_timestamp_us();
+    printf("  Time: %lld µs (%.2f ms)\n\n", t2 - t1, (t2 - t1) / 1000.0);
+
+    // Step 2: Switch to 4800 baud
+    printf("Step 2: Switch to 4800 baud\n");
+    t2 = get_timestamp_us();
+    if (set_baudrate(fd, B4800, "4800") != 0) {
+        fprintf(stderr, "Failed to switch to 4800 baud\n");
+        return;
+    }
+    t3 = get_timestamp_us();
+    printf("  Time: %lld µs (%.2f ms)\n\n", t3 - t2, (t3 - t2) / 1000.0);
+
+    usleep(10000); // 10ms settle time
+
+    // Step 3: Soyo command @ 4800
+    printf("Step 3: Soyo @ 4800 baud\n");
+    t3 = get_timestamp_us();
+    if (send_soyo_command(fd, soyo_power) != 0) {
+        fprintf(stderr, "Failed to send Soyo command\n");
+    }
+    t4 = get_timestamp_us();
+    printf("  Time: %lld µs (%.2f ms)\n\n", t4 - t3, (t4 - t3) / 1000.0);
+
+    // Step 4: Switch back to 9600 baud
+    printf("Step 4: Switch back to 9600 baud\n");
+    t4 = get_timestamp_us();
+    if (set_baudrate(fd, B9600, "9600") != 0) {
+        fprintf(stderr, "Failed to switch back to 9600 baud\n");
+        return;
+    }
+    t5 = get_timestamp_us();
+    printf("  Time: %lld µs (%.2f ms)\n\n", t5 - t4, (t5 - t4) / 1000.0);
+
+    usleep(10000); // 10ms settle time
+
+    // Step 5: Relay command @ 9600 again
+    printf("Step 5: Relay @ 9600 baud (Modbus)\n");
+    t5 = get_timestamp_us();
+    if (write_relay_status(ctx, 0) == 0) {
+        printf("  ✓ Relay set to state 0 (all OFF)\n");
+    }
+    long long t6 = get_timestamp_us();
+    printf("  Time: %lld µs (%.2f ms)\n\n", t6 - t5, (t6 - t5) / 1000.0);
+
+    // Summary
+    long long total = t6 - t_start;
+    printf("========================================\n");
+    printf("TOTAL TIME: %lld µs (%.2f ms)\n", total, total / 1000.0);
+    printf("========================================\n");
+    printf("\nBreakdown:\n");
+    printf("  Relay write 1:    %6.2f ms\n", (t2 - t1) / 1000.0);
+    printf("  Baudrate to 4800: %6.2f ms\n", (t3 - t2) / 1000.0);
+    printf("  Soyo command:     %6.2f ms\n", (t4 - t3) / 1000.0);
+    printf("  Baudrate to 9600: %6.2f ms\n", (t5 - t4) / 1000.0);
+    printf("  Relay write 2:    %6.2f ms\n", (t6 - t5) / 1000.0);
+    printf("  --------------------------------\n");
+    printf("  Total overhead:   %6.2f ms\n", total / 1000.0);
+    printf("\nFor 2-second slot:\n");
+    printf("  Overhead: %.1f%% of 2000ms\n", (total / 1000.0) / 20.0);
+    printf("\n");
+}
+
 // Benchmark: Compare C vs Python timing
 void benchmark_mode(modbus_t *ctx) {
     printf("\n=== MODBUS RELAY BENCHMARK (C vs Python) ===\n\n");
@@ -234,18 +394,20 @@ void print_usage(const char *prog) {
     printf("Usage: %s [OPTIONS] [STATE]\n", prog);
     printf("\n");
     printf("Options:\n");
-    printf("  -h, --help        Show this help\n");
-    printf("  -s, --status      Show current status\n");
-    printf("  -b, --benchmark   Run performance benchmark\n");
-    printf("  -r, --read        Read current relay state\n");
+    printf("  -h, --help            Show this help\n");
+    printf("  -s, --status          Show current status\n");
+    printf("  -b, --benchmark       Run performance benchmark\n");
+    printf("  -r, --read            Read current relay state\n");
+    printf("  -m, --multiplex POWER Test multiplexing (Soyo @ 4800 + Relay @ 9600)\n");
     printf("\n");
     printf("STATE: 0-7, 11 (relay state to set)\n");
     printf("\n");
     printf("Examples:\n");
-    printf("  %s --status          # Show current status\n", prog);
-    printf("  %s 7                 # Set all relays ON\n", prog);
-    printf("  %s 0                 # Set all relays OFF\n", prog);
-    printf("  %s --benchmark       # Performance test\n", prog);
+    printf("  %s --status           # Show current status\n", prog);
+    printf("  %s 7                  # Set all relays ON\n", prog);
+    printf("  %s 0                  # Set all relays OFF\n", prog);
+    printf("  %s --benchmark        # Performance test\n", prog);
+    printf("  %s --multiplex 300    # Multiplex test: Soyo 300W + Relay control\n", prog);
 }
 
 int main(int argc, char *argv[]) {
@@ -292,6 +454,23 @@ int main(int argc, char *argv[]) {
     }
     else if (strcmp(argv[1], "-b") == 0 || strcmp(argv[1], "--benchmark") == 0) {
         benchmark_mode(ctx);
+    }
+    else if (strcmp(argv[1], "-m") == 0 || strcmp(argv[1], "--multiplex") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Error: --multiplex requires POWER argument\n");
+            fprintf(stderr, "Usage: %s --multiplex POWER\n", argv[0]);
+            fprintf(stderr, "Example: %s --multiplex 300\n", argv[0]);
+            modbus_close(ctx);
+            modbus_free(ctx);
+            return 1;
+        }
+
+        int power = atoi(argv[2]);
+        if (power < 0 || power > 3000) {
+            fprintf(stderr, "Warning: Power %dW out of typical range (0-3000W)\n", power);
+        }
+
+        multiplex_test(ctx, power);
     }
     else if (strcmp(argv[1], "-r") == 0 || strcmp(argv[1], "--read") == 0) {
         int state;
