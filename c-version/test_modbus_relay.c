@@ -11,13 +11,18 @@
 #include <termios.h>
 #include <modbus/modbus.h>
 
-// Configuration
+// Configuration defaults
 #define RTU_PORT "/dev/ttyAMA0"
 #define BAUDRATE 9600
-#define SLAVE_ID 1
+#define DEFAULT_SLAVE_ID 1
+#define DEFAULT_SOYO_DEVICE_ID 0
 #define COIL_START 0
 #define NUM_COILS 3
 #define STATE_FILE "/run/user/1000/current_relay_state.txt"
+
+// Global configuration (can be overridden via command-line)
+static int modbus_slave_id = DEFAULT_SLAVE_ID;
+static int soyo_device_id = DEFAULT_SOYO_DEVICE_ID;
 
 // State to bits mapping (same as Python)
 typedef struct {
@@ -73,7 +78,7 @@ int send_soyo_command(int fd, int power) {
 
     cmd[0] = 0x24;  // Header
     cmd[1] = 0x56;  // Header
-    cmd[2] = 0x00;  // Reserved
+    cmd[2] = soyo_device_id & 0xFF;  // Device ID (configurable)
     cmd[3] = 0x21;  // Command: Set power limit
     cmd[4] = pu;    // Power upper byte
     cmd[5] = pl;    // Power lower byte
@@ -215,10 +220,11 @@ void show_status(modbus_t *ctx) {
     }
 
     printf("============================================================\n");
-    printf("Port:   %s\n", RTU_PORT);
-    printf("Baud:   %d\n", BAUDRATE);
-    printf("Slave:  %d\n", SLAVE_ID);
-    printf("States: ");
+    printf("Port:      %s\n", RTU_PORT);
+    printf("Baudrate:  %d\n", BAUDRATE);
+    printf("Slave ID:  %d (Modbus RTU)\n", modbus_slave_id);
+    printf("Soyo ID:   %d (Non-Modbus)\n", soyo_device_id);
+    printf("States:    ");
     for (int i = 0; i < num_states; i++) {
         printf("%d%s", state_map[i].state, (i < num_states - 1) ? ", " : "\n");
     }
@@ -231,12 +237,16 @@ void multiplex_test(modbus_t *ctx, int soyo_power) {
     long long t_start, t1, t2, t3, t4, t5;
 
     printf("\n=== MULTIPLEXING TEST: Soyo @ 4800 + Relay @ 9600 ===\n\n");
+    printf("Configuration:\n");
+    printf("  Modbus Slave ID: %d (Ebyte Relay)\n", modbus_slave_id);
+    printf("  Soyo Device ID:  %d (Soyo Inverter)\n", soyo_device_id);
+    printf("  Target Power:    %dW\n\n", soyo_power);
     printf("Scenario: Alternating between Soyo inverter and Relay control\n");
-    printf("  1. Relay command @ 9600 baud (Modbus)\n");
+    printf("  1. Relay command @ 9600 baud (Modbus RTU, Slave %d)\n", modbus_slave_id);
     printf("  2. Switch to 4800 baud\n");
-    printf("  3. Soyo command @ 4800 baud\n");
+    printf("  3. Soyo command @ 4800 baud (Device %d, %dW)\n", soyo_device_id, soyo_power);
     printf("  4. Switch back to 9600 baud\n");
-    printf("  5. Relay command @ 9600 baud (Modbus)\n");
+    printf("  5. Relay command @ 9600 baud (Modbus RTU, Slave %d)\n", modbus_slave_id);
     printf("\n");
 
     // Get underlying file descriptor from modbus context
@@ -394,27 +404,70 @@ void print_usage(const char *prog) {
     printf("Usage: %s [OPTIONS] [STATE]\n", prog);
     printf("\n");
     printf("Options:\n");
-    printf("  -h, --help            Show this help\n");
-    printf("  -s, --status          Show current status\n");
-    printf("  -b, --benchmark       Run performance benchmark\n");
-    printf("  -r, --read            Read current relay state\n");
-    printf("  -m, --multiplex POWER Test multiplexing (Soyo @ 4800 + Relay @ 9600)\n");
+    printf("  -h, --help                Show this help\n");
+    printf("  -s, --status              Show current status\n");
+    printf("  -b, --benchmark           Run performance benchmark\n");
+    printf("  -r, --read                Read current relay state\n");
+    printf("  -m, --multiplex POWER     Test multiplexing (Soyo @ 4800 + Relay @ 9600)\n");
+    printf("\n");
+    printf("Configuration:\n");
+    printf("  --slave-id ID             Modbus RTU slave ID (default: %d)\n", DEFAULT_SLAVE_ID);
+    printf("  --soyo-id ID              Soyo device ID (default: %d)\n", DEFAULT_SOYO_DEVICE_ID);
     printf("\n");
     printf("STATE: 0-7, 11 (relay state to set)\n");
     printf("\n");
     printf("Examples:\n");
-    printf("  %s --status           # Show current status\n", prog);
-    printf("  %s 7                  # Set all relays ON\n", prog);
-    printf("  %s 0                  # Set all relays OFF\n", prog);
-    printf("  %s --benchmark        # Performance test\n", prog);
-    printf("  %s --multiplex 300    # Multiplex test: Soyo 300W + Relay control\n", prog);
+    printf("  %s --status                      # Show current status\n", prog);
+    printf("  %s 7                             # Set all relays ON\n", prog);
+    printf("  %s 0                             # Set all relays OFF\n", prog);
+    printf("  %s --benchmark                   # Performance test\n", prog);
+    printf("  %s --multiplex 300               # Multiplex: Soyo 300W + Relay\n", prog);
+    printf("  %s --slave-id 2 --status         # Status with slave ID 2\n", prog);
+    printf("  %s --soyo-id 1 --multiplex 500   # Multiplex with Soyo ID 1, 500W\n", prog);
 }
 
 int main(int argc, char *argv[]) {
     modbus_t *ctx;
     int rc = 0;
+    int i;
 
-    // Parse arguments
+    // Parse configuration options first
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--slave-id") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --slave-id requires an argument\n");
+                return 1;
+            }
+            modbus_slave_id = atoi(argv[i + 1]);
+            if (modbus_slave_id < 1 || modbus_slave_id > 247) {
+                fprintf(stderr, "Error: Invalid slave ID %d (must be 1-247)\n", modbus_slave_id);
+                return 1;
+            }
+            printf("Config: Modbus Slave ID set to %d\n", modbus_slave_id);
+            // Remove these arguments
+            memmove(&argv[i], &argv[i + 2], (argc - i - 2) * sizeof(char*));
+            argc -= 2;
+            i--;
+        }
+        else if (strcmp(argv[i], "--soyo-id") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --soyo-id requires an argument\n");
+                return 1;
+            }
+            soyo_device_id = atoi(argv[i + 1]);
+            if (soyo_device_id < 0 || soyo_device_id > 255) {
+                fprintf(stderr, "Error: Invalid Soyo device ID %d (must be 0-255)\n", soyo_device_id);
+                return 1;
+            }
+            printf("Config: Soyo Device ID set to %d\n", soyo_device_id);
+            // Remove these arguments
+            memmove(&argv[i], &argv[i + 2], (argc - i - 2) * sizeof(char*));
+            argc -= 2;
+            i--;
+        }
+    }
+
+    // Check if we have at least one command argument left
     if (argc < 2) {
         print_usage(argv[0]);
         return 1;
@@ -427,8 +480,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Set slave ID
-    modbus_set_slave(ctx, SLAVE_ID);
+    // Set slave ID (from config)
+    modbus_set_slave(ctx, modbus_slave_id);
 
     // Set timeouts (response timeout: 1000ms, byte timeout: 500ms)
     modbus_set_response_timeout(ctx, 1, 0);
