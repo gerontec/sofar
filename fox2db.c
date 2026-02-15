@@ -118,41 +118,44 @@ typedef struct {
     char path_mqtt_publish_script[MAX_PATH_LEN];
 } Config;
 
-// Default configuration
-static Config config = {
+// Global configuration instance
+static Config config;
+
+// Initialize configuration with default values
+static void init_config(void) {
     // Regelwerk defaults
-    .min_excess = 1010,
-    .max_grid_draw = 1500,
-    .max_soc = 99,
-    .hysteresis = 505,
-    .stabilization_cycles = 2,
-    .emergency_import = 1020,
-    .bat_discharge_threshold = -220,
-    .sweet_spot_pcc = 160,
-    .sweet_spot_bat = -310,
-    .max_drop_rate = -20,
-    .deep_discharge_lower = 6,
-    .deep_discharge_upper = 8,
-    .deep_discharge_charge_target = 7,
+    config.min_excess = 1010;
+    config.max_grid_draw = 1500;
+    config.max_soc = 99;
+    config.hysteresis = 505;
+    config.stabilization_cycles = 2;
+    config.emergency_import = 1020;
+    config.bat_discharge_threshold = -220;
+    config.sweet_spot_pcc = 160;
+    config.sweet_spot_bat = -310;
+    config.max_drop_rate = -20;
+    config.deep_discharge_lower = 6;
+    config.deep_discharge_upper = 8;
+    config.deep_discharge_charge_target = 7;
 
     // MQTT defaults
-    .mqtt_broker = "kellertreppe.fritz.box",
-    .mqtt_port = 1883,
-    .mqtt_topic = "inverter/power_grid_exchange/json",
-    .mqtt_timeout = 43,
+    strncpy(config.mqtt_broker, "kellertreppe.fritz.box", sizeof(config.mqtt_broker) - 1);
+    config.mqtt_port = 1883;
+    strncpy(config.mqtt_topic, "inverter/power_grid_exchange/json", sizeof(config.mqtt_topic) - 1);
+    config.mqtt_timeout = 43;
 
     // Path defaults
-    .path_deep_discharge = "/run/user/1000/deep_discharge_protection_active.txt",
-    .path_log = "/run/user/1000/fox2db.log",
-    .path_relay_state = "/run/user/1000/current_relay_state.txt",
-    .path_last_change = "/run/user/1000/last_relay_change.txt",
-    .path_last_excess = "/run/user/1000/last_excess.txt",
-    .path_ebox_data = "/run/user/1000/ebox15k.txt",
-    .path_inverter_csv = "/tmp/inverter.csv",
-    .path_ebox_script = "/home/pi/python/ebox1arg.py",
-    .path_ebyte_script = "/home/pi/python/ebyteserrequest.py",
-    .path_mqtt_publish_script = "/home/pi/python/fox2mqtt.py"
-};
+    strncpy(config.path_deep_discharge, "/run/user/1000/deep_discharge_protection_active.txt", sizeof(config.path_deep_discharge) - 1);
+    strncpy(config.path_log, "/run/user/1000/fox2db.log", sizeof(config.path_log) - 1);
+    strncpy(config.path_relay_state, "/run/user/1000/current_relay_state.txt", sizeof(config.path_relay_state) - 1);
+    strncpy(config.path_last_change, "/run/user/1000/last_relay_change.txt", sizeof(config.path_last_change) - 1);
+    strncpy(config.path_last_excess, "/run/user/1000/last_excess.txt", sizeof(config.path_last_excess) - 1);
+    strncpy(config.path_ebox_data, "/run/user/1000/ebox15k.txt", sizeof(config.path_ebox_data) - 1);
+    strncpy(config.path_inverter_csv, "/tmp/inverter.csv", sizeof(config.path_inverter_csv) - 1);
+    strncpy(config.path_ebox_script, "/home/pi/python/ebox1arg.py", sizeof(config.path_ebox_script) - 1);
+    strncpy(config.path_ebyte_script, "/home/pi/python/ebyteserrequest.py", sizeof(config.path_ebyte_script) - 1);
+    strncpy(config.path_mqtt_publish_script, "/home/pi/python/fox2mqtt.py", sizeof(config.path_mqtt_publish_script) - 1);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 //                             MQTT DATA STRUCTURE
@@ -924,6 +927,10 @@ void parse_args(int argc, char **argv) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 int main(int argc, char **argv) {
+    // Initialize configuration with defaults
+    init_config();
+
+    // Parse command-line arguments (override defaults)
     parse_args(argc, argv);
 
     log_msg("=== fox2db %s started ===", VERSION);
