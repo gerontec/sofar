@@ -5,9 +5,18 @@ TARGET = soyo1min
 SOURCES = soyo1min.c
 OBJECTS = $(SOURCES:.c=.o)
 
-.PHONY: all clean install
+# Test tools
+TEST_BAUDRATE = test_baudrate_switch
+
+.PHONY: all clean install test-baudrate
 
 all: $(TARGET)
+
+test-baudrate: $(TEST_BAUDRATE)
+	@echo "Run with: sudo ./$(TEST_BAUDRATE) [/dev/ttyUSB0]"
+
+$(TEST_BAUDRATE): test_baudrate_switch.c
+	$(CC) $(CFLAGS) -o $@ $^ -lm
 
 $(TARGET): $(OBJECTS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -16,7 +25,7 @@ $(TARGET): $(OBJECTS)
 	$(CC) $(CFLAGS) -c $<
 
 clean:
-	rm -f $(OBJECTS) $(TARGET)
+	rm -f $(OBJECTS) $(TARGET) $(TEST_BAUDRATE)
 
 install: $(TARGET)
 	install -m 755 $(TARGET) /usr/local/bin/
