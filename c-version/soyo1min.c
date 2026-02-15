@@ -1078,17 +1078,10 @@ int main(int argc, char *argv[]) {
     LOG_INFO("Location: lat=%.4f, lon=%.4f, sunrise_offset=%d min, sunset_offset=%d min",
              config.latitude, config.longitude, config.sunrise_offset_min, config.sunset_offset_min);
 
-    // Acquire lock
-    if (!acquire_lock()) {
-        LOG_ERROR("Exiting due to existing instance");
-        return 1;
-    }
-
     // Open serial port
     serial_fd = serial_open(config.serial_port, config.serial_baudrate);
     if (serial_fd < 0) {
         LOG_ERROR("Failed to initialize serial port %s", config.serial_port);
-        release_lock();
         return 1;
     }
 
@@ -1098,7 +1091,6 @@ int main(int argc, char *argv[]) {
     if (!mqtt_client) {
         LOG_ERROR("Failed to create MQTT client");
         close(serial_fd);
-        release_lock();
         return 1;
     }
 
@@ -1144,7 +1136,6 @@ int main(int argc, char *argv[]) {
         fclose(log_file);
     }
 
-    release_lock();
     LOG_INFO("Serial and MQTT connections closed");
 
     return 0;
