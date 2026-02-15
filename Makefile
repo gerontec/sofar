@@ -16,12 +16,15 @@ SRC1 = fox2db.c
 TARGET2 = ebox
 SRC2 = ebox.c
 
+TARGET3 = fox2mqtt
+SRC3 = fox2mqtt.c
+
 # Installation paths
 PREFIX = /usr/local
 BINDIR = $(PREFIX)/bin
 
 # Build
-all: $(TARGET1) $(TARGET2)
+all: $(TARGET1) $(TARGET2) $(TARGET3)
 
 $(TARGET1): $(SRC1)
 	$(CC) $(CFLAGS) -o $(TARGET1) $(SRC1) $(LIBS)
@@ -29,19 +32,24 @@ $(TARGET1): $(SRC1)
 $(TARGET2): $(SRC2)
 	$(CC) $(CFLAGS) -o $(TARGET2) $(SRC2)
 
+$(TARGET3): $(SRC3)
+	$(CC) $(CFLAGS) -o $(TARGET3) $(SRC3) $(LIBS)
+
 # Install
-install: $(TARGET1) $(TARGET2)
+install: $(TARGET1) $(TARGET2) $(TARGET3)
 	install -D -m 0755 $(TARGET1) $(DESTDIR)$(BINDIR)/$(TARGET1)
 	install -D -m 0755 $(TARGET2) $(DESTDIR)$(BINDIR)/$(TARGET2)
+	install -D -m 0755 $(TARGET3) $(DESTDIR)$(BINDIR)/$(TARGET3)
 
 # Uninstall
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET1)
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET2)
+	rm -f $(DESTDIR)$(BINDIR)/$(TARGET3)
 
 # Clean
 clean:
-	rm -f $(TARGET1) $(TARGET2)
+	rm -f $(TARGET1) $(TARGET2) $(TARGET3)
 
 # Run with default config
 run: $(TARGET1)
@@ -64,6 +72,7 @@ help:
 	@echo "Programs:"
 	@echo "  fox2db       - MQTT-based inverter power management"
 	@echo "  ebox         - Serial battery communication tool"
+	@echo "  fox2mqtt     - JSON to MQTT publisher"
 	@echo ""
 	@echo "Targets:"
 	@echo "  all          - Build all programs (default)"
