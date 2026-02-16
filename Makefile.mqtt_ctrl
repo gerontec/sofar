@@ -1,0 +1,73 @@
+# Makefile for MQTT Control Utilities
+# Build command-line tools to control Pico via MQTT
+
+CC = gcc
+CFLAGS = -std=c11 -Wall -Wextra -O2
+LDFLAGS = -lpaho-mqtt3c
+
+# Targets
+TARGETS = soyo_mqtt_ctrl relay_mqtt_ctrl
+
+.PHONY: all clean install test
+
+all: $(TARGETS)
+
+soyo_mqtt_ctrl: soyo_mqtt_ctrl.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+
+relay_mqtt_ctrl: relay_mqtt_ctrl.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+
+clean:
+	rm -f $(TARGETS)
+
+install: all
+	install -m 755 soyo_mqtt_ctrl /usr/local/bin/
+	install -m 755 relay_mqtt_ctrl /usr/local/bin/
+	@echo "Installed to /usr/local/bin/"
+	@echo ""
+	@echo "Make sure MQTT broker is running:"
+	@echo "  sudo apt install mosquitto mosquitto-clients"
+	@echo "  sudo systemctl start mosquitto"
+
+uninstall:
+	rm -f /usr/local/bin/soyo_mqtt_ctrl
+	rm -f /usr/local/bin/relay_mqtt_ctrl
+
+# Test MQTT broker connectivity
+test-broker:
+	@echo "Testing MQTT broker..."
+	@mosquitto_pub -h localhost -t "test" -m "hello" && echo "✓ MQTT broker is running" || echo "✗ MQTT broker not accessible"
+
+# Test tools
+test: all
+	@echo "Testing SOYO MQTT control..."
+	./soyo_mqtt_ctrl localhost 0
+	@echo ""
+	@echo "Testing Relay MQTT control..."
+	./relay_mqtt_ctrl localhost 0
+
+# Monitor MQTT traffic
+monitor:
+	@echo "Monitoring MQTT topics (Ctrl+C to stop)..."
+	mosquitto_sub -h localhost -t "pico/#" -v
+
+# Help
+help:
+	@echo "MQTT Control Utilities - Makefile"
+	@echo ""
+	@echo "Targets:"
+	@echo "  make              - Build all tools"
+	@echo "  make clean        - Remove binaries"
+	@echo "  make install      - Install to /usr/local/bin"
+	@echo "  make test         - Test tools (requires MQTT broker)"
+	@echo "  make test-broker  - Check if MQTT broker is running"
+	@echo "  make monitor      - Monitor MQTT traffic"
+	@echo ""
+	@echo "Dependencies:"
+	@echo "  sudo apt install libpaho-mqtt-dev mosquitto mosquitto-clients"
+	@echo ""
+	@echo "Usage examples:"
+	@echo "  soyo_mqtt_ctrl localhost 1500       # Set 1500W"
+	@echo "  relay_mqtt_ctrl localhost 3         # Set relay state 3"
+	@echo "  mosquitto_sub -t 'pico/#' -v        # Monitor MQTT"
