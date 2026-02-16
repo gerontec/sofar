@@ -699,8 +699,8 @@ void main_loop(void) {
 
     // 1. Update EBox data
     char cmd[2048];
-    // Fixed: Use "pwr" without "1" argument to get all batteries and proper SOC parsing
-    snprintf(cmd, sizeof(cmd), "%s pwr > %s", config.path_ebox_script, config.path_ebox_data);
+    // Use C binary for battery data (outputs all batteries in parseable format)
+    snprintf(cmd, sizeof(cmd), "/usr/local/bin/ebox pwr > %s", config.path_ebox_data);
 
     char output[256];
     int ret = execute_command(cmd, output, sizeof(output), 10);
