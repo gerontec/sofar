@@ -100,6 +100,7 @@ add_executable(fox2db_pico
 target_link_libraries(fox2db_pico
     pico_stdlib
     pico_cyw43_arch_lwip_threadsafe_background
+    hardware_uart
     hardware_gpio
     pico_lwip_mqtt
 )
