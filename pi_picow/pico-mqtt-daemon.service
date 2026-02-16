@@ -1,0 +1,33 @@
+[Unit]
+Description=Pico MQTT Daemon - MQTT to Serial Bridge
+Documentation=https://github.com/gerontec/sofar
+After=network.target mosquitto.service
+Wants=mosquitto.service
+
+[Service]
+Type=simple
+User=pi
+Group=dialout
+WorkingDirectory=/home/pi
+
+# Environment
+Environment="MQTT_HOST=localhost"
+
+# Main executable
+ExecStart=/usr/local/bin/pico_mqtt_daemon ${MQTT_HOST}
+
+# Restart on failure
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pico-mqtt-daemon
+
+# Security
+PrivateTmp=yes
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
