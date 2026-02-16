@@ -25,6 +25,7 @@
 #define MQTT_PUB_STATE "sofar/state"                // Inverter state (0-7)
 #define MQTT_PUB_STATUS "sofar/status"              // Status messages
 #define MQTT_PUB_CSV "sofar/csv"                    // Full CSV line (backward compat)
+#define MQTT_PUB_JSON "inverter/power_grid_exchange/json"  // JSON format (fox2db compat)
 
 // RS232 UART Configuration for Modbus RTU
 #define UART_MODBUS uart0

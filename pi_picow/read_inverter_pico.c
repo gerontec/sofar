@@ -308,6 +308,27 @@ static void publish_inverter_data(void) {
 
         printf("MQTT: Published CSV: %s\n", payload);
     }
+
+    // Publish JSON (for fox2db compatibility on Pi)
+    // Format: {"ActivePower_PCC_Total": 0.25, "Power_Bat1": -0.15, "SOC_Bat1": 85.5}
+    // Values in kW, not W!
+    if (inverter_data.grid_w_valid && inverter_data.bat_w_valid && inverter_data.soc_bat1_valid) {
+        char json_payload[256];
+
+        // Convert W to kW
+        float grid_kw = inverter_data.grid_w / 1000.0f;
+        float bat_kw = inverter_data.bat_w / 1000.0f;
+        float soc = inverter_data.soc_bat1;  // Use bat1 for fox2db compat
+
+        // Build JSON manually (no cJSON on Pico)
+        snprintf(json_payload, sizeof(json_payload),
+                 "{\"ActivePower_PCC_Total\":%.3f,\"Power_Bat1\":%.3f,\"SOC_Bat1\":%.1f}",
+                 grid_kw, bat_kw, soc);
+
+        mqtt_publish(mqtt_client, MQTT_PUB_JSON, json_payload, strlen(json_payload), 0, 0, NULL, NULL);
+
+        printf("MQTT: Published JSON: %s\n", json_payload);
+    }
 }
 
 // WiFi initialization
