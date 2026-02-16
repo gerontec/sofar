@@ -1,0 +1,57 @@
+# Raspberry Pi Pico W - MQTT + Modbus Controller
+# Requires Pico SDK with WiFi support
+
+cmake_minimum_required(VERSION 3.13)
+
+# Pico SDK setup
+include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
+
+project(pico_w_mqtt_modbus C CXX ASM)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+
+# Initialize Pico SDK
+pico_sdk_init()
+
+# IMPORTANT: Set board to pico_w
+set(PICO_BOARD pico_w CACHE STRING "Board type")
+
+# Main executable
+add_executable(pico_w_mqtt_modbus
+    pico_w_mqtt_modbus.c
+)
+
+# Link libraries
+target_link_libraries(pico_w_mqtt_modbus
+    pico_stdlib          # Standard library
+    pico_multicore       # Dual-core support
+    pico_sync            # Mutex/semaphore
+    pico_cyw43_arch_lwip_threadsafe_background  # WiFi + lwIP
+    hardware_uart        # UART hardware
+    hardware_gpio        # GPIO hardware
+    hardware_timer       # Timer hardware
+    hardware_watchdog    # Watchdog hardware
+    pico_lwip_mqtt       # MQTT client library
+)
+
+# Enable USB serial output
+pico_enable_stdio_usb(pico_w_mqtt_modbus 1)
+pico_enable_stdio_uart(pico_w_mqtt_modbus 0)
+
+# Create UF2 file
+pico_add_extra_outputs(pico_w_mqtt_modbus)
+
+# Compile options
+target_compile_options(pico_w_mqtt_modbus PRIVATE
+    -Wall
+    -Wextra
+    -O2
+)
+
+# WiFi configuration (optional, can also edit in source)
+target_compile_definitions(pico_w_mqtt_modbus PRIVATE
+    # Uncomment and set your WiFi credentials here:
+    # WIFI_SSID="YourSSID"
+    # WIFI_PASSWORD="YourPassword"
+    # MQTT_BROKER_IP="192.168.1.100"
+)
