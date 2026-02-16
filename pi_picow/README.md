@@ -6,13 +6,70 @@
 
 ## 📦 Übersicht
 
-Dieser Ordner enthält **3 verschiedene Implementierungen** für Modbus-basierte Steuerung:
+Dieser Ordner enthält **4 verschiedene Implementierungen** für Modbus-basierte Steuerung:
 
-| Variante | Hardware | Kosten | Standalone | Empfohlen |
-|----------|----------|--------|------------|-----------|
-| **[Pico W WiFi](#pico-w-wifi-mqtt)** | Pico W + 2× MAX485 | ~8€ | ✅ Ja | ⭐⭐⭐⭐⭐ |
-| **[Pico Serial](#pico-serial)** | Pico + 2× MAX485 | ~5€ | ❌ Braucht PC | ⭐⭐⭐ |
-| **[RPi Native](#raspberry-pi-native)** | Raspberry Pi + 2× MAX485 | ~40€ | ✅ Ja | ⭐⭐⭐⭐ |
+| Variante | Hardware | Kosten | Standalone | Features | Empfohlen |
+|----------|----------|--------|------------|----------|-----------|
+| **[Pico W fox2db](#pico-w-fox2db-autonomous)** | Pico W + 2× MAX485 + MAX3232 | ~10€ | ✅ Ja | **Vollständige fox2db Logik!** | ⭐⭐⭐⭐⭐⭐ |
+| **[Pico W WiFi](#pico-w-wifi-mqtt)** | Pico W + 2× MAX485 | ~8€ | ✅ Ja | MQTT Steuerung | ⭐⭐⭐⭐⭐ |
+| **[Pico Serial](#pico-serial)** | Pico + 2× MAX485 | ~5€ | ❌ Braucht PC | Einfach | ⭐⭐⭐ |
+| **[RPi Native](#raspberry-pi-native)** | Raspberry Pi + 2× MAX485 | ~40€ | ✅ Ja | Linux | ⭐⭐⭐⭐ |
+
+---
+
+## 🚀 Pico W fox2db (Autonomous)
+
+**📁 Files:**
+- `pico_w_fox2db.c` - Complete fox2db Logic
+- `pico_w_fox2db_CMakeLists.txt` - Build Config
+- `FOX2DB_PICO.md` - Vollständige Dokumentation
+
+**DIE ULTIMATIVE LÖSUNG: Komplette fox2db Batterie-Steuerung auf einem 8€ Chip!**
+
+**Architektur:**
+```
+MQTT → WiFi → Pico W → fox2db Logic → SOYO/Relay/EBox
+                 ↑
+                 └─ RS232 → EBox (Battery SOC)
+```
+
+**Features:**
+- ✅ **Komplette fox2db Logik** (fb_controller, blocking rules, deep discharge protection)
+- ✅ **Autonome Steuerung** (30s Zyklus, keine externe Steuerung nötig)
+- ✅ WiFi + MQTT (Daten von Inverter)
+- ✅ EBox RS232 (Battery SOC Überwachung)
+- ✅ SOYO + Relay Modbus Steuerung
+- ✅ Dual-Core (Core 0: Logik, Core 1: Relay)
+- ✅ **Ersetzt komplett: Raspberry Pi + Python + Scripts!**
+
+**Hardware:**
+```
+Pico W GPIO 0/1 + GPIO 2 → MAX485 #1 → SOYO (RS485)
+Pico W GPIO 4/5 + GPIO 6 → MAX485 #2 → Relay (RS485)
+Pico W GPIO 8/9          → MAX3232  → EBox (RS232)
+```
+
+**Setup:**
+1. Edit WiFi + MQTT in `pico_w_fox2db.c` (Zeile 52-54)
+2. `export PICO_SDK_PATH=$HOME/pico-sdk`
+3. `mkdir build && cd build`
+4. `cmake -f pico_w_fox2db_CMakeLists.txt ..`
+5. `make -j4`
+6. Flash `.uf2` to Pico W
+7. **Fertig!** Pico W steuert jetzt autonom die Batterie!
+
+**MQTT Topics:**
+- **Subscribe:** `inverter/power_grid_exchange/json` (PCC, Bat1, SOC)
+- **Publish:** `pico/status` (Complete status JSON)
+
+**Vorteile vs Raspberry Pi:**
+- 💰 **Kosten:** 8€ statt 40€
+- ⚡ **Stromverbrauch:** 0.5W statt 5W
+- 🚀 **Boot Zeit:** 1s statt 30s
+- 🔧 **Wartung:** Keine SD-Karte, kein Linux, keine Scripts!
+- ✅ **Zuverlässigkeit:** Minimale Fehlerquellen
+
+**📖 [Vollständige Anleitung →](FOX2DB_PICO.md)**
 
 ---
 
@@ -183,11 +240,20 @@ relay_ctrl 3                       # Relay state 3
 
 ## 📁 File Übersicht
 
+### Pico W fox2db (Autonomous Battery Controller)
+```
+pico_w_fox2db.c                      - Complete fox2db logic
+pico_w_fox2db_CMakeLists.txt         - Build config
+FOX2DB_PICO.md                       - Documentation
+EBOX_EXTENSION.md                    - EBox integration guide
+```
+
 ### Pico W (WiFi + MQTT)
 ```
 pico_w_mqtt_modbus.c                 - Main code
 pico_w_mqtt_modbus_CMakeLists.txt    - Build config
-PICO_W_README.md                      - Documentation
+pico_w_ebox_mqtt.c                   - With EBox support
+PICO_W_README.md                     - Documentation
 ```
 
 ### Pico (Serial)
@@ -301,6 +367,8 @@ mosquitto_pub -t "pico/soyo/watts" -m "1500"
 
 | Document | Description |
 |----------|-------------|
+| **[FOX2DB_PICO.md](FOX2DB_PICO.md)** | ⭐ Pico W fox2db Autonomous Controller (EMPFOHLEN!) |
+| **[EBOX_EXTENSION.md](EBOX_EXTENSION.md)** | EBox RS232 Integration Guide |
 | **[PICO_W_README.md](PICO_W_README.md)** | Pico W WiFi + MQTT Guide |
 | **[PICO_MODBUS_README.md](PICO_MODBUS_README.md)** | Pico Serial Guide |
 | **[PICO_MEMORY_MAP.md](PICO_MEMORY_MAP.md)** | Memory Layout Reference |
