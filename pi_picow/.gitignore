@@ -1,0 +1,29 @@
+# Build directory
+build/
+cmake-build-*/
+
+# WiFi credentials (DO NOT COMMIT!)
+wifi_config.h
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Compiled files
+*.o
+*.elf
+*.bin
+*.hex
+*.uf2
+
+# CMake files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Pico SDK
+pico-sdk/

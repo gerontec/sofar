@@ -147,12 +147,12 @@ static void init_config(void) {
     config.mqtt_timeout = 43;
 
     // Path defaults
-    strncpy(config.path_deep_discharge, "/run/user/1000/deep_discharge_protection_active.txt", sizeof(config.path_deep_discharge) - 1);
-    strncpy(config.path_log, "/run/user/1000/fox2db.log", sizeof(config.path_log) - 1);
-    strncpy(config.path_relay_state, "/run/user/1000/current_relay_state.txt", sizeof(config.path_relay_state) - 1);
-    strncpy(config.path_last_change, "/run/user/1000/last_relay_change.txt", sizeof(config.path_last_change) - 1);
-    strncpy(config.path_last_excess, "/run/user/1000/last_excess.txt", sizeof(config.path_last_excess) - 1);
-    strncpy(config.path_ebox_data, "/run/user/1000/ebox15k.txt", sizeof(config.path_ebox_data) - 1);
+    strncpy(config.path_deep_discharge, "/tmp/deep_discharge_protection_active.txt", sizeof(config.path_deep_discharge) - 1);
+    strncpy(config.path_log, "/tmp/fox2db.log", sizeof(config.path_log) - 1);
+    strncpy(config.path_relay_state, "/tmp/current_relay_state.txt", sizeof(config.path_relay_state) - 1);
+    strncpy(config.path_last_change, "/tmp/last_relay_change.txt", sizeof(config.path_last_change) - 1);
+    strncpy(config.path_last_excess, "/tmp/last_excess.txt", sizeof(config.path_last_excess) - 1);
+    strncpy(config.path_ebox_data, "/tmp/ebox15k.txt", sizeof(config.path_ebox_data) - 1);
     strncpy(config.path_inverter_csv, "/tmp/inverter.csv", sizeof(config.path_inverter_csv) - 1);
     strncpy(config.path_ebox_script, "/home/pi/python/ebox1arg.py", sizeof(config.path_ebox_script) - 1);
     strncpy(config.path_ebyte_script, "/home/pi/python/ebyteserrequest.py", sizeof(config.path_ebyte_script) - 1);
@@ -373,14 +373,14 @@ int read_ebox(double *current_out, double *min_soc_out) {
     if (!file_exists(config.path_ebox_data)) {
         log_msg("EBox data file not found: %s", config.path_ebox_data);
         *current_out = 0.0;
-        *min_soc_out = 0.0;
+        *min_soc_out = -1.0;  // -1 = unbekannt, 0 wuerde faelschlich Tiefentladeschutz ausloesen
         return -1;
     }
 
     FILE *fp = fopen(config.path_ebox_data, "r");
     if (!fp) {
         *current_out = 0.0;
-        *min_soc_out = 0.0;
+        *min_soc_out = -1.0;
         return -1;
     }
 
@@ -400,11 +400,11 @@ int read_ebox(double *current_out, double *min_soc_out) {
 
         // Check if starts with digit (battery line)
         if (*p >= '1' && *p <= '3') {
-            char *fields[10];
+            char *fields[20];
             int nfields = 0;
             char *token = strtok(p, " \t\r\n'");
 
-            while (token && nfields < 10) {
+            while (token && nfields < 20) {
                 fields[nfields++] = token;
                 token = strtok(NULL, " \t\r\n'");
             }
@@ -430,9 +430,9 @@ int read_ebox(double *current_out, double *min_soc_out) {
     fclose(fp);
 
     *current_out = total_current / 1000.0;  // mA -> A
-    *min_soc_out = (soc_count > 0) ? min_soc : 0.0;
+    *min_soc_out = (soc_count > 0) ? min_soc : -1.0;  // -1 = kein SOC-Wert parsebar
 
-    return 0;
+    return (soc_count > 0) ? 0 : -1;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -496,6 +496,14 @@ void fb_controller(double soc, double pcc, double bat_cur, double bat1,
 
     result->excess = excess;
     result->trace[0] = '\0';
+
+    // SOC unbekannt (EBox-Lesefehler) - aktuellen Zustand halten, kein Eingriff
+    if (soc < 0.0) {
+        result->best_state = relay_st;
+        snprintf(result->trace, sizeof(result->trace),
+                "EBOX_SOC_UNKNOWN_HOLD (prot=%d)", prot);
+        return;
+    }
 
     // EMERGENCY CHARGE with target - prevents ping-pong
     if (prot) {
@@ -808,16 +816,19 @@ void main_loop(void) {
     write_file_value(config.path_last_change, "%d", new_stable);
 
     // Deep discharge protection with improved hysteresis
+    // Nur aktualisieren wenn SOC bekannt (>= 0); bei Lesefehler (soc=-1) unveraendert lassen
     int old_prot = prot;
-    if (soc < config.deep_discharge_lower) {
+    if (soc < 0.0) {
+        log_msg("WARNING: EBox SOC unbekannt - Tiefentladeschutz-Status unveraendert (prot=%d)", prot);
+    } else if (soc < config.deep_discharge_lower) {
         if (!old_prot) {
-            log_msg("⚠️  DEEP_DISCHARGE_PROTECTION ACTIVATED at %.1f%% (threshold: %d%%)",
+            log_msg("DEEP_DISCHARGE_PROTECTION ACTIVATED at %.1f%% (threshold: %d%%)",
                     soc, config.deep_discharge_lower);
         }
         write_file_value(config.path_deep_discharge, "1");
     } else if (soc >= config.deep_discharge_upper) {
         if (old_prot) {
-            log_msg("✓ DEEP_DISCHARGE_PROTECTION DEACTIVATED at %.1f%% (threshold: %d%%)",
+            log_msg("DEEP_DISCHARGE_PROTECTION DEACTIVATED at %.1f%% (threshold: %d%%)",
                     soc, config.deep_discharge_upper);
         }
         write_file_value(config.path_deep_discharge, "0");
