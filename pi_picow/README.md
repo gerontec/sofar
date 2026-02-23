@@ -1,256 +1,428 @@
-# E-Box Battery Monitor für Raspberry Pi Pico W
+# Pi Pico / Pico W - Modbus MQTT Controller
 
-Liest Batteriedaten von einer E-Box über RS232 (UART) und sendet den SOC (State of Charge) über MQTT an einen Broker.
-
-## 🔧 Hardware-Anforderungen
-
-- **Raspberry Pi Pico W** (mit WiFi)
-- **RS232 zu TTL Konverter Modul** (z.B. MAX3232)
-- **E-Box** mit serieller Schnittstelle
-- **WiFi Netzwerk**
-- **MQTT Broker** (z.B. Mosquitto auf 192.168.178.218)
-
-## 📋 Verkabelung
-
-### RS232 Modul an Pico W
-
-| RS232 Modul | Pico W Pin | GPIO |
-|-------------|------------|------|
-| TX          | Pin 2      | GP1  |
-| RX          | Pin 1      | GP0  |
-| GND         | Pin 3, 8, 13, 18, 23, 28, 33, 38 | GND  |
-| VCC (3.3V)  | Pin 36     | 3V3  |
-
-### E-Box an RS232 Modul
-
-Verbinden Sie die serielle Schnittstelle der E-Box mit dem RS232 Modul:
-- E-Box TX → RS232 RX
-- E-Box RX → RS232 TX
-- E-Box GND → RS232 GND
-
-## 🛠️ Software-Anforderungen
-
-### Pico SDK Installation
-
-```bash
-# Debian/Ubuntu/Raspberry Pi OS
-sudo apt update
-sudo apt install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi build-essential
-
-# Pico SDK herunterladen
-cd ~
-git clone https://github.com/raspberrypi/pico-sdk.git
-cd pico-sdk
-git submodule update --init
-
-# Umgebungsvariable setzen
-export PICO_SDK_PATH=~/pico-sdk
-echo 'export PICO_SDK_PATH=~/pico-sdk' >> ~/.bashrc
-```
-
-## 📝 Konfiguration
-
-1. **WiFi und MQTT konfigurieren:**
-
-Bearbeiten Sie `wifi_config.h` und tragen Sie Ihre Daten ein:
-
-```c
-#define WIFI_SSID "IhrWiFiName"
-#define WIFI_PASSWORD "IhrWiFiPasswort"
-
-#define MQTT_BROKER_IP "192.168.178.218"
-#define MQTT_BROKER_PORT 1883
-```
-
-2. **UART Pins anpassen (optional):**
-
-Falls Sie andere GPIO Pins verwenden möchten, ändern Sie in `wifi_config.h`:
-
-```c
-#define UART_TX_PIN 0    // GPIO für TX
-#define UART_RX_PIN 1    // GPIO für RX
-```
-
-## 🏗️ Kompilieren
-
-```bash
-cd pi_picow
-
-# Build-Verzeichnis erstellen
-mkdir build
-cd build
-
-# CMake konfigurieren
-cmake ..
-
-# Kompilieren
-make
-
-# Ergebnis: build/ebox_pico.uf2
-```
-
-## 📥 Flashen auf Pico W
-
-1. **BOOTSEL Modus aktivieren:**
-   - Halten Sie die **BOOTSEL** Taste auf dem Pico W gedrückt
-   - Verbinden Sie das USB-Kabel mit dem Computer
-   - Lassen Sie BOOTSEL los
-   - Der Pico W erscheint als USB-Laufwerk **RPI-RP2**
-
-2. **Firmware kopieren:**
-   ```bash
-   cp build/ebox_pico.uf2 /media/$USER/RPI-RP2/
-   ```
-
-   Oder per Drag & Drop die Datei `ebox_pico.uf2` auf das RPI-RP2 Laufwerk ziehen.
-
-3. **Der Pico W startet automatisch** nach dem Kopieren neu.
-
-## 🖥️ Debugging / Serieller Monitor
-
-Um die Debug-Ausgaben zu sehen, verbinden Sie sich mit dem USB Serial Port:
-
-```bash
-# Linux
-sudo apt install minicom
-minicom -D /dev/ttyACM0 -b 115200
-
-# Oder mit screen
-screen /dev/ttyACM0 115200
-
-# macOS
-screen /dev/cu.usbmodem* 115200
-
-# Windows
-# Verwenden Sie PuTTY oder einen anderen Serial Terminal
-```
-
-## 📡 MQTT Topics
-
-Die Software publiziert auf folgende MQTT Topics:
-
-| Topic | Beschreibung | Beispiel |
-|-------|--------------|----------|
-| `ebox/soc` | State of Charge in % | `85.5` |
-| `ebox/voltage` | Spannung in mV | `52400.0` |
-| `ebox/current` | Strom in mA | `1250.0` |
-| `ebox/status` | Statusmeldungen | `connected` |
-
-### MQTT testen
-
-```bash
-# Subscribe auf alle E-Box Topics
-mosquitto_sub -h 192.168.178.218 -t "ebox/#" -v
-
-# Oder nur SOC
-mosquitto_sub -h 192.168.178.218 -t "ebox/soc" -v
-```
-
-## 🔄 Funktionsweise
-
-1. **Beim Start:**
-   - Initialisierung von UART (RS232)
-   - Verbindung zum WiFi
-   - Verbindung zum MQTT Broker
-
-2. **Hauptschleife (alle 60 Sekunden):**
-   - Sendet `bat` Kommando an E-Box via UART
-   - Liest Antwort Zeile für Zeile
-   - Parst Batteriedaten (Spannung, Strom, SOC)
-   - Sendet Daten via MQTT
-
-3. **LED Blink-Muster:**
-   - **Schnell (250ms):** WiFi verbindet
-   - **Langsam (1000ms):** Alles OK, verbunden
-   - **Sehr schnell (100ms):** Fehler (MQTT nicht verbunden)
-
-## 🐛 Troubleshooting
-
-### Pico W verbindet sich nicht mit WiFi
-
-- Überprüfen Sie SSID und Passwort in `wifi_config.h`
-- Stellen Sie sicher, dass 2.4 GHz WiFi verfügbar ist (5 GHz wird nicht unterstützt)
-- Prüfen Sie Debug-Ausgabe über USB Serial
-
-### Keine Daten von E-Box
-
-- Prüfen Sie die Verkabelung (RX/TX vertauscht?)
-- Testen Sie die Baudrate (Standard: 115200)
-- Prüfen Sie ob RS232 Modul mit Strom versorgt wird
-- Sehen Sie sich UART Debug-Ausgaben an
-
-### MQTT Verbindung fehlgeschlagen
-
-- Prüfen Sie ob MQTT Broker erreichbar ist:
-  ```bash
-  ping 192.168.178.218
-  ```
-- Testen Sie MQTT Broker:
-  ```bash
-  mosquitto_pub -h 192.168.178.218 -t "test" -m "hello"
-  ```
-- Firewall-Einstellungen prüfen (Port 1883)
-
-### Kompilierungsfehler
-
-- Stellen Sie sicher, dass `PICO_SDK_PATH` gesetzt ist:
-  ```bash
-  echo $PICO_SDK_PATH
-  ```
-- Prüfen Sie ob alle Submodule geladen sind:
-  ```bash
-  cd $PICO_SDK_PATH
-  git submodule update --init
-  ```
-
-## 📊 Leistungsdaten
-
-- **Leseintervall:** 60 Sekunden (konfigurierbar)
-- **Timeout E-Box:** 4 Sekunden
-- **Retry bei Timeout:** 3 Versuche
-- **Stromverbrauch:** ~50-100mA (WiFi aktiv)
-
-## 🔐 Anpassungen
-
-### Leseintervall ändern
-
-In `ebox_pico.c` Zeile ändern:
-
-```c
-const uint32_t read_interval_ms = 60000;  // 60 Sekunden
-```
-
-### E-Box Kommando ändern
-
-In `wifi_config.h`:
-
-```c
-#define EBOX_COMMAND "bat"  // oder "bat 1", "pwr", etc.
-```
-
-### Weitere MQTT Topics hinzufügen
-
-Fügen Sie in `ebox_pico.c` in der Funktion `publish_mqtt()` hinzu:
-
-```c
-snprintf(payload, sizeof(payload), "%.1f", data->temperature);
-mqtt_publish(mqtt_client, "ebox/temperature", payload, strlen(payload),
-            0, 0, mqtt_pub_request_cb, NULL);
-```
-
-## 📄 Lizenz
-
-Gleiche Lizenz wie das ursprüngliche ebox.c Projekt.
-
-## ℹ️ Version
-
-**v1.0.0-pico** - Raspberry Pi Pico W Port von ebox.c
+**Standalone und Raspberry Pi Modbus/MQTT Lösungen für SOYO Inverter und Relay Boards**
 
 ---
 
-## 📚 Weitere Ressourcen
+## 📦 Übersicht
 
-- [Pico SDK Dokumentation](https://www.raspberrypi.com/documentation/microcontrollers/c_sdk.html)
-- [Pico W Datasheet](https://datasheets.raspberrypi.com/picow/pico-w-datasheet.pdf)
-- [MQTT.org](https://mqtt.org/)
-- [Original ebox.c](../ebox.c)
+Dieser Ordner enthält **4 verschiedene Implementierungen** für Modbus-basierte Steuerung:
+
+| Variante | Hardware | Kosten | Standalone | Features | Empfohlen |
+|----------|----------|--------|------------|----------|-----------|
+| **[Pico W fox2db](#pico-w-fox2db-autonomous)** | Pico W + 2× MAX485 + MAX3232 | ~10€ | ✅ Ja | **Vollständige fox2db Logik!** | ⭐⭐⭐⭐⭐⭐ |
+| **[Pico W WiFi](#pico-w-wifi-mqtt)** | Pico W + 2× MAX485 | ~8€ | ✅ Ja | MQTT Steuerung | ⭐⭐⭐⭐⭐ |
+| **[Pico Serial](#pico-serial)** | Pico + 2× MAX485 | ~5€ | ❌ Braucht PC | Einfach | ⭐⭐⭐ |
+| **[RPi Native](#raspberry-pi-native)** | Raspberry Pi + 2× MAX485 | ~40€ | ✅ Ja | Linux | ⭐⭐⭐⭐ |
+
+---
+
+## 🚀 Pico W fox2db (Autonomous)
+
+**📁 Files:**
+- `pico_w_fox2db.c` - Complete fox2db Logic
+- `pico_w_fox2db_CMakeLists.txt` - Build Config
+- `FOX2DB_PICO.md` - Vollständige Dokumentation
+
+**DIE ULTIMATIVE LÖSUNG: Komplette fox2db Batterie-Steuerung auf einem 8€ Chip!**
+
+**Architektur:**
+```
+MQTT → WiFi → Pico W → fox2db Logic → SOYO/Relay/EBox
+                 ↑
+                 └─ RS232 → EBox (Battery SOC)
+```
+
+**Features:**
+- ✅ **Komplette fox2db Logik** (fb_controller, blocking rules, deep discharge protection)
+- ✅ **Autonome Steuerung** (30s Zyklus, keine externe Steuerung nötig)
+- ✅ WiFi + MQTT (Daten von Inverter)
+- ✅ EBox RS232 (Battery SOC Überwachung)
+- ✅ SOYO + Relay Modbus Steuerung
+- ✅ Dual-Core (Core 0: Logik, Core 1: Relay)
+- ✅ **Ersetzt komplett: Raspberry Pi + Python + Scripts!**
+
+**Hardware:**
+```
+Pico W GPIO 0/1 + GPIO 2 → MAX485 #1 → SOYO (RS485)
+Pico W GPIO 4/5 + GPIO 6 → MAX485 #2 → Relay (RS485)
+Pico W GPIO 8/9          → MAX3232  → EBox (RS232)
+```
+
+**Setup:**
+1. Edit WiFi + MQTT in `pico_w_fox2db.c` (Zeile 52-54)
+2. `export PICO_SDK_PATH=$HOME/pico-sdk`
+3. `mkdir build && cd build`
+4. `cmake -f pico_w_fox2db_CMakeLists.txt ..`
+5. `make -j4`
+6. Flash `.uf2` to Pico W
+7. **Fertig!** Pico W steuert jetzt autonom die Batterie!
+
+**MQTT Topics:**
+- **Subscribe:** `inverter/power_grid_exchange/json` (PCC, Bat1, SOC)
+- **Publish:** `pico/status` (Complete status JSON)
+
+**Vorteile vs Raspberry Pi:**
+- 💰 **Kosten:** 8€ statt 40€
+- ⚡ **Stromverbrauch:** 0.5W statt 5W
+- 🚀 **Boot Zeit:** 1s statt 30s
+- 🔧 **Wartung:** Keine SD-Karte, kein Linux, keine Scripts!
+- ✅ **Zuverlässigkeit:** Minimale Fehlerquellen
+
+**📖 [Vollständige Anleitung →](FOX2DB_PICO.md)**
+
+---
+
+## 🎯 Pico W WiFi + MQTT
+
+**📁 Files:**
+- `pico_w_mqtt_modbus.c` - Main Code
+- `pico_w_mqtt_modbus_CMakeLists.txt` - Build Config
+- `PICO_W_README.md` - Vollständige Dokumentation
+
+**Architektur:**
+```
+MQTT Broker → WiFi → Pico W → MAX485 → SOYO/Relay
+```
+
+**Features:**
+- ✅ WiFi onboard (CYW43)
+- ✅ MQTT Client (subscribe/publish)
+- ✅ Dual-Core (SOYO 3s + Relay event)
+- ✅ Vollständig standalone!
+
+**Hardware:**
+```
+Pico W GPIO 0/1 + GPIO 2 → MAX485 #1 → SOYO (RS485)
+Pico W GPIO 4/5 + GPIO 6 → MAX485 #2 → Relay (RS485)
+```
+
+**Setup:**
+1. Edit WiFi credentials in `pico_w_mqtt_modbus.c`
+2. `cmake .. && make`
+3. Flash `.uf2` to Pico W
+4. Send MQTT: `mosquitto_pub -t "pico/soyo/watts" -m "1500"`
+
+**📖 [Vollständige Anleitung →](PICO_W_README.md)**
+
+---
+
+## 🔌 Pico Serial
+
+**📁 Files:**
+- `pico_modbus_dual.c` - Main Code
+- `pico_modbus_dual_CMakeLists.txt` - Build Config
+- `PICO_MODBUS_README.md` - Dokumentation
+
+**Architektur:**
+```
+USB Serial → Pico → MAX485 → SOYO/Relay
+```
+
+**Features:**
+- ✅ Dual-Core (SOYO 3s + Relay event)
+- ✅ USB Serial Console
+- ✅ Simple Commands (`s 1500`, `r 3`, `q`)
+- ❌ Braucht PC/RPi für Serial Connection
+
+**Hardware:**
+```
+Pico GPIO 0/1 + GPIO 2 → MAX485 #1 → SOYO
+Pico GPIO 4/5 + GPIO 6 → MAX485 #2 → Relay
+USB Cable → PC/RPi
+```
+
+**Setup:**
+1. `cmake .. && make`
+2. Flash `.uf2`
+3. `screen /dev/ttyACM0 115200`
+4. Commands: `s 1500`, `r 3`, `q`
+
+**📖 [Vollständige Anleitung →](PICO_MODBUS_README.md)**
+
+---
+
+## 🖥️ Raspberry Pi Native
+
+**📁 Files:**
+- `rpi_modbus_mqtt_daemon.c` - Daemon Code
+- `pico_mqtt_daemon.c` - MQTT-zu-Serial Bridge (optional)
+- `Makefile.mqtt_ctrl` - Build System
+
+**Architektur:**
+
+**Option A: Direct (empfohlen):**
+```
+MQTT → RPi Daemon → GPIO UARTs → MAX485 → SOYO/Relay
+```
+
+**Option B: Mit Pico als Bridge:**
+```
+MQTT → RPi Daemon → USB Serial → Pico → MAX485 → SOYO/Relay
+```
+
+**Features:**
+- ✅ Linux (einfaches Debugging)
+- ✅ MQTT Client
+- ✅ Systemd Service
+- ✅ Auto-restart
+
+**Hardware (Option A):**
+```
+RPi GPIO 14/15 (UART0) + GPIO 2 → MAX485 #1 → SOYO
+RPi GPIO 0/1 (UART2) + GPIO 3 → MAX485 #2 → Relay
+```
+
+**Setup:**
+```bash
+make -f Makefile.mqtt_ctrl
+sudo make -f Makefile.mqtt_ctrl install
+sudo systemctl start pico-mqtt-daemon
+```
+
+**📖 [Daemon Anleitung →](DAEMON_README.md)**
+
+---
+
+## 🛠️ MQTT Control Tools
+
+**Command-line Tools für alle Varianten:**
+
+**📁 Files:**
+- `soyo_mqtt_ctrl.c` - SOYO via MQTT
+- `relay_mqtt_ctrl.c` - Relay via MQTT
+- `soyo_ctrl.c` - SOYO via Serial
+- `relay_ctrl.c` - Relay via Serial
+
+**Build:**
+```bash
+# MQTT Tools (benötigt libpaho-mqtt-dev)
+make -f Makefile.mqtt_ctrl
+
+# Serial Tools (keine Dependencies)
+make -f Makefile.pico_ctrl
+```
+
+**Usage:**
+```bash
+# MQTT
+soyo_mqtt_ctrl localhost 1500      # Set 1500W
+relay_mqtt_ctrl localhost 3        # Relay state 3
+
+# Serial (direkt an Pico)
+soyo_ctrl 1500                     # Set 1500W
+relay_ctrl 3                       # Relay state 3
+```
+
+**📖 [MQTT Tools Doku →](MQTT_CTRL_README.md)**
+
+---
+
+## 📊 Vergleich
+
+| Feature | Pico W | Pico Serial | RPi Native |
+|---------|--------|-------------|------------|
+| **Kosten** | ~8€ | ~5€ | ~40€ |
+| **Power** | 0.5W | 0.5W | 5W |
+| **WiFi** | ✅ Onboard | ❌ | ✅ |
+| **Standalone** | ✅ | ❌ | ✅ |
+| **Setup** | Medium | Easy | Easy |
+| **Debugging** | Medium | Easy | Very Easy |
+| **MQTT** | ✅ Direct | ❌ | ✅ |
+| **USB Serial** | ✅ | ✅ | ❌ |
+
+**Empfehlung:**
+- **Production:** Pico W (standalone, günstig)
+- **Development:** Pico Serial (einfaches Debugging)
+- **Complex Setup:** RPi Native (mehr Power, Linux)
+
+---
+
+## 📁 File Übersicht
+
+### Pico W fox2db (Autonomous Battery Controller)
+```
+pico_w_fox2db.c                      - Complete fox2db logic
+pico_w_fox2db_CMakeLists.txt         - Build config
+FOX2DB_PICO.md                       - Documentation
+EBOX_EXTENSION.md                    - EBox integration guide
+```
+
+### Pico W (WiFi + MQTT)
+```
+pico_w_mqtt_modbus.c                 - Main code
+pico_w_mqtt_modbus_CMakeLists.txt    - Build config
+pico_w_ebox_mqtt.c                   - With EBox support
+PICO_W_README.md                     - Documentation
+```
+
+### Pico (Serial)
+```
+pico_modbus_dual.c                    - Main code
+pico_modbus_dual_CMakeLists.txt       - Build config
+PICO_MODBUS_README.md                 - Documentation
+PICO_MEMORY_MAP.md                    - Memory layout
+```
+
+### Raspberry Pi
+```
+rpi_modbus_mqtt_daemon.c              - Direct GPIO version
+pico_mqtt_daemon.c                    - Serial bridge version
+pico-mqtt-daemon.service              - Systemd service
+DAEMON_README.md                      - Daemon documentation
+```
+
+### Control Tools
+```
+soyo_mqtt_ctrl.c                      - SOYO MQTT control
+relay_mqtt_ctrl.c                     - Relay MQTT control
+soyo_ctrl.c                           - SOYO serial control
+relay_ctrl.c                          - Relay serial control
+MQTT_CTRL_README.md                   - Tools documentation
+```
+
+### Build Systems
+```
+Makefile.mqtt_ctrl                    - MQTT tools + daemon
+Makefile.pico_ctrl                    - Serial tools
+```
+
+---
+
+## 🚀 Quick Start
+
+### 1. Pico W (empfohlen)
+
+```bash
+# Edit WiFi credentials
+vim pico_w_mqtt_modbus.c  # Line 55-57
+
+# Build
+export PICO_SDK_PATH=$HOME/pico-sdk
+mkdir build && cd build
+cmake -f pico_w_mqtt_modbus_CMakeLists.txt ..
+make -j4
+
+# Flash
+# Hold BOOTSEL → Copy pico_w_mqtt_modbus.uf2 → Done!
+
+# Use
+mosquitto_pub -t "pico/soyo/watts" -m "1500"
+```
+
+### 2. Pico Serial
+
+```bash
+# Build
+mkdir build && cd build
+cmake -f pico_modbus_dual_CMakeLists.txt ..
+make -j4
+
+# Flash & Connect
+# Hold BOOTSEL → Copy pico_modbus_dual.uf2
+screen /dev/ttyACM0 115200
+
+# Use
+> s 1500
+> r 3
+> q
+```
+
+### 3. Raspberry Pi
+
+```bash
+# Install
+sudo apt install libpaho-mqtt-dev mosquitto
+make -f Makefile.mqtt_ctrl
+sudo make -f Makefile.mqtt_ctrl install-daemon
+
+# Start
+sudo systemctl start pico-mqtt-daemon
+
+# Use
+mosquitto_pub -t "pico/soyo/watts" -m "1500"
+```
+
+---
+
+## 🔧 Hardware Requirements
+
+### All Variants Need:
+- **2× MAX485 Module** (~1€ each)
+  - Converts TTL UART ↔ RS485
+  - Pins: VCC, GND, DI, RO, DE, RE, A, B
+
+### Variant-Specific:
+- **Pico W:** Raspberry Pi Pico W (~6€)
+- **Pico:** Raspberry Pi Pico (~4€)
+- **RPi:** Raspberry Pi 4/5 (~40€)
+
+### RS485 Devices:
+- **SOYO Inverter** (4800 baud, Modbus RTU)
+- **Relay Board** (9600 baud, Modbus RTU)
+
+---
+
+## 📖 Documentation Index
+
+| Document | Description |
+|----------|-------------|
+| **[FOX2DB_PICO.md](FOX2DB_PICO.md)** | ⭐ Pico W fox2db Autonomous Controller (EMPFOHLEN!) |
+| **[EBOX_EXTENSION.md](EBOX_EXTENSION.md)** | EBox RS232 Integration Guide |
+| **[PICO_W_README.md](PICO_W_README.md)** | Pico W WiFi + MQTT Guide |
+| **[PICO_MODBUS_README.md](PICO_MODBUS_README.md)** | Pico Serial Guide |
+| **[PICO_MEMORY_MAP.md](PICO_MEMORY_MAP.md)** | Memory Layout Reference |
+| **[DAEMON_README.md](DAEMON_README.md)** | RPi Daemon Guide |
+| **[MQTT_CTRL_README.md](MQTT_CTRL_README.md)** | MQTT Tools Guide |
+
+---
+
+## 🤝 Integration
+
+### Mit fox2db.c / soyo1min.c
+
+**Via MQTT:**
+```c
+char cmd[256];
+snprintf(cmd, sizeof(cmd),
+         "mosquitto_pub -h localhost -t pico/soyo/watts -m %d",
+         target_watts);
+system(cmd);
+```
+
+**Via Serial (wenn Pico verbunden):**
+```c
+FILE *fp = fopen("/dev/ttyACM0", "w");
+fprintf(fp, "s %d\n", target_watts);
+fclose(fp);
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### Pico W WiFi failed
+- ✓ SSID/Password korrekt?
+- ✓ 2.4GHz WiFi? (Pico W unterstützt kein 5GHz!)
+- ✓ In Reichweite?
+
+### MQTT connection failed
+- ✓ Broker läuft? (`sudo systemctl status mosquitto`)
+- ✓ IP korrekt?
+- ✓ Port 1883 offen?
+
+### RS485 timeout
+- ✓ MAX485 Verkabelung korrekt?
+- ✓ A/B vertauscht?
+- ✓ DE/RE connected?
+- ✓ Device eingeschaltet?
+
+---
+
+## 📜 License
+
+Same as parent project.
+
+---
+
+**Built for production solar control systems.** 🔋☀️
