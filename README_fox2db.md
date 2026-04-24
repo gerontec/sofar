@@ -215,18 +215,12 @@ der die Einspeisung auf den zulässigen Grenzwert begrenzt.
 
 - Auslöseschwelle: `pcc > 20000 W` (positiver PCC = Einspeisung ins Netz)
 - Puls-Dauer: 3 Sekunden (konfigurierbar in `ebyte_ctrl.py`)
-- Lockfile `/tmp/ebyte_r4_pulse.lock` verhindert parallele Auslösungen
 
 **Relais 1–3 bleiben dabei vollständig unverändert.**
 Der Puls verwendet Modbus FC05 (`write_coil`, einzelne Adresse 3) — die Coils 0–2
 (Relais 1–3) werden physisch nicht angetastet. Umgekehrt hat ein State-Wechsel
 durch fox2db (FC15, `write_coils` auf Adressen 0–2) keinen Einfluss auf Relais 4.
 Beide Kanäle arbeiten vollständig unabhängig voneinander.
-
-### Puls-Schutz (Lockfile)
-
-`/tmp/ebyte_r4_pulse.lock` verhindert parallele Pulse.
-Das Script prüft anhand der PID ob ein Puls noch läuft und überspringt den neuen Aufruf falls ja.
 
 ---
 

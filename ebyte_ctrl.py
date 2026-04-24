@@ -21,7 +21,6 @@ BAUDRATE    = 9600
 SLAVE_ID    = 1
 COIL_START  = 0          # Coil 0=R1, 1=R2, 2=R3, 3=R4
 
-LOCKFILE_R4 = "/tmp/ebyte_r4_pulse.lock"
 STATE_FILE  = "/run/user/1000/current_relay_state.txt"
 
 STATE_TO_BITS = {
@@ -98,30 +97,9 @@ def _r4_write(on: bool):
         sys.exit(1)
 
 def cmd_r4_pulse(seconds: int):
-    # Exklusives Lockfile — kein paralleler Puls
-    try:
-        fd = os.open(LOCKFILE_R4, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.write(fd, str(os.getpid()).encode())
-        os.close(fd)
-    except FileExistsError:
-        try:
-            pid = int(open(LOCKFILE_R4).read().strip())
-            os.kill(pid, 0)          # Wirft OSError wenn Prozess tot
-            log(f"Puls läuft bereits (PID {pid}) — überspringe")
-            sys.exit(0)
-        except (ValueError, ProcessLookupError, OSError):
-            os.unlink(LOCKFILE_R4)   # Veraltetes Lockfile
-            cmd_r4_pulse(seconds)
-            return
-    try:
-        _r4_write(True)
-        time.sleep(seconds)
-        _r4_write(False)
-    finally:
-        try:
-            os.unlink(LOCKFILE_R4)
-        except OSError:
-            pass
+    _r4_write(True)
+    time.sleep(seconds)
+    _r4_write(False)
 
 # ── Alle aus ─────────────────────────────────────────────────────────────────
 

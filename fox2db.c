@@ -298,7 +298,6 @@ int execute_command(const char *cmd, char *output, size_t output_size, int timeo
 
 // Schaltet Relais 4 für 3 s ein/aus über ebyte_ctrl.py — kein Neubau nötig
 // wenn Puls-Dauer oder Parameter geändert werden sollen.
-// Lockfile-Prüfung liegt im Python-Script (ebyte_ctrl.py r4 pulse 3).
 static void trigger_relay4_pulse(void) {
     pid_t pid = fork();
     if (pid < 0) {
