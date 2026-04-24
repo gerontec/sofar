@@ -202,7 +202,20 @@ python3 ebyte_ctrl.py all off
 | R1 | 0 | State-Bits (fox2db) |
 | R2 | 1 | State-Bits (fox2db) |
 | R3 | 2 | State-Bits (fox2db) |
-| R4 | 3 | PCC-Einspeisung > 20 kW (Puls 3 s) |
+| R4 | 3 | PCC-Einspeisung > 20 kW → gesetzliche Abregelung (Puls 3 s) |
+
+### Relais 4 — Gesetzliche Abregelungspflicht (§ 9 EEG)
+
+Relais 4 ist mit dem **Relay-Kontakt des Wechselrichters** verdrahtet und implementiert
+die gesetzliche Pflicht zur Einspeisebegrenzung auf 70 % der Nennleistung (§ 9 EEG).
+
+Sobald die Einspeisung am PCC **> 20 kW** übersteigt, löst fox2db einen **3-Sekunden-Puls**
+auf Relais 4 aus. Dieser Impuls aktiviert den Hardware-Relay-Eingang des Wechselrichters,
+der die Einspeisung auf den zulässigen Grenzwert begrenzt.
+
+- Auslöseschwelle: `pcc > 20000 W` (positiver PCC = Einspeisung ins Netz)
+- Puls-Dauer: 3 Sekunden (konfigurierbar in `ebyte_ctrl.py`)
+- Lockfile `/tmp/ebyte_r4_pulse.lock` verhindert parallele Auslösungen
 
 ### Puls-Schutz (Lockfile)
 
