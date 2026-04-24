@@ -61,11 +61,12 @@
 //                             VERSION & CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-#define VERSION "v1.55-C"
+#define VERSION "v1.56-C"
 #define MAX_PATH_LEN 512
 #define MAX_LOG_MSG 1024
 #define MAX_TOPIC_LEN 256
 #define MAX_PAYLOAD_LEN 4096
+#define MAX_LOG_BYTES (10 * 1024)   // Log auf 10 kB begrenzen, dann truncate
 
 // State power mapping (hardware)
 typedef struct {
@@ -205,7 +206,13 @@ void log_msg(const char *fmt, ...) {
     vsnprintf(msg, sizeof(msg), fmt, args);
     va_end(args);
 
-    FILE *fp = fopen(config.path_log, "a");
+    // Truncate wenn Datei > MAX_LOG_BYTES
+    struct stat lst;
+    const char *mode = "a";
+    if (stat(config.path_log, &lst) == 0 && lst.st_size >= MAX_LOG_BYTES)
+        mode = "w";
+
+    FILE *fp = fopen(config.path_log, mode);
     if (fp) {
         fprintf(fp, "[%s %s] %s\n", timestamp, VERSION, msg);
         fclose(fp);
