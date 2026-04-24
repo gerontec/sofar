@@ -279,12 +279,19 @@ static void build_script_command(char *cmd_buf, size_t buf_size, const char *scr
 }
 
 int execute_command(const char *cmd, char *output, size_t output_size, int timeout_sec) {
+    // Temporarily restore SIGCHLD so pclose() can reap the child (SIG_IGN prevents waitpid)
+    struct sigaction old_sa, dfl_sa;
+    sigemptyset(&dfl_sa.sa_mask);
+    dfl_sa.sa_flags = 0;
+    dfl_sa.sa_handler = SIG_DFL;
+    sigaction(SIGCHLD, &dfl_sa, &old_sa);
     char full_cmd[2048];
     snprintf(full_cmd, sizeof(full_cmd), "timeout %d %s 2>&1", timeout_sec, cmd);
 
     FILE *fp = popen(full_cmd, "r");
     if (!fp) {
         log_msg("Failed to execute: %s", cmd);
+        sigaction(SIGCHLD, &old_sa, NULL);
         return -1;
     }
 
@@ -296,6 +303,7 @@ int execute_command(const char *cmd, char *output, size_t output_size, int timeo
     }
 
     int status = pclose(fp);
+    sigaction(SIGCHLD, &old_sa, NULL);
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
