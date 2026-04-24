@@ -33,7 +33,10 @@ BITS_TO_STATE = {
 }
 
 def log(msg):
-    print(f"EbyteCtrl: {msg}", flush=True)
+    try:
+        print(f"EbyteCtrl: {msg}", flush=True)
+    except BrokenPipeError:
+        os._exit(0)
 
 def make_client():
     return ModbusSerialClient(
