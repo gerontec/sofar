@@ -520,3 +520,99 @@ class TestLogger:
         log = Logger(self.path)
         log("via __call__")
         assert "via __call__" in Path(self.path).read_text()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MIDDAY_SOC_CAP
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestMiddaySocCap:
+    """SOC2 > 80% UND 11-13 Uhr UND Monat 3-10 → max State 1."""
+
+    def _run(self, soc, hour, relay_st=1, pcc=14000, month=4):
+        """relay_st=1 default: RAMP_LIMITED gibt best=2, Cap kann auf 1 reduzieren."""
+        import time as _time
+        cfg = make_cfg(midday_soc_threshold=80, midday_start_hour=11, midday_end_hour=13,
+                       midday_season_start_month=3, midday_season_end_month=10)
+        fb = make_fb(cfg)
+        vals = make_vals(soc=soc, pcc=pcc, relay_st=relay_st)
+        with patch("fox2dbOO.time") as mock_time:
+            mock_time.localtime.return_value = _time.struct_time(
+                (2026, month, 24, hour, 0, 0, 0, 0, 0))
+            dec = fb.decide(vals)
+        return dec
+
+    def test_cap_active_soc_above_threshold_midday(self):
+        # relay_st=1 → RAMP_LIMITED→best=2 → Cap→best=1
+        dec = self._run(soc=85, hour=11)
+        assert dec.best_state == 1
+        assert "MIDDAY_SOC_CAP" in dec.trace
+
+    def test_cap_active_at_hour_12(self):
+        dec = self._run(soc=90, hour=12)
+        assert dec.best_state == 1
+        assert "MIDDAY_SOC_CAP" in dec.trace
+
+    def test_cap_inactive_soc_below_threshold(self):
+        dec = self._run(soc=75, hour=12)
+        assert "MIDDAY_SOC_CAP" not in dec.trace
+
+    def test_cap_inactive_before_window(self):
+        dec = self._run(soc=85, hour=10)
+        assert "MIDDAY_SOC_CAP" not in dec.trace
+
+    def test_cap_inactive_after_window(self):
+        dec = self._run(soc=85, hour=13)   # 13:xx = exklusiv → nicht aktiv
+        assert "MIDDAY_SOC_CAP" not in dec.trace
+
+    def test_cap_inactive_at_night(self):
+        dec = self._run(soc=95, hour=23)
+        assert "MIDDAY_SOC_CAP" not in dec.trace
+
+    def test_cap_allows_state1_already(self):
+        # relay_st=0, pcc=1800 → excess=1800 → budget=3300 → best=1 (State2=3650>budget)
+        # kein RAMP_LIMITED (best(1) nicht > next_up(0)=1), Cap: best(1)>1? → Nein
+        dec = self._run(soc=85, hour=12, relay_st=0, pcc=1800)
+        assert "MIDDAY_SOC_CAP" not in dec.trace
+
+    def test_cap_forces_down_from_higher_state(self):
+        # relay_st=5 (laufend), cap wird aktiviert → best=1
+        dec = self._run(soc=85, hour=11, relay_st=5, pcc=14000)
+        assert dec.best_state == 1
+        assert "MIDDAY_SOC_CAP" in dec.trace
+
+    def test_trace_contains_soc_and_hour(self):
+        dec = self._run(soc=83, hour=11)
+        assert "83" in dec.trace
+        assert "11" in dec.trace
+
+    def test_cap_inactive_in_winter_january(self):
+        # Januar (Monat 1) → außerhalb Saison → kein Cap
+        dec = self._run(soc=85, hour=11, month=1)
+        assert "MIDDAY_SOC_CAP" not in dec.trace
+
+    def test_cap_inactive_in_winter_february(self):
+        dec = self._run(soc=95, hour=12, month=2)
+        assert "MIDDAY_SOC_CAP" not in dec.trace
+
+    def test_cap_inactive_in_winter_november(self):
+        dec = self._run(soc=90, hour=11, month=11)
+        assert "MIDDAY_SOC_CAP" not in dec.trace
+
+    def test_cap_inactive_in_winter_december(self):
+        dec = self._run(soc=95, hour=12, month=12)
+        assert "MIDDAY_SOC_CAP" not in dec.trace
+
+    def test_cap_active_in_march(self):
+        dec = self._run(soc=85, hour=11, month=3)
+        assert dec.best_state == 1
+        assert "MIDDAY_SOC_CAP" in dec.trace
+
+    def test_cap_active_in_october(self):
+        dec = self._run(soc=85, hour=12, month=10)
+        assert dec.best_state == 1
+        assert "MIDDAY_SOC_CAP" in dec.trace
+
+    def test_trace_contains_month(self):
+        dec = self._run(soc=83, hour=11, month=7)
+        assert "Monat 7" in dec.trace

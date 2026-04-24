@@ -82,6 +82,11 @@ class Config:
     sweet_spot_pcc: int = 160
     sweet_spot_bat: int = -310
     max_drop_rate: int = -20
+    midday_soc_threshold: int = 80   # SOC2-Schwelle für Mittagskapp
+    midday_start_hour: int = 11      # Kapp-Fenster Start (Uhr)
+    midday_end_hour: int = 13        # Kapp-Fenster Ende (Uhr, exklusiv)
+    midday_season_start_month: int = 3   # März (Frühling)
+    midday_season_end_month: int = 10    # Oktober (Ende Herbst, inklusiv)
     deep_discharge_lower: int = 6
     deep_discharge_upper: int = 8
     deep_discharge_charge_target: int = 7
@@ -133,6 +138,11 @@ class Config:
         p.add_argument("--deep-discharge-lower", type=int, default=6)
         p.add_argument("--deep-discharge-upper", type=int, default=8)
         p.add_argument("--deep-discharge-target", type=int, default=7)
+        p.add_argument("--midday-soc-threshold", type=int, default=80)
+        p.add_argument("--midday-start", type=int, default=11)
+        p.add_argument("--midday-end", type=int, default=13)
+        p.add_argument("--midday-season-start", type=int, default=3)
+        p.add_argument("--midday-season-end", type=int, default=10)
         p.add_argument("--ebox-script", default="/home/pi/python/ebox1arg.py")
         p.add_argument("--ebyte-script", default="/home/pi/python/ebyte_ctrl.py")
         p.add_argument("--mqtt-publish-broker", default="")
@@ -157,6 +167,11 @@ class Config:
             deep_discharge_lower=a.deep_discharge_lower,
             deep_discharge_upper=a.deep_discharge_upper,
             deep_discharge_charge_target=a.deep_discharge_target,
+            midday_soc_threshold=a.midday_soc_threshold,
+            midday_start_hour=a.midday_start,
+            midday_end_hour=a.midday_end,
+            midday_season_start_month=a.midday_season_start,
+            midday_season_end_month=a.midday_season_end,
             mqtt_broker=a.mqtt_broker,
             mqtt_port=a.mqtt_port,
             mqtt_topic=a.mqtt_topic,
@@ -611,6 +626,18 @@ class FbController:
             if best > next_st:
                 trace += f" | RAMP_LIMITED ({best}->{next_st})"
                 best = next_st
+
+        # Mittagskapp: SOC2 > Schwelle UND Uhrzeit+Monat im Fenster → max State 1
+        _now = time.localtime()
+        now_h = _now.tm_hour
+        now_m = _now.tm_mon
+        if (v.soc >= cfg.midday_soc_threshold
+                and cfg.midday_start_hour <= now_h < cfg.midday_end_hour
+                and cfg.midday_season_start_month <= now_m <= cfg.midday_season_end_month
+                and best > 1):
+            trace += (f" | MIDDAY_SOC_CAP (SOC={v.soc:.0f}%≥"
+                      f"{cfg.midday_soc_threshold}%, {now_h}:xx Uhr, Monat {now_m})")
+            best = 1
 
         return best, excess, trace
 
