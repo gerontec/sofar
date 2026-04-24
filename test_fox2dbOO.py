@@ -527,92 +527,110 @@ class TestLogger:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestMiddaySocCap:
-    """SOC2 > 80% UND 11-13 Uhr UND Monat 3-10 → max State 1."""
+    """SOC2 > 80% UND ±60min um Sonnenmittag UND Monat 3-10 → max State 1."""
 
-    def _run(self, soc, hour, relay_st=1, pcc=14000, month=4):
-        """relay_st=1 default: RAMP_LIMITED gibt best=2, Cap kann auf 1 reduzieren."""
+    def _run(self, soc, relay_st=1, pcc=14000, month=4, in_window=True):
+        """
+        in_window: Mock für _in_midday_window() — True = cap-Zeit aktiv.
+        relay_st=1 default: RAMP_LIMITED→best=2, Cap kann auf 1 reduzieren.
+        """
         import time as _time
-        cfg = make_cfg(midday_soc_threshold=80, midday_start_hour=11, midday_end_hour=13,
+        cfg = make_cfg(midday_soc_threshold=80, midday_window_minutes=60,
+                       midday_latitude=47.6811, midday_longitude=11.5732,
                        midday_season_start_month=3, midday_season_end_month=10)
         fb = make_fb(cfg)
         vals = make_vals(soc=soc, pcc=pcc, relay_st=relay_st)
-        with patch("fox2dbOO.time") as mock_time:
+        with patch("fox2dbOO.time") as mock_time,              patch("fox2dbOO._in_midday_window", return_value=in_window):
             mock_time.localtime.return_value = _time.struct_time(
-                (2026, month, 24, hour, 0, 0, 0, 0, 0))
+                (2026, month, 24, 12, 0, 0, 0, 0, 0))
             dec = fb.decide(vals)
         return dec
 
-    def test_cap_active_soc_above_threshold_midday(self):
+    def test_cap_active_soc_above_threshold(self):
         # relay_st=1 → RAMP_LIMITED→best=2 → Cap→best=1
-        dec = self._run(soc=85, hour=11)
+        dec = self._run(soc=85)
         assert dec.best_state == 1
         assert "MIDDAY_SOC_CAP" in dec.trace
 
-    def test_cap_active_at_hour_12(self):
-        dec = self._run(soc=90, hour=12)
+    def test_cap_active_high_soc(self):
+        dec = self._run(soc=90)
         assert dec.best_state == 1
         assert "MIDDAY_SOC_CAP" in dec.trace
 
     def test_cap_inactive_soc_below_threshold(self):
-        dec = self._run(soc=75, hour=12)
+        dec = self._run(soc=75)
         assert "MIDDAY_SOC_CAP" not in dec.trace
 
-    def test_cap_inactive_before_window(self):
-        dec = self._run(soc=85, hour=10)
+    def test_cap_inactive_outside_window(self):
+        dec = self._run(soc=85, in_window=False)
         assert "MIDDAY_SOC_CAP" not in dec.trace
 
-    def test_cap_inactive_after_window(self):
-        dec = self._run(soc=85, hour=13)   # 13:xx = exklusiv → nicht aktiv
-        assert "MIDDAY_SOC_CAP" not in dec.trace
-
-    def test_cap_inactive_at_night(self):
-        dec = self._run(soc=95, hour=23)
+    def test_cap_inactive_night_window(self):
+        dec = self._run(soc=95, in_window=False)
         assert "MIDDAY_SOC_CAP" not in dec.trace
 
     def test_cap_allows_state1_already(self):
-        # relay_st=0, pcc=1800 → excess=1800 → budget=3300 → best=1 (State2=3650>budget)
-        # kein RAMP_LIMITED (best(1) nicht > next_up(0)=1), Cap: best(1)>1? → Nein
-        dec = self._run(soc=85, hour=12, relay_st=0, pcc=1800)
+        # relay_st=0, pcc=1800 → best=1 natürlich (kein RAMP) → Cap: best>1? Nein
+        dec = self._run(soc=85, relay_st=0, pcc=1800)
         assert "MIDDAY_SOC_CAP" not in dec.trace
 
     def test_cap_forces_down_from_higher_state(self):
-        # relay_st=5 (laufend), cap wird aktiviert → best=1
-        dec = self._run(soc=85, hour=11, relay_st=5, pcc=14000)
+        # relay_st=5, cap aktiv → best=1
+        dec = self._run(soc=85, relay_st=5, pcc=14000)
         assert dec.best_state == 1
         assert "MIDDAY_SOC_CAP" in dec.trace
 
-    def test_trace_contains_soc_and_hour(self):
-        dec = self._run(soc=83, hour=11)
+    def test_trace_contains_soc_and_window_info(self):
+        dec = self._run(soc=83)
         assert "83" in dec.trace
-        assert "11" in dec.trace
+        assert "Sonnenmittag" in dec.trace
 
     def test_cap_inactive_in_winter_january(self):
-        # Januar (Monat 1) → außerhalb Saison → kein Cap
-        dec = self._run(soc=85, hour=11, month=1)
+        dec = self._run(soc=85, month=1, in_window=True)
         assert "MIDDAY_SOC_CAP" not in dec.trace
 
     def test_cap_inactive_in_winter_february(self):
-        dec = self._run(soc=95, hour=12, month=2)
+        dec = self._run(soc=95, month=2, in_window=True)
         assert "MIDDAY_SOC_CAP" not in dec.trace
 
     def test_cap_inactive_in_winter_november(self):
-        dec = self._run(soc=90, hour=11, month=11)
+        dec = self._run(soc=90, month=11, in_window=True)
         assert "MIDDAY_SOC_CAP" not in dec.trace
 
     def test_cap_inactive_in_winter_december(self):
-        dec = self._run(soc=95, hour=12, month=12)
+        dec = self._run(soc=95, month=12, in_window=True)
         assert "MIDDAY_SOC_CAP" not in dec.trace
 
     def test_cap_active_in_march(self):
-        dec = self._run(soc=85, hour=11, month=3)
+        dec = self._run(soc=85, month=3)
         assert dec.best_state == 1
         assert "MIDDAY_SOC_CAP" in dec.trace
 
     def test_cap_active_in_october(self):
-        dec = self._run(soc=85, hour=12, month=10)
+        dec = self._run(soc=85, month=10)
         assert dec.best_state == 1
         assert "MIDDAY_SOC_CAP" in dec.trace
 
     def test_trace_contains_month(self):
-        dec = self._run(soc=83, hour=11, month=7)
+        dec = self._run(soc=83, month=7)
         assert "Monat 7" in dec.trace
+
+    def test_solar_noon_unit(self):
+        """_solar_noon() gibt einen datetime mit Timezone zurück."""
+        import datetime as _dt
+        from fox2dbOO import _solar_noon
+        noon = _solar_noon(47.6811, 11.5732)
+        assert isinstance(noon, _dt.datetime)
+        assert noon.tzinfo is not None
+        # Solarer Mittag Lenggries: zwischen 11:30 und 14:00 Uhr (CEST/CET)
+        assert 11 <= noon.hour <= 14
+
+    def test_in_midday_window_unit(self):
+        """_in_midday_window() gibt bool zurück — echte Berechnung (keine Mock)."""
+        import datetime as _dt
+        from fox2dbOO import _in_midday_window
+        cfg = make_cfg(midday_window_minutes=0, midday_latitude=47.6811,
+                       midday_longitude=11.5732)
+        # Fenster 0 Minuten: nur exakt zur Mittagszeit → fast immer False
+        result = _in_midday_window(cfg)
+        assert isinstance(result, bool)

@@ -41,6 +41,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+import datetime as _dt
+from astral import LocationInfo as _LocationInfo
+from astral.sun import sun as _astral_sun
+
 import paho.mqtt.client as mqtt
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -51,6 +55,26 @@ VERSION = "v1.56-Py"
 MAX_LOG_BYTES = 10 * 1024  # 10 kB, dann truncate
 
 # Hardware-Zustandstabelle: state → Watt
+# ─── Solar-Mittag-Berechnung ─────────────────────────────────────────────────
+
+def _solar_noon(lat: float, lon: float) -> _dt.datetime:
+    """Solarer Höchststand heute als timezone-aware datetime (Europe/Berlin)."""
+    loc = _LocationInfo("Standort", "Germany", "Europe/Berlin", lat, lon)
+    s = _astral_sun(loc.observer, date=_dt.date.today(), tzinfo=loc.timezone)
+    return s["noon"]
+
+
+def _in_midday_window(cfg) -> bool:
+    """True wenn jetzt innerhalb ±midday_window_minutes um den solaren Mittag."""
+    try:
+        noon = _solar_noon(cfg.midday_latitude, cfg.midday_longitude)
+        now_dt = _dt.datetime.now(noon.tzinfo)
+        diff_min = abs((now_dt - noon).total_seconds() / 60)
+        return diff_min <= cfg.midday_window_minutes
+    except Exception:
+        return False
+
+
 STATE_POWER: dict[int, int] = {
     0: 0,
     1: 3000,
@@ -82,11 +106,12 @@ class Config:
     sweet_spot_pcc: int = 160
     sweet_spot_bat: int = -310
     max_drop_rate: int = -20
-    midday_soc_threshold: int = 80   # SOC2-Schwelle für Mittagskapp
-    midday_start_hour: int = 11      # Kapp-Fenster Start (Uhr)
-    midday_end_hour: int = 13        # Kapp-Fenster Ende (Uhr, exklusiv)
-    midday_season_start_month: int = 3   # März (Frühling)
-    midday_season_end_month: int = 10    # Oktober (Ende Herbst, inklusiv)
+    midday_soc_threshold: int = 80      # SOC2-Schwelle für Mittagskapp
+    midday_window_minutes: int = 60     # ±Minuten um den solaren Mittag
+    midday_latitude: float = 47.6811    # Lenggries (PLZ 83661)
+    midday_longitude: float = 11.5732
+    midday_season_start_month: int = 3  # März (Frühling)
+    midday_season_end_month: int = 10   # Oktober (Ende Herbst, inklusiv)
     deep_discharge_lower: int = 6
     deep_discharge_upper: int = 8
     deep_discharge_charge_target: int = 7
@@ -139,8 +164,10 @@ class Config:
         p.add_argument("--deep-discharge-upper", type=int, default=8)
         p.add_argument("--deep-discharge-target", type=int, default=7)
         p.add_argument("--midday-soc-threshold", type=int, default=80)
-        p.add_argument("--midday-start", type=int, default=11)
-        p.add_argument("--midday-end", type=int, default=13)
+        p.add_argument("--midday-window", type=int, default=60,
+                       help="±Minuten um solaren Mittag (default 60)")
+        p.add_argument("--midday-lat", type=float, default=47.6811)
+        p.add_argument("--midday-lon", type=float, default=11.5732)
         p.add_argument("--midday-season-start", type=int, default=3)
         p.add_argument("--midday-season-end", type=int, default=10)
         p.add_argument("--ebox-script", default="/home/pi/python/ebox1arg.py")
@@ -168,8 +195,9 @@ class Config:
             deep_discharge_upper=a.deep_discharge_upper,
             deep_discharge_charge_target=a.deep_discharge_target,
             midday_soc_threshold=a.midday_soc_threshold,
-            midday_start_hour=a.midday_start,
-            midday_end_hour=a.midday_end,
+            midday_window_minutes=a.midday_window,
+            midday_latitude=a.midday_lat,
+            midday_longitude=a.midday_lon,
             midday_season_start_month=a.midday_season_start,
             midday_season_end_month=a.midday_season_end,
             mqtt_broker=a.mqtt_broker,
@@ -627,16 +655,16 @@ class FbController:
                 trace += f" | RAMP_LIMITED ({best}->{next_st})"
                 best = next_st
 
-        # Mittagskapp: SOC2 > Schwelle UND Uhrzeit+Monat im Fenster → max State 1
+        # Mittagskapp: SOC2 > Schwelle UND innerhalb ±window um Sonnenmittag → max State 1
         _now = time.localtime()
-        now_h = _now.tm_hour
         now_m = _now.tm_mon
-        if (v.soc >= cfg.midday_soc_threshold
-                and cfg.midday_start_hour <= now_h < cfg.midday_end_hour
-                and cfg.midday_season_start_month <= now_m <= cfg.midday_season_end_month
-                and best > 1):
+        if (cfg.midday_season_start_month <= now_m <= cfg.midday_season_end_month
+                and v.soc >= cfg.midday_soc_threshold
+                and best > 1
+                and _in_midday_window(cfg)):
             trace += (f" | MIDDAY_SOC_CAP (SOC={v.soc:.0f}%≥"
-                      f"{cfg.midday_soc_threshold}%, {now_h}:xx Uhr, Monat {now_m})")
+                      f"{cfg.midday_soc_threshold}%,"
+                      f" ±{cfg.midday_window_minutes}min Sonnenmittag, Monat {now_m})")
             best = 1
 
         return best, excess, trace
