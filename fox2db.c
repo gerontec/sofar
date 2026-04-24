@@ -29,7 +29,11 @@
  *   --deep-discharge-target <pct> Deep discharge charge target (default: 7)
  *   --ebox-script <path>          EBox script path
  *   --ebyte-script <path>         EByte script path
- *   --mqtt-publish-script <path>  MQTT publish script path
+ *   --mqtt-publish-broker <host>  Publish-Broker (default: gleich wie --mqtt-broker)
+ *   --mqtt-publish-port <port>    Publish-Port   (default: gleich wie --mqtt-port)
+ *   --mqtt-publish-topic <topic>  Publish-Topic  (default: fox2db/state)
+ *   --mqtt-publish-retain <0|1>   Retain-Flag    (default: 1)
+ *   --mqtt-publish-qos <0|1|2>    QoS            (default: 0)
  *   --version                     Show version
  *   --help                        Show this help
  */
@@ -57,7 +61,7 @@
 //                             VERSION & CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-#define VERSION "v1.52-C"
+#define VERSION "v1.55-C"
 #define MAX_PATH_LEN 512
 #define MAX_LOG_MSG 1024
 #define MAX_TOPIC_LEN 256
@@ -107,6 +111,13 @@ typedef struct {
     char mqtt_topic[MAX_TOPIC_LEN];
     int mqtt_timeout;
 
+    // MQTT Publish (Ausgabe-Topic, kann sich von Eingabe-Topic unterscheiden)
+    char mqtt_publish_broker[256];
+    int  mqtt_publish_port;
+    char mqtt_publish_topic[MAX_TOPIC_LEN];
+    int  mqtt_publish_retain;   // 1 = retained (empfohlen für Subscriber die seltener lesen)
+    int  mqtt_publish_qos;
+
     // Dateipfade
     char path_deep_discharge[MAX_PATH_LEN];
     char path_log[MAX_PATH_LEN];
@@ -140,11 +151,18 @@ static void init_config(void) {
     config.deep_discharge_upper = 8;
     config.deep_discharge_charge_target = 7;
 
-    // MQTT defaults
+    // MQTT defaults (Empfang)
     strncpy(config.mqtt_broker, "kellertreppe.fritz.box", sizeof(config.mqtt_broker) - 1);
     config.mqtt_port = 1883;
     strncpy(config.mqtt_topic, "inverter/power_grid_exchange/json", sizeof(config.mqtt_topic) - 1);
     config.mqtt_timeout = 43;
+
+    // MQTT Publish defaults (Ausgabe) — broker/port werden bei "" aus mqtt_broker übernommen
+    config.mqtt_publish_broker[0] = '\0';  // leer = gleicher Broker wie mqtt_broker
+    config.mqtt_publish_port = 0;          // 0 = gleicher Port wie mqtt_port
+    strncpy(config.mqtt_publish_topic, "fox2db/state", sizeof(config.mqtt_publish_topic) - 1);
+    config.mqtt_publish_retain = 1;        // retained: Subscriber bekommen sofort letzten Wert
+    config.mqtt_publish_qos = 0;
 
     // Path defaults
     strncpy(config.path_deep_discharge, "/tmp/deep_discharge_protection_active.txt", sizeof(config.path_deep_discharge) - 1);
@@ -155,7 +173,7 @@ static void init_config(void) {
     strncpy(config.path_ebox_data, "/tmp/ebox15k.txt", sizeof(config.path_ebox_data) - 1);
     strncpy(config.path_inverter_csv, "/tmp/inverter.csv", sizeof(config.path_inverter_csv) - 1);
     strncpy(config.path_ebox_script, "/home/pi/python/ebox1arg.py", sizeof(config.path_ebox_script) - 1);
-    strncpy(config.path_ebyte_script, "/home/pi/python/ebyteserrequest.py", sizeof(config.path_ebyte_script) - 1);
+    strncpy(config.path_ebyte_script, "/home/pi/python/ebyte_ctrl.py", sizeof(config.path_ebyte_script) - 1);
     strncpy(config.path_mqtt_publish_script, "/home/pi/python/fox2mqtt.py", sizeof(config.path_mqtt_publish_script) - 1);
 }
 
@@ -275,6 +293,29 @@ int execute_command(const char *cmd, char *output, size_t output_size, int timeo
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+//                             RELAY 4 PULSE (PCC-Injection >20 kW)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Schaltet Relais 4 für 3 s ein/aus über ebyte_ctrl.py — kein Neubau nötig
+// wenn Puls-Dauer oder Parameter geändert werden sollen.
+// Lockfile-Prüfung liegt im Python-Script (ebyte_ctrl.py r4 pulse 3).
+static void trigger_relay4_pulse(void) {
+    pid_t pid = fork();
+    if (pid < 0) {
+        log_msg("Relay4 fork fehlgeschlagen: %s", strerror(errno));
+        return;
+    }
+
+    if (pid == 0) {
+        execl("/usr/bin/python3", "python3",
+              config.path_ebyte_script, "r4", "pulse", "3", NULL);
+        _exit(1);
+    }
+
+    log_msg("Relay4 Puls ausgelöst (PCC>20kW, PID=%d)", (int)pid);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 //                             MQTT FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -366,6 +407,63 @@ int fetch_mqtt(MqttData *data) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+//                             MQTT DIRECT PUBLISH
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Publiziert JSON-String direkt per MQTT ohne externen Subprocess.
+// Nutzt mqtt_publish_broker/topic/retain/qos aus der Config.
+static int mqtt_publish_direct(const char *json_str) {
+    const char *broker = (config.mqtt_publish_broker[0] != '\0')
+                         ? config.mqtt_publish_broker
+                         : config.mqtt_broker;
+    int port = (config.mqtt_publish_port > 0)
+               ? config.mqtt_publish_port
+               : config.mqtt_port;
+
+    char address[512];
+    snprintf(address, sizeof(address), "tcp://%s:%d", broker, port);
+
+    MQTTClient client;
+    int rc = MQTTClient_create(&client, address, "fox2db_pub",
+                               MQTTCLIENT_PERSISTENCE_NONE, NULL);
+    if (rc != MQTTCLIENT_SUCCESS) {
+        log_msg("MQTT-Publish: Client-Create fehlgeschlagen (%d)", rc);
+        return -1;
+    }
+
+    MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+    conn_opts.keepAliveInterval = 10;
+    conn_opts.cleansession = 1;
+
+    rc = MQTTClient_connect(client, &conn_opts);
+    if (rc != MQTTCLIENT_SUCCESS) {
+        log_msg("MQTT-Publish: Verbindung zu %s fehlgeschlagen (%d)", address, rc);
+        MQTTClient_destroy(&client);
+        return -1;
+    }
+
+    MQTTClient_message msg = MQTTClient_message_initializer;
+    msg.payload    = (void *)json_str;
+    msg.payloadlen = (int)strlen(json_str);
+    msg.qos        = config.mqtt_publish_qos;
+    msg.retained   = config.mqtt_publish_retain;
+
+    MQTTClient_deliveryToken token;
+    rc = MQTTClient_publishMessage(client, config.mqtt_publish_topic, &msg, &token);
+    if (rc == MQTTCLIENT_SUCCESS) {
+        MQTTClient_waitForCompletion(client, token, 4000);
+        log_msg("MQTT-Publish: %zu Bytes → %s (retain=%d)",
+                strlen(json_str), config.mqtt_publish_topic, config.mqtt_publish_retain);
+    } else {
+        log_msg("MQTT-Publish: Fehler (%d)", rc);
+    }
+
+    MQTTClient_disconnect(client, 1000);
+    MQTTClient_destroy(&client);
+    return (rc == MQTTCLIENT_SUCCESS) ? 0 : -1;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 //                             EBOX DATA READING
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -418,9 +516,9 @@ int read_ebox(double *current_out, double *min_soc_out) {
             for (int i = 0; i < nfields; i++) {
                 if (strchr(fields[i], '%')) {
                     double soc = atof(fields[i]);
+                    soc_count++;
                     if (soc < min_soc) {
                         min_soc = soc;
-                        soc_count++;
                     }
                 }
             }
@@ -490,20 +588,25 @@ typedef struct {
 
 void fb_controller(double soc, double pcc, double bat_cur, double bat1,
                    int relay_st, int prot, ControllerResult *result) {
-    // Calculate real excess
-    double ebox_eff = (relay_st > 0) ? fmax(bat_cur * 2 * 53 + 1, get_state_power(relay_st)) : 0;
-    double excess = pcc + ebox_eff + bat1;
-
-    result->excess = excess;
     result->trace[0] = '\0';
 
     // SOC unbekannt (EBox-Lesefehler) - aktuellen Zustand halten, kein Eingriff
+    // Bei unbekanntem SOC nur realen Messwert verwenden (kein fmax mit state_power),
+    // da die EBox nachts trotz gesetztem State kaum Strom zieht.
     if (soc < 0.0) {
+        double ebox_actual = (relay_st > 0) ? (bat_cur * 2 * 53 + 1) : 0.0;
+        result->excess = pcc + ebox_actual + bat1;
         result->best_state = relay_st;
         snprintf(result->trace, sizeof(result->trace),
                 "EBOX_SOC_UNKNOWN_HOLD (prot=%d)", prot);
         return;
     }
+
+    // Calculate real excess (fmax handles EBox ramp-up: real value may lag behind state)
+    double ebox_eff = (relay_st > 0) ? fmax(bat_cur * 2 * 53 + 1, get_state_power(relay_st)) : 0;
+    double excess = pcc + ebox_eff + bat1;
+
+    result->excess = excess;
 
     // EMERGENCY CHARGE with target - prevents ping-pong
     if (prot) {
@@ -532,7 +635,7 @@ void fb_controller(double soc, double pcc, double bat_cur, double bat1,
     }
 
     // Battery full
-    if (soc >= config.max_soc) {
+    if (soc > config.max_soc) {
         result->best_state = 0;
         snprintf(result->trace, sizeof(result->trace), "BATTERY_FULL_STOP");
         return;
@@ -673,24 +776,8 @@ void publish_mqtt_data(double soc, double soc_bat1, double pcc, double bat1,
 
     char *json_str = cJSON_PrintUnformatted(json);
 
-    // Call MQTT publish script (support both Python scripts and C binaries)
-    char cmd[2048];
-    size_t script_len = strlen(config.path_mqtt_publish_script);
-    bool is_python = (script_len > 3 &&
-                      strcmp(config.path_mqtt_publish_script + script_len - 3, ".py") == 0);
-
-    if (is_python) {
-        snprintf(cmd, sizeof(cmd), "python3 %s '%s'", config.path_mqtt_publish_script, json_str);
-    } else {
-        snprintf(cmd, sizeof(cmd), "%s '%s'", config.path_mqtt_publish_script, json_str);
-    }
-
-    char output[256];
-    int ret = execute_command(cmd, output, sizeof(output), 5);
-
-    if (ret != 0) {
-        log_msg("MQTT-Script Error: %s", output);
-    }
+    // Direkt per MQTT publishen (kein externer Subprocess mehr)
+    mqtt_publish_direct(json_str);
 
     free(json_str);
     cJSON_Delete(json);
@@ -737,6 +824,11 @@ void main_loop(void) {
     double bat1 = mqtt_data.bat1;
     double soc_bat1 = mqtt_data.soc_bat1;
 
+    // Relais 4 Puls bei PCC-Einspeisung > 20 kW
+    if (pcc > 20000.0) {
+        trigger_relay4_pulse();
+    }
+
     int relay_st = (int)read_file_value(config.path_relay_state, 0);
     int stable = (int)read_file_value(config.path_last_change, 0);
     int prot = (int)read_file_value(config.path_deep_discharge, 0);
@@ -762,7 +854,7 @@ void main_loop(void) {
 
     if (best != relay_st) {
         int pwr_diff = abs(get_state_power(best) - get_state_power(relay_st));
-        Direction direction = (best > relay_st) ? DIR_UP : DIR_DOWN;
+        Direction direction = (get_state_power(best) > get_state_power(relay_st)) ? DIR_UP : DIR_DOWN;
         int emergency = (pcc < -config.emergency_import) && (direction == DIR_DOWN);
 
         if (emergency) {
@@ -887,6 +979,11 @@ static struct option long_options[] = {
     {"ebox-script", required_argument, 0, '1'},
     {"ebyte-script", required_argument, 0, '2'},
     {"mqtt-publish-script", required_argument, 0, '3'},
+    {"mqtt-publish-broker", required_argument, 0, '4'},
+    {"mqtt-publish-port",   required_argument, 0, '5'},
+    {"mqtt-publish-topic",  required_argument, 0, '6'},
+    {"mqtt-publish-retain", required_argument, 0, '7'},  // 0 oder 1
+    {"mqtt-publish-qos",    required_argument, 0, '8'},
     {"version", no_argument, 0, 'v'},
     {"help", no_argument, 0, 'h'},
     {0, 0, 0, 0}
@@ -914,7 +1011,12 @@ void print_usage(const char *prog) {
     printf("  --deep-discharge-target <pct> Deep discharge target (default: %d)\n", config.deep_discharge_charge_target);
     printf("  --ebox-script <path>          EBox script path\n");
     printf("  --ebyte-script <path>         EByte script path\n");
-    printf("  --mqtt-publish-script <path>  MQTT publish script path\n");
+    printf("  --mqtt-publish-script <path>  (veraltet, wird ignoriert)\n");
+    printf("  --mqtt-publish-broker <host>  Publish-Broker (default: gleich wie --mqtt-broker)\n");
+    printf("  --mqtt-publish-port <port>    Publish-Port   (default: gleich wie --mqtt-port)\n");
+    printf("  --mqtt-publish-topic <topic>  Publish-Topic  (default: fox2db/state)\n");
+    printf("  --mqtt-publish-retain <0|1>   Retain-Flag    (default: 1)\n");
+    printf("  --mqtt-publish-qos <0|1|2>    QoS            (default: 0)\n");
     printf("  --version                     Show version\n");
     printf("  --help                        Show this help\n");
 }
@@ -944,7 +1046,15 @@ void parse_args(int argc, char **argv) {
             case 'C': config.deep_discharge_charge_target = atoi(optarg); break;
             case '1': strncpy(config.path_ebox_script, optarg, MAX_PATH_LEN - 1); break;
             case '2': strncpy(config.path_ebyte_script, optarg, MAX_PATH_LEN - 1); break;
-            case '3': strncpy(config.path_mqtt_publish_script, optarg, MAX_PATH_LEN - 1); break;
+            case '3':
+                // --mqtt-publish-script ist veraltet, direktes MQTT-Publish wird genutzt
+                log_msg("WARNUNG: --mqtt-publish-script wird ignoriert (direktes MQTT-Publish aktiv)");
+                break;
+            case '4': strncpy(config.mqtt_publish_broker, optarg, sizeof(config.mqtt_publish_broker) - 1); break;
+            case '5': config.mqtt_publish_port = atoi(optarg); break;
+            case '6': strncpy(config.mqtt_publish_topic, optarg, sizeof(config.mqtt_publish_topic) - 1); break;
+            case '7': config.mqtt_publish_retain = atoi(optarg); break;
+            case '8': config.mqtt_publish_qos = atoi(optarg); break;
             case 'v':
                 printf("fox2db %s\n", VERSION);
                 exit(0);
@@ -962,7 +1072,40 @@ void parse_args(int argc, char **argv) {
 //                             MAIN ENTRY POINT
 // ═══════════════════════════════════════════════════════════════════════════
 
+static void log_startup_info(void) {
+    // Working directory
+    char cwd[MAX_PATH_LEN];
+    if (getcwd(cwd, sizeof(cwd)) == NULL) {
+        strncpy(cwd, "(unknown)", sizeof(cwd) - 1);
+    }
+
+    // Parent process info via /proc
+    pid_t ppid = getppid();
+    char parent_cmd[512] = "(unknown)";
+
+    char proc_path[64];
+    snprintf(proc_path, sizeof(proc_path), "/proc/%d/cmdline", (int)ppid);
+    FILE *fp = fopen(proc_path, "r");
+    if (fp) {
+        size_t n = fread(parent_cmd, 1, sizeof(parent_cmd) - 1, fp);
+        fclose(fp);
+        if (n > 0) {
+            parent_cmd[n] = '\0';
+            // /proc/.../cmdline separates args with NUL bytes → replace with spaces
+            for (size_t i = 0; i < n - 1; i++) {
+                if (parent_cmd[i] == '\0') parent_cmd[i] = ' ';
+            }
+        }
+    }
+
+    log_msg("CWD: %s", cwd);
+    log_msg("Parent PID %d: %s", (int)ppid, parent_cmd);
+}
+
 int main(int argc, char **argv) {
+    // Zombie-Prävention: Kind-Prozesse (Relay4-Pulse) werden automatisch eingezogen
+    signal(SIGCHLD, SIG_IGN);
+
     // Initialize configuration with defaults
     init_config();
 
@@ -970,7 +1113,14 @@ int main(int argc, char **argv) {
     parse_args(argc, argv);
 
     log_msg("=== fox2db %s started ===", VERSION);
-    log_msg("MQTT Broker: %s:%d, Topic: %s", config.mqtt_broker, config.mqtt_port, config.mqtt_topic);
+    log_startup_info();
+    log_msg("MQTT In:  %s:%d → %s", config.mqtt_broker, config.mqtt_port, config.mqtt_topic);
+    log_msg("MQTT Out: %s:%d → %s (retain=%d, qos=%d)",
+            config.mqtt_publish_broker[0] ? config.mqtt_publish_broker : config.mqtt_broker,
+            config.mqtt_publish_port > 0 ? config.mqtt_publish_port : config.mqtt_port,
+            config.mqtt_publish_topic,
+            config.mqtt_publish_retain,
+            config.mqtt_publish_qos);
 
     main_loop();
 

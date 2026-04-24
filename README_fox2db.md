@@ -1,6 +1,6 @@
 # fox2db - SOYO Inverter Power Management Controller (C Version)
 
-**Version:** v1.50-C
+**Version:** v1.55-C
 **Language:** C11
 **Original:** Python (fox2db.py)
 
@@ -48,7 +48,7 @@ make
 
 # Testen
 ./fox2db --version
-# Output: fox2db v1.50-C
+# Output: fox2db v1.55-C
 ```
 
 ### Installation im System
@@ -97,7 +97,7 @@ fox2db --help
   --deep-discharge-lower 5 \
   --deep-discharge-upper 10 \
   --ebox-script "/opt/soyo/ebox1arg.py" \
-  --ebyte-script "/opt/soyo/ebyteserrequest.py"
+  --ebyte-script "/opt/soyo/ebyte_ctrl.py"
 ```
 
 ### 4. Via Konfigurationsskript
@@ -166,8 +166,48 @@ crontab -e
 | Parameter | Typ | Default | Beschreibung |
 |-----------|-----|---------|--------------|
 | `--ebox-script` | String | `/home/pi/python/ebox1arg.py` | EBox-Daten-Script |
-| `--ebyte-script` | String | `/home/pi/python/ebyteserrequest.py` | Relay-Steuerungs-Script |
+| `--ebyte-script` | String | `/home/pi/python/ebyte_ctrl.py` | Relay-Steuerungs-Script (alle 4 Relais) |
 | `--mqtt-publish-script` | String | `/home/pi/python/fox2mqtt.py` | MQTT-Publish-Script |
+
+---
+
+## 🔌 ebyte_ctrl.py — Zentrales Relay-Script
+
+Alle 4 DO-Ausgänge des Ebyte MA01-XACX0440 werden über ein einziges Script gesteuert.
+Änderungen an Puls-Dauer, Port oder Slave-ID erfordern **kein Neu-Kompilieren** von fox2db.
+
+```bash
+# Relay 1-3 auf State setzen (wird von fox2db automatisch aufgerufen)
+python3 ebyte_ctrl.py 5
+
+# Aktuellen State abfragen
+python3 ebyte_ctrl.py --state
+
+# Relay 4 direkt schalten
+python3 ebyte_ctrl.py r4 on
+python3 ebyte_ctrl.py r4 off
+
+# Relay 4 Puls (default 3 Sekunden)
+python3 ebyte_ctrl.py r4 pulse
+python3 ebyte_ctrl.py r4 pulse 5
+
+# Alle 4 Relais ausschalten
+python3 ebyte_ctrl.py all off
+```
+
+### Coil-Mapping
+
+| Relais | Coil-Adresse | Gesteuert durch |
+|--------|-------------|-----------------|
+| R1 | 0 | State-Bits (fox2db) |
+| R2 | 1 | State-Bits (fox2db) |
+| R3 | 2 | State-Bits (fox2db) |
+| R4 | 3 | PCC-Einspeisung > 20 kW (Puls 3 s) |
+
+### Puls-Schutz (Lockfile)
+
+`/tmp/ebyte_r4_pulse.lock` verhindert parallele Pulse.
+Das Script prüft anhand der PID ob ein Puls noch läuft und überspringt den neuen Aufruf falls ja.
 
 ---
 
@@ -352,7 +392,7 @@ sudo systemctl status fox2db.service
 ```c
 if (fetch_mqtt(&mqtt_data) != 0) {
     log_msg("EMERGENCY SHUTDOWN: MQTT failed");
-    execute_command("ebyteserrequest.py 0", NULL, 0, 10);
+    execute_command("ebyte_ctrl.py 0", NULL, 0, 10);
     write_file_value(path_relay_state, "0");
     return;  // Abort cycle
 }
@@ -380,6 +420,28 @@ if (relay_ret != 0) {
 ---
 
 ## 📝 Changelog C-Version
+
+### v1.55-C (2026-04-24)
+
+#### ✨ Features
+- ✅ **Zentrales Relay-Script** `ebyte_ctrl.py` — steuert alle 4 DO-Ausgänge
+- ✅ **Relay 4 Puls bei PCC-Einspeisung > 20 kW** (3 Sekunden, background fork)
+- ✅ `--ebyte-script` Default geändert auf `ebyte_ctrl.py`
+- ✅ Relay-4-Puls nutzt denselben `--ebyte-script`-Pfad → ein Parameter für alles
+
+#### 🔧 Improvements
+- `SIGCHLD = SIG_IGN` in `main()` — Zombie-Prozesse werden automatisch bereinigt
+- Relay-Parameter (Puls-Dauer, Port, Slave-ID) änderbar ohne Neu-Kompilierung
+
+---
+
+### v1.54-C (2026-04-24)
+
+#### ✨ Features
+- ✅ Relay 4 Puls-Funktion (erster Entwurf, separates Script)
+- ✅ Lockfile-basierter Schutz vor parallelen Pulsen
+
+---
 
 ### v1.50-C (Initial Port)
 
@@ -438,10 +500,10 @@ Siehe Hauptprojekt `sofar/`
 - **Original Python-Version:** `fox2db.py`
 - **SOYO-Protokoll:** `soyo1min.py`
 - **EBox-Integration:** `ebox1arg.py`
-- **Relay-Steuerung:** `ebyteserrequest.py`
+- **Relay-Steuerung (alle 4 Relais):** `ebyte_ctrl.py`
 
 ---
 
 **Erstellt:** 2026-02-15
 **Autor:** Portierung von `fox2db.py` nach C
-**Version:** v1.50-C
+**Version:** v1.55-C
