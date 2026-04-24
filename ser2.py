@@ -27,5 +27,5 @@ cmd4 = "/usr/local/bin/fox2db"
 cmd5 = "/home/pi/python/fox2dbOO.py"
 ##subprocess.call(["/usr/bin/perl",cmd2,"arg2"])
 #subprocess.call(["/usr/bin/python3",cmd3,"arg2"])
-#subprocess.call(cmd4)  # C-Binary (auskommentiert für OO-Test)
+#subprocess.call(cmd4)  # C-Binary (abgelöst durch OO-Version)
 subprocess.call(["/usr/bin/python3", cmd5])
