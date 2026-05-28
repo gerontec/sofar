@@ -925,7 +925,21 @@ class FeedInLimiter:
         if not self._is_active_season() or vals.prot:
             return
         after_peak, cutoff_time = self._after_peak_window()
-        if after_peak and vals.soc < 88.0:
+        if after_peak:
+            if vals.soc >= 88.0:
+                # Battery nearly full — cap charging to State 2 so the drop at 100% SOC
+                # adds only ~3.6 kW to the grid instead of 11.4 kW (State 7).
+                cap = 2
+                if decision.final_state > cap:
+                    old = decision.final_state
+                    decision.final_state = cap
+                    decision.changed = (cap != vals.relay_st)
+                    decision.trace += (f" | FeedInLimiter AFTER_PEAK_BRAKE"
+                                       f" (SOC={vals.soc:.0f}%≥88%) State{old}→{cap}")
+                else:
+                    decision.trace += (f" | FeedInLimiter AFTER_PEAK_BRAKE"
+                                       f" (SOC={vals.soc:.0f}%≥88%, State{decision.final_state} already ≤{cap})")
+                return
             decision.trace += f" | FeedInLimiter AFTER_PEAK (>{cutoff_time} → Winterregel)"
             decision.after_peak = True
             return
