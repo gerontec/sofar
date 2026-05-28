@@ -929,7 +929,7 @@ class FeedInLimiter:
             if vals.soc >= 88.0:
                 # Battery nearly full — cap charging to State 2 so the drop at 100% SOC
                 # adds only ~3.6 kW to the grid instead of 11.4 kW (State 7).
-                cap = 2
+                cap = 1
                 if decision.final_state > cap:
                     old = decision.final_state
                     decision.final_state = cap
