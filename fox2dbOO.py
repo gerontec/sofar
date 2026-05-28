@@ -1,31 +1,4 @@
 #!/usr/bin/env python3
-"""
-fox2db.py  –  SOYO Inverter Power Management Controller
-OO-Port von fox2db.c (v1.56-C) nach Python
-
-Klassen:
-    Config               – Konfiguration & CLI-Parsing
-    Logger               – Datei-Logging mit Auto-Truncate
-    MeasuredValues       – Datentransfer-Objekt für Messwerte
-    ControlDecision      – Datentransfer-Objekt für Regelentscheid
-    MqttClient           – MQTT Empfang (paho-mqtt)
-    MqttPublisher        – MQTT Ausgabe
-    EBoxReader           – EBox-Batterie-Daten lesen
-    RelayController      – Relais-Steuerung via ebyte_ctrl
-    BlockingRule         – Abstrakte Basisklasse für Sperr-Regeln
-    SweetSpotHold / TrendBlock / BatGuardBlock /
-    StabilizingBlock / HysteresisBlock  – konkrete Regeln
-    FbController         – Kern-Regellogik (fb_controller)
-    ExcessTrendCalc      – Überschuss-Trend-Berechnung
-    DeepDischargeGuard   – Tiefentladeschutz mit Hysterese
-    OutputWriter         – Datei- und CSV-Ausgabe
-    PowerController      – Haupt-Orchestrator (main_loop)
-
-Build/Run:
-    pip install paho-mqtt
-    python3 fox2dbOO.py [options]
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -43,16 +16,17 @@ from typing import Optional
 
 import datetime as _dt
 from astral import LocationInfo as _LocationInfo
-from astral.sun import sun as _astral_sun
+from astral.sun import sun as _astral_sun, elevation as _astral_elevation
 
+import pymysql
 import paho.mqtt.client as mqtt
 
 # ═══════════════════════════════════════════════════════════════════════════
 # VERSION & KONSTANTEN
 # ═══════════════════════════════════════════════════════════════════════════
 
-VERSION = "v1.56-Py"
-MAX_LOG_BYTES = 10 * 1024  # 10 kB, dann truncate
+VERSION = "v1.57-Py"
+MAX_LOG_BYTES = 22 * 1024  # 22 kB, dann truncate
 
 # Hardware-Zustandstabelle: state → Watt
 # ─── Solar-Mittag-Berechnung ─────────────────────────────────────────────────
@@ -106,12 +80,21 @@ class Config:
     sweet_spot_pcc: int = 160
     sweet_spot_bat: int = -310
     max_drop_rate: int = -20
-    midday_soc_threshold: int = 80      # SOC2-Schwelle für Mittagskapp
-    midday_window_minutes: int = 60     # ±Minuten um den solaren Mittag
+    midday_soc_threshold: int = 70      # SOC2-Schwelle für Mittagskapp
+    midday_window_minutes: int = 120     # ±Minuten um den solaren Mittag
     midday_latitude: float = 47.6811    # Lenggries (PLZ 83661)
     midday_longitude: float = 11.5732
-    midday_season_start_month: int = 3  # März (Frühling)
-    midday_season_end_month: int = 10   # Oktober (Ende Herbst, inklusiv)
+    midday_season_start_month: int = 4  # April (Sommerhalbjahr)
+    midday_season_end_month: int = 9    # September (Ende Sommerhalbjahr)
+    feedin_season_start_month: int = 4  # April: FeedInLimiter aktiv
+    feedin_season_end_month: int = 9    # September: FeedInLimiter aktiv
+    feedin_limit_w: int = 19_000        # Einspeisung ab der geladen wird
+    feedin_preload_w: int = 22_000      # Prognose-Schwelle für State-1-Vorschalten
+    feedin_system_peak_kw: float = 17.0 # Installierte DC-Spitzenleistung der Anlage
+    feedin_bad_weather_ratio: float = 0.25  # dc_pv/theoretisch unter diesem Wert → Schlechtwetter
+    feedin_after_noon_hours: float = 2.0    # FeedInLimiter aus nach Solar Noon + X Stunden
+    feedin_max_prognose_w: int = 35_000    # Prognose-Cap: gemessenes Allzeit-Maximum
+    feedin_min_elevation: float = 15.0  # Mindest-Sonnenhöhe (°) für Heuristik
     deep_discharge_lower: int = 6
     deep_discharge_upper: int = 8
     deep_discharge_charge_target: int = 7
@@ -121,6 +104,11 @@ class Config:
     mqtt_port: int = 1883
     mqtt_topic: str = "inverter/power_grid_exchange/json"
     mqtt_timeout: int = 43
+
+    # MQTT Zähler
+    mqtt_zaehl_topic: str = "pv_zaehl2/#"
+    mqtt_zaehl_timeout: int = 10        # kurzes Timeout – Zähler sendet häufig
+    wirkleist_r4_threshold: int = -20_100  # W, negativ = Einspeisung
 
     # MQTT Publish
     mqtt_publish_broker: str = ""        # leer = gleich wie mqtt_broker
@@ -150,6 +138,10 @@ class Config:
         p.add_argument("--mqtt-port", type=int, default=1883)
         p.add_argument("--mqtt-topic", default="inverter/power_grid_exchange/json")
         p.add_argument("--mqtt-timeout", type=int, default=43)
+        p.add_argument("--mqtt-zaehl-topic", default="pv_zaehl2/#")
+        p.add_argument("--mqtt-zaehl-timeout", type=int, default=10)
+        p.add_argument("--wirkleist-r4-threshold", type=int, default=-20_100,
+                       help="Zähler-Wirkleistung (W) unter der Relais-4 ausgelöst wird (negativ=Einspeisung)")
         p.add_argument("--min-excess", type=int, default=1010)
         p.add_argument("--max-grid-draw", type=int, default=1500)
         p.add_argument("--max-soc", type=int, default=99)
@@ -168,8 +160,22 @@ class Config:
                        help="±Minuten um solaren Mittag (default 60)")
         p.add_argument("--midday-lat", type=float, default=47.6811)
         p.add_argument("--midday-lon", type=float, default=11.5732)
-        p.add_argument("--midday-season-start", type=int, default=3)
-        p.add_argument("--midday-season-end", type=int, default=10)
+        p.add_argument("--midday-season-start", type=int, default=4)
+        p.add_argument("--midday-season-end", type=int, default=9)
+        p.add_argument("--feedin-season-start", type=int, default=4)
+        p.add_argument("--feedin-season-end", type=int, default=9)
+        p.add_argument("--feedin-limit", type=int, default=19_000,
+                       help="Einspeisung (W) ab der FeedInLimiter lädt (default 19000)")
+        p.add_argument("--feedin-preload", type=int, default=22_000,
+                       help="Prognose-Schwelle (W) für State-1-Vorschalten (default 22000)")
+        p.add_argument("--feedin-system-peak", type=float, default=17.0,
+                       help="Installierte DC-Spitzenleistung kW (default 17.0)")
+        p.add_argument("--feedin-bad-weather-ratio", type=float, default=0.25,
+                       help="dc_pv/theoretisch unter diesem Wert = Schlechtwetter (default 0.25)")
+        p.add_argument("--feedin-min-elevation", type=float, default=15.0,
+                       help="Mindest-Sonnenhöhe ° für Schlechtwetter-Heuristik (default 15.0)")
+        p.add_argument("--feedin-after-noon-hours", type=float, default=2.0,
+                       help="FeedInLimiter aus nach Solar Noon + X Stunden (default 2.0)")
         p.add_argument("--ebox-script", default="/home/pi/python/ebox1arg.py")
         p.add_argument("--ebyte-script", default="/home/pi/python/ebyte_ctrl.py")
         p.add_argument("--mqtt-publish-broker", default="")
@@ -200,10 +206,21 @@ class Config:
             midday_longitude=a.midday_lon,
             midday_season_start_month=a.midday_season_start,
             midday_season_end_month=a.midday_season_end,
+            feedin_season_start_month=a.feedin_season_start,
+            feedin_season_end_month=a.feedin_season_end,
+            feedin_limit_w=a.feedin_limit,
+            feedin_preload_w=a.feedin_preload,
+            feedin_system_peak_kw=a.feedin_system_peak,
+            feedin_bad_weather_ratio=a.feedin_bad_weather_ratio,
+            feedin_min_elevation=a.feedin_min_elevation,
+            feedin_after_noon_hours=a.feedin_after_noon_hours,
             mqtt_broker=a.mqtt_broker,
             mqtt_port=a.mqtt_port,
             mqtt_topic=a.mqtt_topic,
             mqtt_timeout=a.mqtt_timeout,
+            mqtt_zaehl_topic=a.mqtt_zaehl_topic,
+            mqtt_zaehl_timeout=a.mqtt_zaehl_timeout,
+            wirkleist_r4_threshold=a.wirkleist_r4_threshold,
             mqtt_publish_broker=a.mqtt_publish_broker,
             mqtt_publish_port=a.mqtt_publish_port,
             mqtt_publish_topic=a.mqtt_publish_topic,
@@ -254,6 +271,9 @@ class MeasuredValues:
     stable: int = 0
     prot: int = 0
     last_excess: float = 0.0
+    dc_pv: float = 0.0        # Sofar: Power_PV1 + Power_PV2 in kW
+    wirkleist: float = 0.0    # Zähler: Wirkleistung in W (negativ = Einspeisung)
+    wp_power: float = 0.0     # Wärmepumpe em0/54/power in W (nicht in Z2 enthalten)
 
 
 @dataclass
@@ -316,11 +336,86 @@ class MqttClient:
             return None
 
         raw = received[0]
-        pcc = raw.get("ActivePower_PCC_Total", 0.0) * 1000.0   # kW → W
+        _pcc_raw = raw.get("ActivePower_PCC_Total")
+        pcc = _pcc_raw * 1000.0 if _pcc_raw is not None else float("nan")  # fehlendes Feld ≠ 0W
         bat1 = raw.get("Power_Bat1", 0.0) * 1000.0
         soc_bat1 = raw.get("SOC_Bat1", 0.0)
-        self._log(f"MQTT Received: PCC={pcc:.0f}W, Bat1={bat1:.0f}W, SOC_Bat1={soc_bat1:.1f}%")
-        return {"pcc": pcc, "bat1": bat1, "soc_bat1": soc_bat1}
+        dc_pv = raw.get("Power_PV1", 0.0) + raw.get("Power_PV2", 0.0)  # kW
+        self._log(f"MQTT Received: PCC={pcc:.0f}W, Bat1={bat1:.0f}W, SOC_Bat1={soc_bat1:.1f}%, PV_DC={dc_pv:.2f}kW")
+        return {"pcc": pcc, "bat1": bat1, "soc_bat1": soc_bat1, "dc_pv": dc_pv}
+
+    def fetch_wirkleist(self) -> float:
+        """
+        Liest einmalig wirkleist aus pv_zaehl2/#.
+        Gibt 0.0 bei Timeout oder Fehler zurück.
+        Negativ = Einspeisung ins Netz.
+        """
+        received: list[float] = []
+
+        def on_message(_client, _userdata, message):
+            try:
+                data = json.loads(message.payload.decode())
+                wl = data.get("wirkleist")
+                if wl is not None:
+                    received.append(float(wl))
+            except Exception as e:
+                self._log(f"MQTT wirkleist JSON Parse Error: {e}")
+
+        client = mqtt.Client(client_id="fox2db_zaehl_client", clean_session=True)
+        client.on_message = on_message
+
+        try:
+            client.connect(self._cfg.mqtt_broker, self._cfg.mqtt_port, keepalive=60)
+        except Exception as e:
+            self._log(f"MQTT wirkleist Connection failed: {e}")
+            return 0.0
+
+        client.subscribe(self._cfg.mqtt_zaehl_topic, qos=0)
+        client.loop_start()
+
+        deadline = time.monotonic() + self._cfg.mqtt_zaehl_timeout
+        while not received and time.monotonic() < deadline:
+            time.sleep(0.1)
+
+        client.loop_stop()
+        client.disconnect()
+
+        if not received:
+            self._log(f"WARNING: wirkleist Timeout after {self._cfg.mqtt_zaehl_timeout}s – verwende 0.0")
+            return 0.0
+
+        wl = received[0]
+        self._log(f"Zaehler wirkleist={wl:.0f}W")
+        return wl
+
+
+    def fetch_wp_power(self) -> float:
+        """Liest em0/54/power (Waermepumpe, nicht in Z2 enthalten). Retained topic."""
+        received: list[float] = []
+
+        def on_message(_c, _u, msg):
+            try:
+                received.append(float(msg.payload.decode().strip()))
+            except Exception:
+                pass
+
+        cl = mqtt.Client(client_id="fox2db_wp_client", clean_session=True)
+        cl.on_message = on_message
+        try:
+            cl.connect(self._cfg.mqtt_broker, self._cfg.mqtt_port, keepalive=60)
+        except Exception as e:
+            self._log(f"MQTT wp_power failed: {e}")
+            return 0.0
+        cl.subscribe("em0/54/power", qos=0)
+        cl.loop_start()
+        deadline = time.monotonic() + 2
+        while not received and time.monotonic() < deadline:
+            time.sleep(0.1)
+        cl.loop_stop()
+        cl.disconnect()
+        wp = received[0] if received else 0.0
+        self._log(f"WP power={wp:.0f}W")
+        return wp
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -378,10 +473,126 @@ class EBoxReader:
         except subprocess.TimeoutExpired:
             self._log("EBox Update timeout")
 
-    def read(self) -> tuple[float, float]:
+    def _fetch_cells(self, pack: int, ts) -> list:
+        """Fuehrt 'ebox bat <pack>' aus und gibt DB-Rows fuer pv_ebox_cells zurueck."""
+        try:
+            ret = subprocess.run(
+                ["/usr/local/bin/ebox", "bat", str(pack)],
+                capture_output=True, text=True, timeout=12, errors="replace"
+            )
+            output = ret.stdout
+        except Exception as e:
+            self._log(f"EBox bat {pack} error: {e}")
+            return []
+
+        rows = []
+        for line in output.splitlines():
+            parts = line.split()
+            if not parts or not parts[0].isdigit():
+                continue
+            if len(parts) < 9:
+                continue
+            try:
+                rows.append((
+                    ts,
+                    pack,
+                    int(parts[0]),
+                    int(parts[1]),
+                    int(parts[3]),
+                    int(parts[3]),
+                    parts[4],
+                    parts[5],
+                    parts[6],
+                    parts[7],
+                    int(parts[8].replace("%", "")),
+                ))
+            except (ValueError, IndexError):
+                continue
+        return rows
+
+    def _write_cells_to_db(self, rows: list) -> None:
+        """Schreibt Einzelzell-Daten in MariaDB wagodb.pv_ebox_cells."""
+        if not rows:
+            return
+        try:
+            conn = pymysql.connect(
+                host="192.168.178.218",
+                database="wagodb",
+                user="gh",
+                password="a12345",
+            )
+            cur = conn.cursor()
+            cur.executemany(
+                """INSERT INTO pv_ebox_cells
+                   (ts, pack, cell, volt, curr, tempr,
+                    base_st, volt_st, curr_st, temp_st, coulomb)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                rows,
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+            self._log(f"EBox cells: {len(rows)} Zeilen in pv_ebox_cells geschrieben")
+        except Exception as e:
+            self._log(f"EBox cells DB write error: {e}")
+
+    def _fetch_soh(self, pack: int) -> float:
+        """Gibt SOH in % zurück (Real Coulomb / Total Coulomb). -1.0 bei Fehler."""
+        try:
+            ret = subprocess.run(
+                ["/usr/local/bin/ebox", "pwr", str(pack)],
+                capture_output=True, text=True, timeout=10, errors="replace"
+            )
+            real = total = None
+            for line in ret.stdout.splitlines():
+                if "Real Coulomb" in line:
+                    parts = line.split()
+                    real = float(parts[3])
+                elif "Total Coulomb" in line:
+                    parts = line.split()
+                    total = float(parts[3])
+            if real and total and total > 0:
+                return round(real / total * 100, 1)
+        except Exception as e:
+            self._log(f"EBox pwr {pack} SOH error: {e}")
+        return -1.0
+
+    def collect_cells_if_needed(self, min_soc: float) -> None:
+        """Einzelzell-Erfassung bei SOC > 99 % oder SOC < 20 %."""
+        if min_soc < 0:
+            return
+        if not (min_soc > 99 or min_soc < 20):
+            return
+        ts = _dt.datetime.now()
+        self._log(f"EBox cells: Einzelzell-Erfassung (SOC={min_soc:.1f}%)")
+        time.sleep(4)  # Seriell-Port nach ebox pwr Abfrage entlasten
+        all_rows: list = []
+        for pack in (1, 2, 3):
+            all_rows.extend(self._fetch_cells(pack, ts))
+            time.sleep(4)  # Pause zwischen Pack-Abfragen
+        self._write_cells_to_db(all_rows)
+        if all_rows:
+            worst = min(all_rows, key=lambda r: r[3])
+            best  = max(all_rows, key=lambda r: r[3])
+            self._log(
+                f"EBox cells: MIN Pack{worst[1]} Zelle{worst[2]} {worst[3]}mV ({worst[3]/1000:.3f}V) SOC={worst[10]}%  |  "
+                f"MAX Pack{best[1]} Zelle{best[2]} {best[3]}mV ({best[3]/1000:.3f}V) SOC={best[10]}%  |  "
+                f"Delta {best[3]-worst[3]}mV")
+        soh_vals = []
+        for pack in (1, 2, 3):
+            soh = self._fetch_soh(pack)
+            if soh > 0:
+                soh_vals.append((pack, soh))
+            time.sleep(2)
+        if soh_vals:
+            worst_soh = min(soh_vals, key=lambda x: x[1])
+            soh_str = "  ".join(f"Pack{p}={s}%" for p, s in soh_vals)
+            self._log(f"EBox SOH: {soh_str}  |  MIN Pack{worst_soh[0]}={worst_soh[1]}%")
+
+    def read(self) -> tuple:
         """
-        Liest ebox_data-Datei und gibt (bat_cur_A, min_soc) zurück.
-        min_soc = -1.0 wenn unbekannt.
+        Liest ebox_data-Datei, gibt (bat_cur_A, min_soc) zurueck und
+        schreibt alle Akkuzeilen in MariaDB wagodb.pv_ebox2.
         """
         path = Path(self._cfg.path_ebox_data)
         if not path.exists():
@@ -390,28 +601,73 @@ class EBoxReader:
 
         total_current_ma = 0.0
         soc_values: list[float] = []
+        db_rows: list[tuple] = []
 
         try:
             for raw_line in path.read_text().splitlines():
                 line = raw_line.strip().lstrip("b'").rstrip("'")
-                if not line or line.startswith("Power"):
+                if not line or line.startswith("Power") or "$" in line or "#" in line:
                     continue
                 if line[0] in "123":
                     parts = line.split()
-                    if len(parts) > 2:
-                        try:
-                            total_current_ma += float(parts[2])
-                        except ValueError:
-                            pass
+                    if len(parts) < 13:
+                        continue
+                    if parts[8] == "Absent":
+                        continue
+                    try:
+                        total_current_ma += float(parts[2])
+                    except ValueError:
+                        pass
                     for p in parts:
                         if "%" in p:
                             try:
                                 soc_values.append(float(p.replace("%", "")))
                             except ValueError:
                                 pass
+                    try:
+                        db_rows.append((
+                            float(parts[0]),
+                            float(parts[1]),
+                            float(parts[2]),
+                            float(parts[3]),
+                            float(parts[4]),
+                            float(parts[5]),
+                            float(parts[6]),
+                            float(parts[7]),
+                            parts[8],
+                            parts[9],
+                            parts[10],
+                            parts[11],
+                            float(parts[12].replace("%", "")),
+                            _dt.datetime.now(),
+                        ))
+                    except (ValueError, IndexError):
+                        pass
         except OSError as e:
             self._log(f"EBox read error: {e}")
             return 0.0, -1.0
+
+        if db_rows:
+            try:
+                conn = pymysql.connect(
+                    host="192.168.178.218",
+                    database="wagodb",
+                    user="gh",
+                    password="a12345",
+                )
+                cur = conn.cursor()
+                cur.executemany(
+                    """INSERT INTO pv_ebox2
+                       (Power, Volt, Curr, Tempr, Tlow, Thigh, Vlow, Vhigh,
+                        BaseSt, VoltSt, CurrSt, TempSt, Coulomb, ts)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    db_rows,
+                )
+                conn.commit()
+                cur.close()
+                conn.close()
+            except Exception as e:
+                self._log(f"EBox DB write error: {e}")
 
         bat_cur = total_current_ma / 1000.0
         min_soc = min(soc_values) if soc_values else -1.0
@@ -434,7 +690,29 @@ class RelayController:
         prefix = "python3 " if script.endswith(".py") else ""
         return f"{prefix}{script} {args}"
 
-    def set_state(self, state: int) -> bool:
+    def _db_log(self, action: str, relay: str, duration_s: int | None,
+                state_new: int | None, reason: str) -> None:
+        try:
+            conn = pymysql.connect(
+                host="192.168.178.218",
+                database="wagodb",
+                user="gh",
+                password="a12345",
+                connect_timeout=5,
+            )
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO pv_relay_events (ts, action, relay, duration_s, state_new, reason) "
+                "VALUES (NOW(), %s, %s, %s, %s, %s)",
+                (action, relay, duration_s, state_new, reason),
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            self._log(f"Relay DB log error: {e}")
+
+    def set_state(self, state: int, reason: str = "") -> bool:
         cmd = self._build_cmd(str(state))
         try:
             ret = subprocess.run(
@@ -443,6 +721,7 @@ class RelayController:
             if ret.returncode == 0:
                 self._write_state_file(state)
                 self._log(f"Relay OK: → {state} | {ret.stdout.strip()}")
+                self._db_log("set_state", "R1-R3", None, state, reason)
                 return True
             else:
                 self._log(f"Relay ERROR State {state}: [{ret.stdout.strip()}] – State file NOT updated")
@@ -451,13 +730,14 @@ class RelayController:
             self._log(f"Relay timeout: state {state}")
             return False
 
-    def pulse_r4(self, duration: int = 3) -> None:
+    def pulse_r4(self, duration: int = 3, reason: str = "") -> None:
         """Nicht-blockierender Relais-4-Puls (fork-ähnlich via Popen)."""
         script = self._cfg.path_ebyte_script
         cmd = ["python3", script, "r4", "pulse", str(duration)]
         try:
             proc = subprocess.Popen(cmd)
-            self._log(f"Relay4 Puls ausgelöst (PCC>20kW, PID={proc.pid})")
+            self._log(f"Relay4 Puls ausgelöst (PID={proc.pid}, duration={duration}s)")
+            self._db_log("pulse", "R4", duration, None, reason)
         except OSError as e:
             self._log(f"Relay4 fork fehlgeschlagen: {e}")
 
@@ -486,6 +766,12 @@ def find_best_state(budget: int) -> int:
         if p <= budget and p > best_power:
             best_state, best_power = s, p
     return best_state
+
+
+def find_min_covering_state(needed: int) -> int:
+    """Kleinster State dessen Leistung >= needed (für FeedInLimiter: mindestens absorbieren)."""
+    candidates = [(s, p) for s, p in STATE_POWER.items() if s > 0 and p >= needed]
+    return min(candidates, key=lambda x: x[1])[0] if candidates else 7
 
 
 def get_next_state_up(current_state: int) -> int:
@@ -573,6 +859,113 @@ class HysteresisBlock(BlockingRule):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# FEED-IN LIMITER (Sommer-Einspeisebegrenzung)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class FeedInLimiter:
+    """
+    Sommer-Regelung: lädt die EBox nur um Grid-Einspeisung < feedin_limit_w zu halten.
+
+    Drei Fälle:
+      ON      — feed_in >= limit   → Proportionalregelung: Stufe direkt aus Überschuss
+      PRELOAD — feed_in <  limit,  Prognose(60s) >= preload → State 1 vorschalten
+      OFF     — sonst              → State 0
+    """
+
+    def __init__(self, cfg: Config) -> None:
+        self._cfg = cfg
+
+    def _is_active_season(self) -> bool:
+        m = _dt.datetime.now().month
+        return self._cfg.feedin_season_start_month <= m <= self._cfg.feedin_season_end_month
+
+    def _after_peak_window(self) -> tuple[bool, str]:
+        """True wenn Solar Noon + feedin_after_noon_hours bereits überschritten."""
+        try:
+            noon = _solar_noon(self._cfg.midday_latitude, self._cfg.midday_longitude)
+            cutoff = noon + _dt.timedelta(hours=self._cfg.feedin_after_noon_hours)
+            now_tz = _dt.datetime.now(noon.tzinfo)
+            past = now_tz >= cutoff
+            return past, cutoff.strftime("%H:%M")
+        except Exception as e:
+            return False, f"error:{e}"
+
+    def _bad_weather_check(self, vals: MeasuredValues) -> tuple[bool, str]:
+        """
+        Heuristik: wenn dc_pv deutlich unter theoretischem Maximum liegt → Schlechtwetter.
+        Gibt (is_bad, reason_str) zurück.
+        Nur anwendbar wenn Sonnenhöhe >= feedin_min_elevation.
+        """
+        cfg = self._cfg
+        try:
+            loc = _LocationInfo("Standort", "Germany", "Europe/Berlin",
+                                cfg.midday_latitude, cfg.midday_longitude)
+            now_tz = _dt.datetime.now(_dt.timezone.utc).astimezone()
+            elev = _astral_elevation(loc.observer, now_tz)
+            if elev < cfg.feedin_min_elevation:
+                return False, f"elev={elev:.1f}°<{cfg.feedin_min_elevation}° (zu flach)"
+            theoretical_kw = cfg.feedin_system_peak_kw * math.sin(math.radians(elev))
+            ratio = vals.dc_pv / theoretical_kw if theoretical_kw > 0 else 1.0
+            is_bad = ratio < cfg.feedin_bad_weather_ratio
+            reason = (f"dc_pv={vals.dc_pv:.2f}kW / theoretisch={theoretical_kw:.2f}kW"
+                      f" = {ratio:.2f} {'<' if is_bad else '>='} {cfg.feedin_bad_weather_ratio}"
+                      f" elev={elev:.1f}°")
+            return is_bad, reason
+        except Exception as e:
+            return False, f"error:{e}"
+
+    def apply(self, vals: MeasuredValues, decision: ControlDecision) -> None:
+        if not self._is_active_season() or vals.prot:
+            return
+        after_peak, cutoff_time = self._after_peak_window()
+        if after_peak:
+            decision.trace += f" | FeedInLimiter AFTER_PEAK (>{cutoff_time} → Winterregel)"
+            return
+        bad_weather, bw_reason = self._bad_weather_check(vals)
+        if bad_weather:
+            decision.trace += f" | FeedInLimiter BADWEATHER ({bw_reason})"
+            return
+
+        cfg = self._cfg
+        # PCC = direkte Messung der Netzeinspeisung am Wechselrichter (bevorzugt).
+        # Z2+WP als Fallback wenn PCC=0 (Mode-Switch oder Datenlücke).
+        if vals.pcc > 500:
+            feed_in_w = int(vals.pcc)
+            feed_in_src = "PCC"
+        else:
+            feed_in_w = int(abs(min(0.0, vals.wirkleist + vals.wp_power)))
+            feed_in_src = "Z2+WP"
+        prognose_w = min(
+            feed_in_w + int(decision.drop_rate * 60) if decision.has_drop_rate else feed_in_w,
+            cfg.feedin_max_prognose_w,
+        )
+
+        if feed_in_w >= cfg.feedin_limit_w:
+            absorption_needed = feed_in_w - cfg.feedin_limit_w
+            target = find_min_covering_state(absorption_needed)
+            old_state = decision.final_state
+            decision.final_state = target
+            decision.changed = (target != vals.relay_st)
+            decision.trace += (f" | FeedInLimiter ON [{feed_in_src}] ({feed_in_w}W >= {cfg.feedin_limit_w}W"
+                               f", absorb={absorption_needed}W) State{old_state}→{target}")
+
+        elif prognose_w >= cfg.feedin_preload_w:
+            old_state = decision.final_state
+            decision.final_state = 1
+            decision.changed = (1 != vals.relay_st)
+            decision.trace += (f" | FeedInLimiter PRELOAD [{feed_in_src}]"
+                               f" ({feed_in_w}W + trend={decision.drop_rate:+.0f}W/s×60s"
+                               f" → prognose={prognose_w}W >= {cfg.feedin_preload_w}W)"
+                               f" State{old_state}→1")
+
+        else:
+            # Kein Eingriff — Winterregel (POWER_MATCHING/RAMP_LIMITED) behält ihren State
+            decision.trace += (f" | FeedInLimiter OFF [{feed_in_src}]"
+                               f" ({feed_in_w}W < {cfg.feedin_limit_w}W"
+                               f", prognose={prognose_w}W)")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # FB CONTROLLER (Kern-Regellogik)
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -585,12 +978,6 @@ class FbController:
     def __init__(self, cfg: Config, blocking_rules: list[BlockingRule]) -> None:
         self._cfg = cfg
         self._rules = blocking_rules
-
-    def run(self, vals: MeasuredValues) -> ControlDecision:
-        """Vollständiger Lauf mit drop_rate=0. Nur wenn Trend irrelevant."""
-        decision = self.decide(vals)
-        self.apply_blocking(vals, decision)
-        return decision
 
     def decide(self, vals: MeasuredValues) -> ControlDecision:
         """Phase 1: Zustandsentscheidung ohne Blocking (kein drop_rate nötig)."""
@@ -614,12 +1001,15 @@ class FbController:
         # SOC unbekannt
         if v.soc < 0:
             ebox_actual = (v.bat_cur * 2 * 53 + 1) if v.relay_st > 0 else 0.0
-            excess = v.pcc + ebox_actual + v.bat1
+            grid = v.pcc if v.pcc > 500 else abs(min(0.0, v.wirkleist))
+            excess = grid + ebox_actual + v.bat1
             return v.relay_st, excess, f"EBOX_SOC_UNKNOWN_HOLD (prot={v.prot})"
 
         ebox_eff = (max(v.bat_cur * 2 * 53 + 1, get_state_power(v.relay_st))
                     if v.relay_st > 0 else 0.0)
-        excess = v.pcc + ebox_eff + v.bat1
+        # PCC=0 (Mode-Switch) → Z2 als Fallback, identisch zur FeedInLimiter-Logik
+        grid = v.pcc if v.pcc > 500 else abs(min(0.0, v.wirkleist))
+        excess = grid + ebox_eff + v.bat1
 
         # Emergency Charge mit Target (verhindert Ping-Pong)
         if v.prot:
@@ -717,13 +1107,6 @@ class ExcessTrendCalc:
         """Neuen Überschuss persistieren."""
         _write_file(self._path, f"{excess:.1f}")
 
-    def update(self, excess: float) -> tuple[float, bool]:
-        """Gibt (drop_rate, has_drop_rate) zurück und schreibt neuen Wert."""
-        last = self.read_last()
-        has_drop_rate = last > 0
-        drop_rate = (excess - last) / 30.0 if has_drop_rate else 0.0
-        self.write(excess)
-        return drop_rate, has_drop_rate
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -789,6 +1172,7 @@ class OutputWriter:
             "pcc": round(vals.pcc),
             "bat1": round(vals.bat1),
             "ebox": round(ebox_w),
+            "wirkleist": round(vals.wirkleist),
             "state": dec.final_state,
             "state_before": vals.relay_st,
             "stable": new_stable,
@@ -807,7 +1191,8 @@ class OutputWriter:
                     f"{vals.soc_bat1:.1f},{vals.bat_cur:.1f},{dec.final_state}\n")
 
         self._log(f"Data: SOC2={vals.soc:.1f}% SOC1={vals.soc_bat1:.1f}% "
-                  f"PCC={vals.pcc:.0f}W Bat1={vals.bat1:.0f}W EBox={ebox_w:.0f}W "
+                  f"PCC={vals.pcc:.0f}W Z2={vals.wirkleist:.0f}W "
+                  f"Bat1={vals.bat1:.0f}W EBox={ebox_w:.0f}W "
                   f"(State={vals.relay_st}) Stable={new_stable}")
         if dec.has_drop_rate and dec.drop_rate != 0:
             self._log(f"Trend: Excess {vals.last_excess:.0f}W→{dec.excess:.0f}W "
@@ -829,6 +1214,15 @@ class PowerController:
         self._cfg = cfg
         log = Logger(cfg.path_log)
         self._log = log
+
+        # Aufrufer protokollieren
+        ppid = os.getppid()
+        try:
+            parent_cmd = Path(f"/proc/{ppid}/cmdline").read_text().replace('\x00', ' ').strip()
+        except OSError:
+            parent_cmd = "unknown"
+        log(f"START: {' '.join(sys.argv)} | caller(pid={ppid}): {parent_cmd}")
+
         self._mqtt = MqttClient(cfg, log)
         self._pub = MqttPublisher(cfg, log)
         self._ebox = EBoxReader(cfg, log)
@@ -845,41 +1239,71 @@ class PowerController:
             HysteresisBlock(cfg),
         ]
         self._fb = FbController(cfg, blocking_rules)
+        self._feedin = FeedInLimiter(cfg)
 
     def run_cycle(self) -> None:
+        t0 = time.monotonic()
         self._log("--- Start Cycle ---")
 
         # ── INPUT LAYER ───────────────────────────────────────────────────
         self._ebox.update()
+        t_ebox_upd = time.monotonic()
 
         mqtt_data = self._mqtt.fetch()
+        t_mqtt = time.monotonic()
         if mqtt_data is None:
             self._log("EMERGENCY SHUTDOWN: MQTT failed")
-            self._relay.set_state(0)
+            self._relay.set_state(0, reason="EMERGENCY: MQTT failed")
             return
 
+        # Zähler-Wirkleistung parallel zum EBox-Read holen
+        wirkleist = self._mqtt.fetch_wirkleist()
+        wp_power = self._mqtt.fetch_wp_power()
+        t_zaehl = time.monotonic()
+
         bat_cur, soc = self._ebox.read()
+        t_ebox_read = time.monotonic()
+        self._ebox.collect_cells_if_needed(soc)
+        t_cells = time.monotonic()
         prot = self._dd_guard.read()
 
         vals = MeasuredValues(
             pcc=mqtt_data["pcc"],
             bat1=mqtt_data["bat1"],
             soc_bat1=mqtt_data["soc_bat1"],
+            dc_pv=mqtt_data.get("dc_pv", 0.0),
             bat_cur=bat_cur,
             soc=soc,
             relay_st=self._relay.read_state(),
             stable=int(_read_file(self._cfg.path_last_change, 0)),
             prot=prot,
             last_excess=_read_file(self._cfg.path_last_excess, 0.0),
+            wirkleist=wirkleist,
+            wp_power=wp_power,
         )
 
-        # Relais-4-Puls bei PCC-Einspeisung > 20 kW
-        if vals.pcc > 20_000:
-            self._relay.pulse_r4()
+        # ── RELAIS-4 AUSLÖSUNG ────────────────────────────────────────────
+        # PCC > 20 kW + DC-PV > 10.8 kW  → 60 s Puls
+        # PCC > 20 kW allein              → 3 s Puls
+        # wirkleist < -20 kW (Einspeisung)→ 3 s Puls
+        if vals.pcc > 20_600 and vals.dc_pv > 10.8:
+            self._relay.pulse_r4(60, reason=f"PCC={vals.pcc:.0f}W DC-PV={vals.dc_pv:.2f}kW")
+        elif vals.pcc > 20_600:
+            self._relay.pulse_r4(reason=f"PCC={vals.pcc:.0f}W>20kW DC-PV={vals.dc_pv:.2f}kW<=10.8kW")
+            self._log(
+                f"Relay4 3s-Puls: PCC={vals.pcc:.0f}W>20kW, "
+                f"DC-PV={vals.dc_pv:.2f}kW <=10.8kW — 60s-Bedingung noch nicht erfuellt"
+            )
+        elif (vals.wirkleist + vals.wp_power) < self._cfg.wirkleist_r4_threshold:
+            korr = vals.wirkleist + vals.wp_power
+            self._relay.pulse_r4(reason=f"wirkleist_korr={korr:.0f}W<{self._cfg.wirkleist_r4_threshold}W (WP={vals.wp_power:.0f}W)")
+            self._log(
+                f"Relay4 3s-Puls: wirkleist={vals.wirkleist:.0f}W + WP={vals.wp_power:.0f}W"
+                f" = {korr:.0f}W < {self._cfg.wirkleist_r4_threshold}W"
+            )
 
         # ── LOGIC LAYER ───────────────────────────────────────────────────
         # Reihenfolge 1:1 wie C: decide → drop_rate berechnen → blocking
-        # vals.last_excess wurde oben bereits aus Datei gelesen (vor jedem Schreiben)
 
         # Phase 1: Zustandsentscheidung (excess wird dabei berechnet, drop_rate nicht nötig)
         decision = self._fb.decide(vals)
@@ -893,18 +1317,47 @@ class PowerController:
         # Phase 3: Blocking einmalig mit korrektem drop_rate (kein Doppellauf)
         self._fb.apply_blocking(vals, decision)
 
+        # ── FEED-IN LIMITER ────────────────────────────────────────────────
+        self._feedin.apply(vals, decision)
+
         # ── OUTPUT LAYER ──────────────────────────────────────────────────
         new_stable = 0 if decision.changed else vals.stable + 1
         self._writer.write_cycle(vals, decision, new_stable)
+
+        # Solar Noon loggen
+        try:
+            _noon = _solar_noon(self._cfg.midday_latitude, self._cfg.midday_longitude)
+            _now_tz = _dt.datetime.now(_noon.tzinfo)
+            _diff_min = (_noon - _now_tz).total_seconds() / 60
+            _in_win = _in_midday_window(self._cfg)
+            self._log(
+                f"SolarNoon: {_noon.strftime('%H:%M')} CEST"
+                f" ({_diff_min:+.0f} min)"
+                f" window=±{self._cfg.midday_window_minutes}min"
+                f" {'IN' if _in_win else 'OUT'}"
+            )
+        except Exception as e:
+            self._log(f"SolarNoon error: {e}")
 
         # Tiefentladeschutz aktualisieren
         self._dd_guard.update(vals.soc)
 
         # Relais schalten oder halten
         if decision.changed:
-            self._relay.set_state(decision.final_state)
+            self._relay.set_state(decision.final_state, reason=decision.trace)
         else:
             self._relay.keep_state(decision.final_state)
+
+        t_end = time.monotonic()
+        cells_s = f" cells={t_cells - t_ebox_read:.1f}s" if (t_cells - t_ebox_read) > 0.1 else ""
+        self._log(
+            f"Timing: ebox_pwr={t_ebox_upd-t0:.1f}s"
+            f" mqtt={t_mqtt-t_ebox_upd:.1f}s"
+            f" zaehl={t_zaehl-t_mqtt:.1f}s"
+            f" ebox_read={t_ebox_read-t_zaehl:.1f}s"
+            f"{cells_s}"
+            f" total={t_end-t0:.1f}s"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
