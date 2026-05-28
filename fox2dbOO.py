@@ -1267,7 +1267,7 @@ class PowerController:
         wp_power = self._mqtt.fetch_wp_power()
         t_zaehl = time.monotonic()
 
-        bat_cur, soc = self._ebox.read(write_db=(_dt.datetime.now().minute % 5 == 0))
+        bat_cur, soc = self._ebox.read()
         t_ebox_read = time.monotonic()
         self._ebox.collect_cells_if_needed(soc)
         t_cells = time.monotonic()
