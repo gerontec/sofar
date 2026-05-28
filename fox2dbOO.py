@@ -925,7 +925,7 @@ class FeedInLimiter:
         if not self._is_active_season() or vals.prot:
             return
         after_peak, cutoff_time = self._after_peak_window()
-        if after_peak and vals.soc < 99.0:
+        if after_peak and vals.soc < 88.0:
             decision.trace += f" | FeedInLimiter AFTER_PEAK (>{cutoff_time} → Winterregel)"
             decision.after_peak = True
             return
@@ -1326,7 +1326,7 @@ class PowerController:
 
         # Phase 3: Blocking einmalig mit korrektem drop_rate (kein Doppellauf)
         # after_peak: TREND_BLOCK nur überspringen wenn Batterie noch nicht voll
-        decision.after_peak = self._feedin._after_peak_window()[0] and vals.soc < 99.0
+        decision.after_peak = self._feedin._after_peak_window()[0] and vals.soc < 88.0
         self._fb.apply_blocking(vals, decision)
 
         # ── FEED-IN LIMITER ────────────────────────────────────────────────
