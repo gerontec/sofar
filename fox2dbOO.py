@@ -285,6 +285,7 @@ class ControlDecision:
     excess: float = 0.0
     drop_rate: float = 0.0
     has_drop_rate: bool = False
+    after_peak: bool = False
     trace: str = ""
     reason: str = ""
 
@@ -1087,6 +1088,8 @@ class FbController:
         for rule in self._rules:
             if rule.direction not in (direction, "BOTH"):
                 continue
+            if dec.after_peak and isinstance(rule, TrendBlock):
+                continue  # after solar peak: ramp freely to State 7
             blocked, reason = rule.is_blocked(v.pcc, v.bat1, v.stable, drop_rate, pwr_diff)
             if blocked:
                 dec.trace += f" | {reason}"
@@ -1321,6 +1324,7 @@ class PowerController:
         self._trend.write(decision.excess)
 
         # Phase 3: Blocking einmalig mit korrektem drop_rate (kein Doppellauf)
+        decision.after_peak = self._feedin._after_peak_window()[0]
         self._fb.apply_blocking(vals, decision)
 
         # ── FEED-IN LIMITER ────────────────────────────────────────────────
