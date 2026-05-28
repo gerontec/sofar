@@ -338,9 +338,13 @@ class MqttClient:
         raw = received[0]
         _pcc_raw = raw.get("ActivePower_PCC_Total")
         pcc = _pcc_raw * 1000.0 if _pcc_raw is not None else float("nan")  # fehlendes Feld ≠ 0W
-        bat1 = raw.get("Power_Bat1", 0.0) * 1000.0
-        soc_bat1 = raw.get("SOC_Bat1", 0.0)
-        dc_pv = raw.get("Power_PV1", 0.0) + raw.get("Power_PV2", 0.0)  # kW
+        _bat1_raw = raw.get("Power_Bat1")
+        bat1 = _bat1_raw * 1000.0 if _bat1_raw is not None else 0.0
+        _soc_raw = raw.get("SOC_Bat1")
+        soc_bat1 = float(_soc_raw) if _soc_raw is not None else 0.0
+        _pv1_raw = raw.get("Power_PV1")
+        _pv2_raw = raw.get("Power_PV2")
+        dc_pv = (_pv1_raw if _pv1_raw is not None else 0.0) + (_pv2_raw if _pv2_raw is not None else 0.0)
         self._log(f"MQTT Received: PCC={pcc:.0f}W, Bat1={bat1:.0f}W, SOC_Bat1={soc_bat1:.1f}%, PV_DC={dc_pv:.2f}kW")
         return {"pcc": pcc, "bat1": bat1, "soc_bat1": soc_bat1, "dc_pv": dc_pv}
 
@@ -520,6 +524,7 @@ class EBoxReader:
                 database="wagodb",
                 user="gh",
                 password="a12345",
+                connect_timeout=5,
             )
             cur = conn.cursor()
             cur.executemany(
@@ -589,10 +594,10 @@ class EBoxReader:
             soh_str = "  ".join(f"Pack{p}={s}%" for p, s in soh_vals)
             self._log(f"EBox SOH: {soh_str}  |  MIN Pack{worst_soh[0]}={worst_soh[1]}%")
 
-    def read(self) -> tuple:
+    def read(self, write_db: bool = True) -> tuple:
         """
-        Liest ebox_data-Datei, gibt (bat_cur_A, min_soc) zurueck und
-        schreibt alle Akkuzeilen in MariaDB wagodb.pv_ebox2.
+        Liest ebox_data-Datei, gibt (bat_cur_A, min_soc) zurueck.
+        write_db=True: INSERT in pv_ebox2 (wird vom Aufrufer gedrosselt).
         """
         path = Path(self._cfg.path_ebox_data)
         if not path.exists():
@@ -647,13 +652,14 @@ class EBoxReader:
             self._log(f"EBox read error: {e}")
             return 0.0, -1.0
 
-        if db_rows:
+        if db_rows and write_db:
             try:
                 conn = pymysql.connect(
                     host="192.168.178.218",
                     database="wagodb",
                     user="gh",
                     password="a12345",
+                    connect_timeout=5,
                 )
                 cur = conn.cursor()
                 cur.executemany(
@@ -928,13 +934,13 @@ class FeedInLimiter:
 
         cfg = self._cfg
         # PCC = direkte Messung der Netzeinspeisung am Wechselrichter (bevorzugt).
-        # Z2+WP als Fallback wenn PCC=0 (Mode-Switch oder Datenlücke).
+        # Z2 als Fallback wenn PCC=NaN (Mode-Switch). Z2 enthält WP bereits → kein Abzug.
         if vals.pcc > 500:
             feed_in_w = int(vals.pcc)
             feed_in_src = "PCC"
         else:
-            feed_in_w = int(abs(min(0.0, vals.wirkleist + vals.wp_power)))
-            feed_in_src = "Z2+WP"
+            feed_in_w = int(abs(min(0.0, vals.wirkleist)))
+            feed_in_src = "Z2"
         prognose_w = min(
             feed_in_w + int(decision.drop_rate * 60) if decision.has_drop_rate else feed_in_w,
             cfg.feedin_max_prognose_w,
@@ -1169,7 +1175,7 @@ class OutputWriter:
             "version": VERSION,
             "soc_bat2": round(vals.soc * 10) / 10,
             "soc_bat1": round(vals.soc_bat1 * 10) / 10,
-            "pcc": round(vals.pcc),
+            "pcc": round(vals.pcc) if math.isfinite(vals.pcc) else None,
             "bat1": round(vals.bat1),
             "ebox": round(ebox_w),
             "wirkleist": round(vals.wirkleist),
@@ -1261,7 +1267,7 @@ class PowerController:
         wp_power = self._mqtt.fetch_wp_power()
         t_zaehl = time.monotonic()
 
-        bat_cur, soc = self._ebox.read()
+        bat_cur, soc = self._ebox.read(write_db=(_dt.datetime.now().minute % 5 == 0))
         t_ebox_read = time.monotonic()
         self._ebox.collect_cells_if_needed(soc)
         t_cells = time.monotonic()
