@@ -1335,29 +1335,6 @@ class PowerController:
             wp_power=wp_power,
         )
 
-        # ── RELAIS-4 AUSLÖSUNG ────────────────────────────────────────────
-        # PCC > 20 kW + DC-PV > 10.8 kW  → 60 s Puls
-        # PCC > 20 kW allein              → 3 s Puls
-        # wirkleist < -20 kW (Einspeisung)→ 3 s Puls
-        # Guard: DO4 nur wenn SOC=100 oder State 7 bereits erreicht
-        _do4_allowed = vals.soc >= 100 or vals.relay_st >= 7
-        if not _do4_allowed:
-            self._log(f"DO4 gesperrt: SOC={vals.soc:.0f}%<100 und State{vals.relay_st}<7")
-        elif vals.pcc > 20_600 and vals.dc_pv > 10.8:
-            self._relay.pulse_r4(60, reason=f"PCC={vals.pcc:.0f}W DC-PV={vals.dc_pv:.2f}kW")
-        elif vals.pcc > 20_600:
-            self._relay.pulse_r4(reason=f"PCC={vals.pcc:.0f}W>20kW DC-PV={vals.dc_pv:.2f}kW<=10.8kW")
-            self._log(
-                f"Relay4 3s-Puls: PCC={vals.pcc:.0f}W>20kW, "
-                f"DC-PV={vals.dc_pv:.2f}kW <=10.8kW — 60s-Bedingung noch nicht erfuellt"
-            )
-        elif (vals.wirkleist + vals.wp_power) < self._cfg.wirkleist_r4_threshold:
-            korr = vals.wirkleist + vals.wp_power
-            self._relay.pulse_r4(reason=f"wirkleist_korr={korr:.0f}W<{self._cfg.wirkleist_r4_threshold}W (WP={vals.wp_power:.0f}W)")
-            self._log(
-                f"Relay4 3s-Puls: wirkleist={vals.wirkleist:.0f}W + WP={vals.wp_power:.0f}W"
-                f" = {korr:.0f}W < {self._cfg.wirkleist_r4_threshold}W"
-            )
 
         # ── LOGIC LAYER ───────────────────────────────────────────────────
         # Reihenfolge 1:1 wie C: decide → drop_rate berechnen → blocking
