@@ -9,11 +9,11 @@ digraph fox2db {
         splines=ortho
         nodesep=0.7
         ranksep=0.9
-        pad=0.6
+        pad=0.25
         bgcolor="white"
-        page="8.27,11.69"
+        page="11.69,8.27"
         pagedir=TL
-        size="7.8,56"
+        size="9.5,56"
     ]
     node [fontname="Helvetica" fontsize=10 style="filled,rounded" shape=box margin="0.18,0.12"]
     edge [fontname="Helvetica" fontsize=9]
