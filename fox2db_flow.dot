@@ -1,0 +1,269 @@
+digraph fox2db {
+    graph [
+        rankdir=TB
+        fontname="Helvetica"
+        fontsize=11
+        label="fox2dbOO.py v1.58-Py — Control Flow\nEBox-Ladesteuerung · FbController + FeedInLimiter + WeatherForecast"
+        labelloc=t
+        labeljust=c
+        splines=ortho
+        nodesep=0.4
+        ranksep=0.55
+        pad=0.4
+        bgcolor="#f8f8f8"
+    ]
+    node [fontname="Helvetica" fontsize=10 style="filled,rounded" shape=box]
+    edge [fontname="Helvetica" fontsize=9]
+
+    // ─── START ────────────────────────────────────────────────
+    START [label="fox2dbOO.py startet\n(cron, jede Minute)"
+           shape=oval fillcolor="#4a90d9" fontcolor=white]
+
+    // ─── INPUT LAYER ──────────────────────────────────────────
+    subgraph cluster_input {
+        label="INPUT LAYER" style="filled,rounded"
+        fillcolor="#e8f4fb" color="#4a90d9" fontcolor="#1a5276"
+
+        EBOX_UPDATE [label="ebox pwr → /tmp/ebox_data.txt"   fillcolor="#aed6f1"]
+        MQTT_FETCH  [label="MQTT fetch (Sofar-WR)\n→ PCC, Bat1, SOC_Bat1, PV_DC" fillcolor="#aed6f1"]
+        MQTT_FAIL   [label="EMERGENCY SHUTDOWN\nRelay → State 0 → Abbruch"
+                     fillcolor="#e74c3c" fontcolor=white]
+        ZAEHL_FETCH [label="MQTT wirkleist (Zähler)\n+ WP power (em0/54)"         fillcolor="#aed6f1"]
+        EBOX_READ   [label="EBox read: bat_cur, min_SOC\n+ DB-Write pv_ebox2"      fillcolor="#aed6f1"]
+        READ_STATE  [label="Lese: relay_st, stable, prot\nlast_excess, deep_discharge" fillcolor="#aed6f1"]
+
+        RELAY4_CHK  [label="PCC > 20.6 kW\nUND DC-PV > 10.8 kW ?"  shape=diamond fillcolor="#f0e68c"]
+        RELAY4_60   [label="Relay 4 Puls 60 s\n(Einspeisung dämpfen)" fillcolor="#fdebd0"]
+        RELAY4_3    [label="Relay 4 Puls 3 s" fillcolor="#fdebd0"]
+        RELAY4_Z2   [label="wirkleist+WP < −20.1 kW ?"   shape=diamond fillcolor="#f0e68c"]
+        RELAY4_Z2P  [label="Relay 4 Puls 3 s\n(Zähler-Schwelle)" fillcolor="#fdebd0"]
+    }
+
+    // ─── FbController ─────────────────────────────────────────
+    subgraph cluster_controller {
+        label="Phase 1 — FbController.decide() — Zustandsberechnung" style="filled,rounded"
+        fillcolor="#eafaf1" color="#27ae60" fontcolor="#1e8449"
+
+        SOC_KNOWN   [label="SOC bekannt ?"          shape=diamond fillcolor="#a9dfbf"]
+        SOC_HOLD    [label="EBOX_SOC_UNKNOWN_HOLD\nbest = relay_st" fillcolor="#fdebd0"]
+        CALC_EXCESS [label="excess = PCC_eff + ebox_eff + Bat1\n(PCC_eff = PCC; Fallback Z2 bei NaN)" fillcolor="#a9dfbf"]
+
+        PROT_CHK    [label="Tiefentladeschutz aktiv?"   shape=diamond fillcolor="#a9dfbf"]
+        PROT_TARGET [label="SOC < charge_target (7%)?"  shape=diamond fillcolor="#a9dfbf"]
+        EMERG_CHG   [label="EMERGENCY_CHARGE → best=1"  fillcolor="#fdebd0" color="#e67e22"]
+        CHG_REACHED [label="CHARGE_TARGET_REACHED → best=0" fillcolor="#d5f5e3"]
+
+        CRIT_SOC    [label="SOC < deep_lower (6%)?"     shape=diamond fillcolor="#a9dfbf"]
+        CRIT_ACT    [label="CRITICAL_SOC_PROTECTION → best=1" fillcolor="#fdebd0" color="#e67e22"]
+
+        BAT_FULL    [label="SOC > max_soc (99%)?"        shape=diamond fillcolor="#a9dfbf"]
+        BAT_FULL_ST [label="BATTERY_FULL_STOP → best=0" fillcolor="#d5f5e3"]
+
+        MIN_EXCESS  [label="excess < min_excess (1010 W)?" shape=diamond fillcolor="#a9dfbf"]
+        INSUFF      [label="INSUFFICIENT_EXCESS → best=0" fillcolor="#d5f5e3"]
+
+        PWR_MATCH   [label="POWER_MATCHING\nbudget = excess + 1500 W\nbest = größter State ≤ budget" fillcolor="#a9dfbf"]
+        RAMP_CHK    [label="best > relay_st\nUND best > next_state_up?"  shape=diamond fillcolor="#a9dfbf"]
+        RAMP_LIM    [label="RAMP_LIMITED → best = next_state_up" fillcolor="#fdebd0" color="#e67e22"]
+
+        MIDDAY_CHK  [label="Sommer UND SOC ≥ midday_threshold\nUND in ±60 min Solar-Noon?"  shape=diamond fillcolor="#a9dfbf"]
+        MIDDAY_CAP  [label="MIDDAY_SOC_CAP → best = 1" fillcolor="#fdebd0" color="#e67e22"]
+    }
+
+    // ─── BLOCKING RULES ───────────────────────────────────────
+    subgraph cluster_blocking {
+        label="Phase 2 — FbController.apply_blocking() — Schutzregeln" style="filled,rounded"
+        fillcolor="#fef9e7" color="#d4ac0d" fontcolor="#7d6608"
+
+        CALC_TREND  [label="drop_rate = (excess − last_excess) / 30 s\nexcess → last_excess speichern" fillcolor="#f9e79f"]
+
+        BEST_EQ     [label="best == relay_st ?"     shape=diamond fillcolor="#f9e79f"]
+        NO_CHANGE   [label="KEINE ÄNDERUNG\nfinal = relay_st" fillcolor="#d5f5e3"]
+
+        EMERG_IMP   [label="PCC < −1020 W\nUND Richtung DOWN?"  shape=diamond fillcolor="#f9e79f"]
+        FORCE_DOWN  [label="EMERGENCY_FORCE → final = best (sofort)" fillcolor="#e74c3c" fontcolor=white]
+
+        DIR_CHK     [label="Richtung?" shape=diamond fillcolor="#f9e79f"]
+
+        SWEET_CHK   [label="|PCC| < 160 W UND Bat1 > −310 W?" shape=diamond fillcolor="#fef9e7"]
+        SWEET_HOLD  [label="SWEET_SPOT_HOLD\n(UP gesperrt)" fillcolor="#f0b27a"]
+        TREND_CHK   [label="drop_rate < −20 W/s\n(skip wenn after_peak)?" shape=diamond fillcolor="#fef9e7"]
+        TREND_BLK   [label="TREND_BLOCK\n(UP gesperrt)" fillcolor="#f0b27a"]
+        BAT_GRD_CHK [label="Bat1 < −220 W?"   shape=diamond fillcolor="#fef9e7"]
+        BAT_GRD_BLK [label="BAT_GUARD_BLOCK\n(UP gesperrt)" fillcolor="#f0b27a"]
+
+        STAB_CHK    [label="stable < 2 Zyklen?"  shape=diamond fillcolor="#fef9e7"]
+        STAB_BLK    [label="STABILIZING\n(DOWN gesperrt)" fillcolor="#f0b27a"]
+        HYST_CHK    [label="power_diff < 505 W?" shape=diamond fillcolor="#fef9e7"]
+        HYST_BLK    [label="HYSTERESIS\n(DOWN gesperrt)" fillcolor="#f0b27a"]
+
+        BLOCKED     [label="BLOCKIERT → final = relay_st" fillcolor="#fadbd8" color="#c0392b"]
+        APPLY_CHG   [label="Änderung anwenden\nfinal = best  |  changed = true" fillcolor="#d5f5e3" color="#27ae60"]
+    }
+
+    // ─── FEED-IN LIMITER ──────────────────────────────────────
+    subgraph cluster_feedin {
+        label="Phase 3 — FeedInLimiter.apply() — Sommer-Einspeiseregelung\n(überschreibt final_state bei aktivem Sommer-Modus)" style="filled,rounded"
+        fillcolor="#f4ecf7" color="#8e44ad" fontcolor="#6c3483"
+
+        FIL_SEASON  [label="Aktive Saison\n(April–Sept) UND kein prot?" shape=diamond fillcolor="#e8daef"]
+        FIL_SKIP    [label="FeedInLimiter inaktiv\n(kein Override)" fillcolor="#d7bde2"]
+
+        FIL_PEAK    [label="Nach Solar Noon\n+ 2 h Cutoff?" shape=diamond fillcolor="#e8daef"]
+        FIL_BRAKE   [label="SOC ≥ 88 %?" shape=diamond fillcolor="#e8daef"]
+        FIL_BRAKE_Y [label="AFTER_PEAK_BRAKE\nfinal = min(1, current)" fillcolor="#c39bd3" color="#8e44ad"]
+        FIL_AFTER_P [label="AFTER_PEAK\nafter_peak = true\n(TrendBlock deaktiviert)" fillcolor="#c39bd3" color="#8e44ad"]
+
+        FIL_SRC     [label="feed_in_w:\nPCC > 500 W → PCC\nsonst → |Z2| (Zähler-Fallback)" fillcolor="#e8daef"]
+
+        FIL_PROGNOSE [label="prognose = min(feed_in\n+ drop_rate × 60 s, 35 kW)" fillcolor="#e8daef"]
+
+        FIL_ON      [label="feed_in ≥ 19 kW\n(feedin_limit_w)?" shape=diamond fillcolor="#e8daef"]
+        FIL_ON_ACT  [label="ON: absorption = feed_in − 19 kW\ntarget = min_covering_state(absorption)\nfinal = target" fillcolor="#c39bd3" color="#8e44ad"]
+
+        FIL_PRL     [label="prognose ≥ 22 kW\n(feedin_preload_w)?" shape=diamond fillcolor="#e8daef"]
+
+        FIL_FC      [label="WeatherForecast:\nDurchschn. Wolken\nnächste 4 h?" shape=diamond fillcolor="#d5f5e3" color="#1abc9c"]
+        FIL_PRL_OK  [label="PRELOAD: final = 1\n(Sonne erwartet,\nVorschalten ok)" fillcolor="#c39bd3" color="#8e44ad"]
+        FIL_PRL_FC  [label="PRELOAD_FC_OFF: final = 0\n(Wolken ≥ 70 %,\nkein Vorschalten)" fillcolor="#fadbd8" color="#c0392b"]
+
+        FIL_OFF     [label="OFF: final = 0\n(zu wenig Einspeisung)" fillcolor="#fadbd8" color="#c0392b"]
+    }
+
+    // ─── OUTPUT LAYER ─────────────────────────────────────────
+    subgraph cluster_output {
+        label="OUTPUT LAYER" style="filled,rounded"
+        fillcolor="#f4ecf7" color="#8e44ad" fontcolor="#6c3483"
+
+        LOG_DATA    [label="Log: Data / Trend / Result\n+ SolarNoon-Info" fillcolor="#d7bde2"]
+        MQTT_PUB    [label="MQTT Publish → fox2db/state\n(JSON: soc, pcc, bat1, ebox,\nstate, trace, …)" fillcolor="#d7bde2"]
+        WRITE_FILES [label="Dateien: stable_counter\ninverter.csv" fillcolor="#d7bde2"]
+        DEEP_DISC   [label="DeepDischargeGuard.update(soc)\n(Hysterese: lower=6% / upper=8%)" fillcolor="#d7bde2"]
+        CHG_EXEC    [label="changed?" shape=diamond fillcolor="#c39bd3"]
+        RELAY_SET   [label="RelayController.set_state(final)\nebyte_ctrl.py → DB-Log" fillcolor="#d7bde2"]
+        RELAY_KEEP  [label="RelayController.keep_state(final)\n(State-Datei aktuell halten)" fillcolor="#d7bde2"]
+        END         [label="Zyklusende" shape=oval fillcolor="#4a90d9" fontcolor=white]
+    }
+
+    // ─── EDGES: Input ─────────────────────────────────────────
+    START        -> EBOX_UPDATE
+    EBOX_UPDATE  -> MQTT_FETCH
+    MQTT_FETCH   -> MQTT_FAIL   [label="Timeout" color="#e74c3c"]
+    MQTT_FETCH   -> RELAY4_CHK  [label="OK" color="#27ae60"]
+    MQTT_FAIL    -> END         [style=dashed color="#e74c3c"]
+    RELAY4_CHK   -> RELAY4_60   [label="ja (60s)" color="#e67e22"]
+    RELAY4_CHK   -> RELAY4_Z2   [label="nein"]
+    RELAY4_60    -> ZAEHL_FETCH
+    RELAY4_CHK   -> RELAY4_3    [label="PCC>20.6kW\nnur" color="#e67e22"]
+    RELAY4_3     -> ZAEHL_FETCH
+    RELAY4_Z2    -> RELAY4_Z2P  [label="ja" color="#e67e22"]
+    RELAY4_Z2    -> ZAEHL_FETCH [label="nein"]
+    RELAY4_Z2P   -> ZAEHL_FETCH
+    ZAEHL_FETCH  -> EBOX_READ
+    EBOX_READ    -> READ_STATE
+
+    // ─── EDGES: FbController ──────────────────────────────────
+    READ_STATE   -> SOC_KNOWN
+    SOC_KNOWN    -> SOC_HOLD    [label="nein" color="#e74c3c"]
+    SOC_KNOWN    -> CALC_EXCESS [label="ja" color="#27ae60"]
+    SOC_HOLD     -> CALC_TREND  [style=dashed]
+
+    CALC_EXCESS  -> PROT_CHK
+    PROT_CHK     -> PROT_TARGET [label="ja" color="#e67e22"]
+    PROT_CHK     -> CRIT_SOC    [label="nein" color="#27ae60"]
+    PROT_TARGET  -> EMERG_CHG   [label="ja" color="#e67e22"]
+    PROT_TARGET  -> CHG_REACHED [label="nein" color="#27ae60"]
+    EMERG_CHG    -> CALC_TREND  [style=dashed]
+    CHG_REACHED  -> CALC_TREND  [style=dashed]
+
+    CRIT_SOC     -> CRIT_ACT    [label="ja" color="#e74c3c"]
+    CRIT_SOC     -> BAT_FULL    [label="nein"]
+    CRIT_ACT     -> CALC_TREND  [style=dashed]
+
+    BAT_FULL     -> BAT_FULL_ST [label="ja" color="#27ae60"]
+    BAT_FULL     -> MIN_EXCESS  [label="nein"]
+    BAT_FULL_ST  -> CALC_TREND  [style=dashed]
+
+    MIN_EXCESS   -> INSUFF      [label="ja" color="#e74c3c"]
+    MIN_EXCESS   -> PWR_MATCH   [label="nein" color="#27ae60"]
+    INSUFF       -> CALC_TREND  [style=dashed]
+
+    PWR_MATCH    -> RAMP_CHK
+    RAMP_CHK     -> RAMP_LIM    [label="ja" color="#e67e22"]
+    RAMP_CHK     -> MIDDAY_CHK  [label="nein"]
+    RAMP_LIM     -> MIDDAY_CHK
+    MIDDAY_CHK   -> MIDDAY_CAP  [label="ja" color="#e67e22"]
+    MIDDAY_CHK   -> CALC_TREND  [label="nein" style=dashed]
+    MIDDAY_CAP   -> CALC_TREND  [style=dashed]
+
+    // ─── EDGES: Blocking ──────────────────────────────────────
+    CALC_TREND   -> BEST_EQ
+    BEST_EQ      -> NO_CHANGE   [label="ja" color="#27ae60"]
+    BEST_EQ      -> EMERG_IMP   [label="nein"]
+    NO_CHANGE    -> FIL_SEASON
+
+    EMERG_IMP    -> FORCE_DOWN  [label="ja" color="#e74c3c"]
+    EMERG_IMP    -> DIR_CHK     [label="nein"]
+    FORCE_DOWN   -> FIL_SEASON
+
+    DIR_CHK      -> SWEET_CHK   [label="UP"]
+    DIR_CHK      -> STAB_CHK    [label="DOWN"]
+
+    SWEET_CHK    -> SWEET_HOLD  [label="ja" color="#e67e22"]
+    SWEET_CHK    -> TREND_CHK   [label="nein"]
+    SWEET_HOLD   -> BLOCKED
+    TREND_CHK    -> TREND_BLK   [label="ja" color="#e67e22"]
+    TREND_CHK    -> BAT_GRD_CHK [label="nein"]
+    TREND_BLK    -> BLOCKED
+    BAT_GRD_CHK  -> BAT_GRD_BLK [label="ja" color="#e67e22"]
+    BAT_GRD_CHK  -> APPLY_CHG   [label="nein" color="#27ae60"]
+    BAT_GRD_BLK  -> BLOCKED
+
+    STAB_CHK     -> STAB_BLK    [label="ja" color="#e67e22"]
+    STAB_CHK     -> HYST_CHK    [label="nein"]
+    STAB_BLK     -> BLOCKED
+    HYST_CHK     -> HYST_BLK    [label="ja" color="#e67e22"]
+    HYST_CHK     -> APPLY_CHG   [label="nein" color="#27ae60"]
+    HYST_BLK     -> BLOCKED
+
+    BLOCKED      -> FIL_SEASON
+    APPLY_CHG    -> FIL_SEASON
+
+    // ─── EDGES: FeedInLimiter ─────────────────────────────────
+    FIL_SEASON   -> FIL_SKIP    [label="nein" color="#27ae60"]
+    FIL_SEASON   -> FIL_PEAK    [label="ja (Apr–Sept)" color="#8e44ad"]
+    FIL_SKIP     -> LOG_DATA
+
+    FIL_PEAK     -> FIL_BRAKE   [label="ja (nach Cutoff)" color="#8e44ad"]
+    FIL_PEAK     -> FIL_SRC     [label="nein (Tageszeit)"]
+    FIL_BRAKE    -> FIL_BRAKE_Y [label="SOC ≥ 88%" color="#8e44ad"]
+    FIL_BRAKE    -> FIL_AFTER_P [label="SOC < 88%"]
+    FIL_BRAKE_Y  -> LOG_DATA
+    FIL_AFTER_P  -> LOG_DATA
+
+    FIL_SRC      -> FIL_PROGNOSE
+    FIL_PROGNOSE -> FIL_ON
+
+    FIL_ON       -> FIL_ON_ACT  [label="ja (≥19kW)" color="#8e44ad"]
+    FIL_ON       -> FIL_PRL     [label="nein"]
+    FIL_ON_ACT   -> LOG_DATA
+
+    FIL_PRL      -> FIL_FC      [label="ja (≥22kW Prognose)" color="#8e44ad"]
+    FIL_PRL      -> FIL_OFF     [label="nein"]
+
+    FIL_FC       -> FIL_PRL_OK  [label="< 70 % Wolken\n(solar ok)" color="#1abc9c"]
+    FIL_FC       -> FIL_PRL_FC  [label="≥ 70 % Wolken\n(Forecast schlecht)" color="#c0392b"]
+    FIL_PRL_OK   -> LOG_DATA
+    FIL_PRL_FC   -> LOG_DATA
+    FIL_OFF      -> LOG_DATA
+
+    // ─── EDGES: Output ────────────────────────────────────────
+    LOG_DATA     -> MQTT_PUB
+    MQTT_PUB     -> WRITE_FILES
+    WRITE_FILES  -> DEEP_DISC
+    DEEP_DISC    -> CHG_EXEC
+    CHG_EXEC     -> RELAY_SET   [label="ja" color="#27ae60"]
+    CHG_EXEC     -> RELAY_KEEP  [label="nein"]
+    RELAY_SET    -> END
+    RELAY_KEEP   -> END
+}

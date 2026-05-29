@@ -1,0 +1,242 @@
+digraph fox2dbOO_classes {
+    graph [
+        rankdir=TB
+        fontname="Helvetica"
+        fontsize=11
+        label="fox2dbOO.py — Klassendiagramm (v1.58-Py)"
+        labelloc=t
+        splines=ortho
+        nodesep=0.5
+        ranksep=0.7
+        pad=0.5
+        bgcolor="#f8f8f8"
+    ]
+    node [fontname="Helvetica Narrow" fontsize=9 shape=record style="filled" fillcolor=white]
+    edge [fontname="Helvetica" fontsize=8]
+
+    // ─── Dataclasses ─────────────────────────────────────────────────────
+    Config [label="{«dataclass»\nConfig|
+        min_excess: int = 1010\l
+        max_grid_draw: int = 1500\l
+        max_soc: int = 99\l
+        hysteresis / stabilization_cycles\l
+        emergency_import: int\l
+        bat_discharge_threshold: int\l
+        sweet_spot_pcc / sweet_spot_bat: int\l
+        max_drop_rate: int\l
+        deep_discharge_lower/upper/target: int\l
+        midday_soc_threshold / window_minutes\l
+        midday_latitude / longitude\l
+        midday_season_start/end_month: int\l
+        feedin_season_start/end_month: int\l
+        feedin_limit_w: int = 19000\l
+        feedin_preload_w: int = 22000\l
+        feedin_system_peak_kw: float\l
+        feedin_after_noon_hours: float = 2.0\l
+        feedin_max_prognose_w: int = 35000\l
+        feedin_forecast_url: str\l
+        feedin_forecast_hours: int = 4\l
+        feedin_forecast_bad_clouds: float = 70.0\l
+        mqtt_broker/port/topic/timeout\l
+        path_*: str (8 Pfade)\l|
+        + from_args() → Config\l
+    }" fillcolor="#dce8f8" color="#3a7abf"]
+
+    MeasuredValues [label="{«dataclass»\nMeasuredValues|
+        pcc: float\l
+        bat1: float\l
+        soc_bat1: float\l
+        bat_cur: float\l
+        soc: float\l
+        relay_st: int\l
+        stable: int\l
+        prot: int\l
+        last_excess: float\l
+        dc_pv: float\l
+        wirkleist: float\l
+        wp_power: float\l
+    }" fillcolor="#eaf4fb" color="#3a7abf"]
+
+    ControlDecision [label="{«dataclass»\nControlDecision|
+        best_state: int\l
+        final_state: int\l
+        changed: bool\l
+        excess: float\l
+        drop_rate: float\l
+        has_drop_rate: bool\l
+        after_peak: bool\l
+        trace: str\l
+        reason: str\l
+    }" fillcolor="#eaf4fb" color="#3a7abf"]
+
+    // ─── Utility ─────────────────────────────────────────────────────────
+    Logger [label="{Logger|
+        _path: Path\l|
+        + log(msg) → None\l
+        + __call__(msg) → None\l
+    }" fillcolor="#fef9e7" color="#d4ac0d"]
+
+    // ─── I/O Klassen ─────────────────────────────────────────────────────
+    MqttClient [label="{MqttClient|
+        _cfg: Config\l
+        _log: Logger\l|
+        + fetch() → dict | None\l
+        + fetch_wirkleist() → float\l
+        + fetch_wp_power() → float\l
+    }" fillcolor="#e8f8f0" color="#27ae60"]
+
+    MqttPublisher [label="{MqttPublisher|
+        _cfg: Config\l
+        _log: Logger\l|
+        + publish(payload: dict) → None\l
+    }" fillcolor="#e8f8f0" color="#27ae60"]
+
+    EBoxReader [label="{EBoxReader|
+        _cfg: Config\l
+        _log: Logger\l|
+        + update() → None\l
+        + read(write_db) → (bat_cur, soc)\l
+        + collect_cells_if_needed(soc)\l
+    }" fillcolor="#e8f8f0" color="#27ae60"]
+
+    RelayController [label="{RelayController|
+        _cfg: Config\l
+        _log: Logger\l|
+        + set_state(state, reason) → bool\l
+        + pulse_r4(duration, reason) → None\l
+        + read_state() → int\l
+        + keep_state(state) → None\l
+    }" fillcolor="#e8f8f0" color="#27ae60"]
+
+    // ─── Blocking Rules ───────────────────────────────────────────────────
+    BlockingRule [label="{«abstract»\nBlockingRule|
+        direction: str\l|
+        + is_blocked(pcc, bat1, stable,\ldrop_rate, pwr_diff)\l→ (bool, str)\l
+    }" fillcolor="#fdebd0" color="#e67e22" style="filled,dashed"]
+
+    SweetSpotHold  [label="{SweetSpotHold\n[UP]}"  fillcolor="#fef5e7" color="#e67e22"]
+    TrendBlock     [label="{TrendBlock\n[UP]}"      fillcolor="#fef5e7" color="#e67e22"]
+    BatGuardBlock  [label="{BatGuardBlock\n[UP]}"   fillcolor="#fef5e7" color="#e67e22"]
+    StabilizingBlock [label="{StabilizingBlock\n[DOWN]}" fillcolor="#fef5e7" color="#e67e22"]
+    HysteresisBlock  [label="{HysteresisBlock\n[DOWN]}" fillcolor="#fef5e7" color="#e67e22"]
+
+    // ─── WeatherForecast (NEU) ────────────────────────────────────────────
+    WeatherForecast [label="{WeatherForecast|
+        _cfg: Config\l
+        _cache: list | None\l
+        _cache_ts: float\l|
+        + solar_expected()\l→ (bool, str)\l
+        - _fetch() → list\l
+    }" fillcolor="#d5f5e3" color="#1abc9c"]
+
+    // ─── Core Logic ───────────────────────────────────────────────────────
+    FeedInLimiter [label="{FeedInLimiter|
+        _cfg: Config\l
+        _forecast: WeatherForecast\l|
+        + apply(vals, decision) → None\l
+        - _is_active_season() → bool\l
+        - _after_peak_window()\l→ (bool, str)\l
+    }" fillcolor="#e8daef" color="#8e44ad"]
+
+    FbController [label="{FbController|
+        _cfg: Config\l
+        _rules: list[BlockingRule]\l|
+        + decide(vals) → ControlDecision\l
+        + apply_blocking(vals, dec) → None\l
+        - _decide_state(v) → (int,float,str)\l
+        - _apply_blocking(v, dec) → (int,bool)\l
+    }" fillcolor="#f4ecf7" color="#8e44ad"]
+
+    ExcessTrendCalc [label="{ExcessTrendCalc|
+        _path: str\l|
+        + read_last() → float\l
+        + write(excess) → None\l
+    }" fillcolor="#f4ecf7" color="#8e44ad"]
+
+    DeepDischargeGuard [label="{DeepDischargeGuard|
+        _cfg: Config\l
+        _log: Logger\l
+        _path: str\l|
+        + read() → int\l
+        + update(soc) → None\l
+    }" fillcolor="#f4ecf7" color="#8e44ad"]
+
+    OutputWriter [label="{OutputWriter|
+        _cfg: Config\l
+        _pub: MqttPublisher\l
+        _log: Logger\l|
+        + write_cycle(vals, dec,\lnew_stable) → None\l
+    }" fillcolor="#f4ecf7" color="#8e44ad"]
+
+    // ─── Orchestrator ─────────────────────────────────────────────────────
+    PowerController [label="{PowerController\n«Orchestrator»|
+        _cfg: Config\l
+        _log: Logger\l
+        _mqtt: MqttClient\l
+        _pub: MqttPublisher\l
+        _ebox: EBoxReader\l
+        _relay: RelayController\l
+        _dd_guard: DeepDischargeGuard\l
+        _trend: ExcessTrendCalc\l
+        _writer: OutputWriter\l
+        _fb: FbController\l
+        _feedin: FeedInLimiter\l|
+        + run_cycle() → None\l
+    }" fillcolor="#fadbd8" color="#c0392b"]
+
+    // ─── MODULE FUNCTIONS ─────────────────────────────────────────────────
+    ModFuncs [label="{«module»|
+        STATE_POWER: dict[int,int]\l
+        _solar_noon(lat,lon) → datetime\l
+        _in_midday_window(cfg) → bool\l
+        get_state_power(state) → int\l
+        find_best_state(budget) → int\l
+        find_min_covering_state(w) → int\l
+        get_next_state_up(state) → int\l
+        _read_file / _write_file\l
+    }" fillcolor="#e8e8e8" color="#666666"]
+
+    // ─── VERERBUNG ────────────────────────────────────────────────────────
+    { rank=same SweetSpotHold TrendBlock BatGuardBlock StabilizingBlock HysteresisBlock }
+
+    BlockingRule -> SweetSpotHold    [arrowhead=empty color="#e67e22"]
+    BlockingRule -> TrendBlock       [arrowhead=empty color="#e67e22"]
+    BlockingRule -> BatGuardBlock    [arrowhead=empty color="#e67e22"]
+    BlockingRule -> StabilizingBlock [arrowhead=empty color="#e67e22"]
+    BlockingRule -> HysteresisBlock  [arrowhead=empty color="#e67e22"]
+
+    // ─── KOMPOSITION (PowerController → alle) ─────────────────────────────
+    PowerController -> MqttClient         [arrowhead=diamond color="#c0392b"]
+    PowerController -> MqttPublisher      [arrowhead=diamond color="#c0392b"]
+    PowerController -> EBoxReader         [arrowhead=diamond color="#c0392b"]
+    PowerController -> RelayController    [arrowhead=diamond color="#c0392b"]
+    PowerController -> DeepDischargeGuard [arrowhead=diamond color="#c0392b"]
+    PowerController -> ExcessTrendCalc    [arrowhead=diamond color="#c0392b"]
+    PowerController -> OutputWriter       [arrowhead=diamond color="#c0392b"]
+    PowerController -> FbController       [arrowhead=diamond color="#c0392b"]
+    PowerController -> FeedInLimiter      [arrowhead=diamond color="#c0392b"]
+
+    // ─── KOMPOSITION (FeedInLimiter → WeatherForecast) ────────────────────
+    FeedInLimiter -> WeatherForecast [arrowhead=diamond label="1" color="#1abc9c"]
+
+    // ─── ABHÄNGIGKEITEN ───────────────────────────────────────────────────
+    FbController -> BlockingRule       [arrowhead=open label="uses 0..*" style=dashed color="#8e44ad"]
+    FbController -> MeasuredValues     [arrowhead=open label="in"        style=dashed color="#8e44ad"]
+    FbController -> ControlDecision    [arrowhead=open label="out"       style=dashed color="#8e44ad"]
+    FbController -> ModFuncs           [arrowhead=open label="uses"      style=dashed color="#8e44ad"]
+
+    FeedInLimiter -> MeasuredValues    [arrowhead=open label="in"        style=dashed color="#8e44ad"]
+    FeedInLimiter -> ControlDecision   [arrowhead=open label="mutates"   style=dashed color="#8e44ad"]
+    FeedInLimiter -> ModFuncs          [arrowhead=open label="uses"      style=dashed color="#8e44ad"]
+
+    WeatherForecast -> Config          [arrowhead=open style=dashed color="#1abc9c"]
+
+    OutputWriter    -> MqttPublisher   [arrowhead=open style=dashed color="#8e44ad"]
+    PowerController -> MeasuredValues  [arrowhead=open label="creates"   style=dashed color="#c0392b"]
+    PowerController -> ControlDecision [arrowhead=open label="creates"   style=dashed color="#c0392b"]
+
+    MqttClient      -> Config          [arrowhead=open style=dashed color="#27ae60"]
+    EBoxReader      -> Config          [arrowhead=open style=dashed color="#27ae60"]
+    RelayController -> Config          [arrowhead=open style=dashed color="#27ae60"]
+    DeepDischargeGuard -> Config       [arrowhead=open style=dashed color="#27ae60"]
+}
