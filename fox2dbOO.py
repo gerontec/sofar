@@ -16,8 +16,9 @@ from typing import Optional
 
 import datetime as _dt
 from astral import LocationInfo as _LocationInfo
-from astral.sun import sun as _astral_sun, elevation as _astral_elevation
+from astral.sun import sun as _astral_sun
 
+import urllib.request
 import pymysql
 import paho.mqtt.client as mqtt
 
@@ -25,8 +26,8 @@ import paho.mqtt.client as mqtt
 # VERSION & KONSTANTEN
 # ═══════════════════════════════════════════════════════════════════════════
 
-VERSION = "v1.57-Py"
-MAX_LOG_BYTES = 22 * 1024  # 22 kB, dann truncate
+VERSION = "v1.58-Py"
+MAX_LOG_BYTES = 122 * 1024  # 122 kB, dann truncate
 
 # Hardware-Zustandstabelle: state → Watt
 # ─── Solar-Mittag-Berechnung ─────────────────────────────────────────────────
@@ -91,10 +92,11 @@ class Config:
     feedin_limit_w: int = 19_000        # Einspeisung ab der geladen wird
     feedin_preload_w: int = 22_000      # Prognose-Schwelle für State-1-Vorschalten
     feedin_system_peak_kw: float = 17.0 # Installierte DC-Spitzenleistung der Anlage
-    feedin_bad_weather_ratio: float = 0.25  # dc_pv/theoretisch unter diesem Wert → Schlechtwetter
     feedin_after_noon_hours: float = 2.0    # FeedInLimiter aus nach Solar Noon + X Stunden
     feedin_max_prognose_w: int = 35_000    # Prognose-Cap: gemessenes Allzeit-Maximum
-    feedin_min_elevation: float = 15.0  # Mindest-Sonnenhöhe (°) für Heuristik
+    feedin_forecast_url: str = "https://web1.heissa.de/web1/forecast_api.php"
+    feedin_forecast_hours: int = 4         # Stunden voraus für PRELOAD-Gate
+    feedin_forecast_bad_clouds: float = 70.0  # Wolkenbedeckung % > Schwelle → kein PRELOAD
     deep_discharge_lower: int = 6
     deep_discharge_upper: int = 8
     deep_discharge_charge_target: int = 7
@@ -170,12 +172,14 @@ class Config:
                        help="Prognose-Schwelle (W) für State-1-Vorschalten (default 22000)")
         p.add_argument("--feedin-system-peak", type=float, default=17.0,
                        help="Installierte DC-Spitzenleistung kW (default 17.0)")
-        p.add_argument("--feedin-bad-weather-ratio", type=float, default=0.25,
-                       help="dc_pv/theoretisch unter diesem Wert = Schlechtwetter (default 0.25)")
-        p.add_argument("--feedin-min-elevation", type=float, default=15.0,
-                       help="Mindest-Sonnenhöhe ° für Schlechtwetter-Heuristik (default 15.0)")
         p.add_argument("--feedin-after-noon-hours", type=float, default=2.0,
                        help="FeedInLimiter aus nach Solar Noon + X Stunden (default 2.0)")
+        p.add_argument("--feedin-forecast-url",
+                       default="https://web1.heissa.de/web1/forecast_api.php")
+        p.add_argument("--feedin-forecast-hours", type=int, default=4,
+                       help="Stunden voraus für PRELOAD-Gate (default 4)")
+        p.add_argument("--feedin-forecast-bad-clouds", type=float, default=70.0,
+                       help="Wolkenbedeckung %% > Schwelle → PRELOAD unterdrückt (default 70)")
         p.add_argument("--ebox-script", default="/home/pi/python/ebox1arg.py")
         p.add_argument("--ebyte-script", default="/home/pi/python/ebyte_ctrl.py")
         p.add_argument("--mqtt-publish-broker", default="")
@@ -211,9 +215,10 @@ class Config:
             feedin_limit_w=a.feedin_limit,
             feedin_preload_w=a.feedin_preload,
             feedin_system_peak_kw=a.feedin_system_peak,
-            feedin_bad_weather_ratio=a.feedin_bad_weather_ratio,
-            feedin_min_elevation=a.feedin_min_elevation,
             feedin_after_noon_hours=a.feedin_after_noon_hours,
+            feedin_forecast_url=a.feedin_forecast_url,
+            feedin_forecast_hours=a.feedin_forecast_hours,
+            feedin_forecast_bad_clouds=a.feedin_forecast_bad_clouds,
             mqtt_broker=a.mqtt_broker,
             mqtt_port=a.mqtt_port,
             mqtt_topic=a.mqtt_topic,
@@ -866,6 +871,46 @@ class HysteresisBlock(BlockingRule):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# WEATHER FORECAST (Wolkenbedeckungs-Prognose von heissa.de)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class WeatherForecast:
+    """Holt Forecast-JSON von web1.heissa.de und prüft Solar-Erwartung."""
+
+    def __init__(self, cfg: Config) -> None:
+        self._cfg = cfg
+        self._cache: Optional[list] = None
+        self._cache_ts: float = 0.0
+
+    def _fetch(self) -> list:
+        now = time.monotonic()
+        if self._cache is not None and (now - self._cache_ts) < 1800:
+            return self._cache
+        try:
+            url = (f"{self._cfg.feedin_forecast_url}"
+                   f"?hours={self._cfg.feedin_forecast_hours}")
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+            rows = data.get("rows", [])
+            self._cache = rows
+            self._cache_ts = now
+        except Exception:
+            self._cache = self._cache if self._cache is not None else []
+        return self._cache
+
+    def solar_expected(self) -> tuple[bool, str]:
+        """True wenn mittlere Wolkenbedeckung < feedin_forecast_bad_clouds."""
+        rows = self._fetch()
+        if not rows:
+            return True, "forecast_n/a→ok"
+        avg_clouds = sum(r.get("cloudiness", 0) for r in rows) / len(rows)
+        threshold = self._cfg.feedin_forecast_bad_clouds
+        ok = avg_clouds < threshold
+        cmp = "<" if ok else ">="
+        return ok, f"forecast_clouds={avg_clouds:.0f}%{cmp}{threshold:.0f}%"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # FEED-IN LIMITER (Sommer-Einspeisebegrenzung)
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -881,6 +926,7 @@ class FeedInLimiter:
 
     def __init__(self, cfg: Config) -> None:
         self._cfg = cfg
+        self._forecast = WeatherForecast(cfg)
 
     def _is_active_season(self) -> bool:
         m = _dt.datetime.now().month
@@ -894,30 +940,6 @@ class FeedInLimiter:
             now_tz = _dt.datetime.now(noon.tzinfo)
             past = now_tz >= cutoff
             return past, cutoff.strftime("%H:%M")
-        except Exception as e:
-            return False, f"error:{e}"
-
-    def _bad_weather_check(self, vals: MeasuredValues) -> tuple[bool, str]:
-        """
-        Heuristik: wenn dc_pv deutlich unter theoretischem Maximum liegt → Schlechtwetter.
-        Gibt (is_bad, reason_str) zurück.
-        Nur anwendbar wenn Sonnenhöhe >= feedin_min_elevation.
-        """
-        cfg = self._cfg
-        try:
-            loc = _LocationInfo("Standort", "Germany", "Europe/Berlin",
-                                cfg.midday_latitude, cfg.midday_longitude)
-            now_tz = _dt.datetime.now(_dt.timezone.utc).astimezone()
-            elev = _astral_elevation(loc.observer, now_tz)
-            if elev < cfg.feedin_min_elevation:
-                return False, f"elev={elev:.1f}°<{cfg.feedin_min_elevation}° (zu flach)"
-            theoretical_kw = cfg.feedin_system_peak_kw * math.sin(math.radians(elev))
-            ratio = vals.dc_pv / theoretical_kw if theoretical_kw > 0 else 1.0
-            is_bad = ratio < cfg.feedin_bad_weather_ratio
-            reason = (f"dc_pv={vals.dc_pv:.2f}kW / theoretisch={theoretical_kw:.2f}kW"
-                      f" = {ratio:.2f} {'<' if is_bad else '>='} {cfg.feedin_bad_weather_ratio}"
-                      f" elev={elev:.1f}°")
-            return is_bad, reason
         except Exception as e:
             return False, f"error:{e}"
 
@@ -943,11 +965,6 @@ class FeedInLimiter:
             decision.trace += f" | FeedInLimiter AFTER_PEAK (>{cutoff_time} → Winterregel)"
             decision.after_peak = True
             return
-        bad_weather, bw_reason = self._bad_weather_check(vals)
-        if bad_weather:
-            decision.trace += f" | FeedInLimiter BADWEATHER ({bw_reason})"
-            return
-
         cfg = self._cfg
         # PCC = direkte Messung der Netzeinspeisung am Wechselrichter (bevorzugt).
         # Z2 als Fallback wenn PCC=NaN (Mode-Switch). Z2 enthält WP bereits → kein Abzug.
@@ -962,6 +979,8 @@ class FeedInLimiter:
             cfg.feedin_max_prognose_w,
         )
 
+        fc_ok, fc_reason = self._forecast.solar_expected()
+
         if feed_in_w >= cfg.feedin_limit_w:
             absorption_needed = feed_in_w - cfg.feedin_limit_w
             target = find_min_covering_state(absorption_needed)
@@ -972,19 +991,29 @@ class FeedInLimiter:
                                f", absorb={absorption_needed}W) State{old_state}→{target}")
 
         elif prognose_w >= cfg.feedin_preload_w:
-            old_state = decision.final_state
-            decision.final_state = 1
-            decision.changed = (1 != vals.relay_st)
-            decision.trace += (f" | FeedInLimiter PRELOAD [{feed_in_src}]"
-                               f" ({feed_in_w}W + trend={decision.drop_rate:+.0f}W/s×60s"
-                               f" → prognose={prognose_w}W >= {cfg.feedin_preload_w}W)"
-                               f" State{old_state}→1")
+            if fc_ok:
+                old_state = decision.final_state
+                decision.final_state = 1
+                decision.changed = (1 != vals.relay_st)
+                decision.trace += (f" | FeedInLimiter PRELOAD [{feed_in_src}]"
+                                   f" ({feed_in_w}W + trend={decision.drop_rate:+.0f}W/s×60s"
+                                   f" → prognose={prognose_w}W >= {cfg.feedin_preload_w}W"
+                                   f", {fc_reason}) State{old_state}→1")
+            else:
+                old_state = decision.final_state
+                decision.final_state = 0
+                decision.changed = (0 != vals.relay_st)
+                decision.trace += (f" | FeedInLimiter PRELOAD_FC_OFF [{feed_in_src}]"
+                                   f" ({fc_reason}) State{old_state}→0")
 
         else:
-            # Kein Eingriff — Winterregel (POWER_MATCHING/RAMP_LIMITED) behält ihren State
+            # Einspeisung zu niedrig → Sommer-Modus erzwingt State 0 (kein Laden)
+            old_state = decision.final_state
+            decision.final_state = 0
+            decision.changed = (0 != vals.relay_st)
             decision.trace += (f" | FeedInLimiter OFF [{feed_in_src}]"
                                f" ({feed_in_w}W < {cfg.feedin_limit_w}W"
-                               f", prognose={prognose_w}W)")
+                               f", prognose={prognose_w}W, {fc_reason}) State{old_state}→0")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1023,15 +1052,15 @@ class FbController:
         # SOC unbekannt
         if v.soc < 0:
             ebox_actual = (v.bat_cur * 2 * 53 + 1) if v.relay_st > 0 else 0.0
-            grid = v.pcc if v.pcc > 500 else abs(min(0.0, v.wirkleist))
-            excess = grid + ebox_actual + v.bat1
+            pcc_eff = -v.wirkleist if math.isnan(v.pcc) else v.pcc
+            excess = pcc_eff + ebox_actual + v.bat1
             return v.relay_st, excess, f"EBOX_SOC_UNKNOWN_HOLD (prot={v.prot})"
 
         ebox_eff = (max(v.bat_cur * 2 * 53 + 1, get_state_power(v.relay_st))
                     if v.relay_st > 0 else 0.0)
-        # PCC=0 (Mode-Switch) → Z2 als Fallback, identisch zur FeedInLimiter-Logik
-        grid = v.pcc if v.pcc > 500 else abs(min(0.0, v.wirkleist))
-        excess = grid + ebox_eff + v.bat1
+        # Z2-Fallback nur bei Lesefehler (NaN). PCC=0 ist gültiger Messwert (Sweet-Spot).
+        pcc_eff = -v.wirkleist if math.isnan(v.pcc) else v.pcc
+        excess = pcc_eff + ebox_eff + v.bat1
 
         # Emergency Charge mit Target (verhindert Ping-Pong)
         if v.prot:
@@ -1310,7 +1339,11 @@ class PowerController:
         # PCC > 20 kW + DC-PV > 10.8 kW  → 60 s Puls
         # PCC > 20 kW allein              → 3 s Puls
         # wirkleist < -20 kW (Einspeisung)→ 3 s Puls
-        if vals.pcc > 20_600 and vals.dc_pv > 10.8:
+        # Guard: DO4 nur wenn SOC=100 oder State 7 bereits erreicht
+        _do4_allowed = vals.soc >= 100 or vals.relay_st >= 7
+        if not _do4_allowed:
+            self._log(f"DO4 gesperrt: SOC={vals.soc:.0f}%<100 und State{vals.relay_st}<7")
+        elif vals.pcc > 20_600 and vals.dc_pv > 10.8:
             self._relay.pulse_r4(60, reason=f"PCC={vals.pcc:.0f}W DC-PV={vals.dc_pv:.2f}kW")
         elif vals.pcc > 20_600:
             self._relay.pulse_r4(reason=f"PCC={vals.pcc:.0f}W>20kW DC-PV={vals.dc_pv:.2f}kW<=10.8kW")
@@ -1345,6 +1378,36 @@ class PowerController:
 
         # ── FEED-IN LIMITER ────────────────────────────────────────────────
         self._feedin.apply(vals, decision)
+
+        # ══ RELAIS-4 / LADESTUFE-ERHOEHUNG ════════════════════
+        # Trigger: PCC > 20.6 kW  oder  (wirkleist + WP) < Schwelle
+        _r4_pcc = (not math.isnan(vals.pcc)) and vals.pcc > 20_600
+        _r4_wl  = (vals.wirkleist + vals.wp_power) < self._cfg.wirkleist_r4_threshold
+        if _r4_pcc or _r4_wl:
+            _src = (f"PCC={vals.pcc:.0f}W" if _r4_pcc
+                    else f"wirkleist_korr={(vals.wirkleist+vals.wp_power):.0f}W")
+            if vals.soc < 100 and vals.relay_st < 7:
+                # Batterie noch nicht voll: eine Stufe hoch statt DO4
+                _next = get_next_state_up(vals.relay_st)
+                if decision.final_state < _next:
+                    _old_st = decision.final_state
+                    decision.final_state = _next
+                    decision.changed = (_next != vals.relay_st)
+                    decision.trace += f" | DO4→STUFE{_next} ({_src}, SOC={vals.soc:.0f}%<100) State{_old_st}→{_next}"
+                else:
+                    decision.trace += f" | DO4→STUFE{_next} bereits abgedeckt durch State{decision.final_state} ({_src})"
+            else:
+                # SOC=100 oder State 7 aktiv → DO4 ausloesen
+                if _r4_pcc and vals.dc_pv > 10.8:
+                    self._relay.pulse_r4(60, reason=f"PCC={vals.pcc:.0f}W DC-PV={vals.dc_pv:.2f}kW")
+                elif _r4_pcc:
+                    self._relay.pulse_r4(reason=f"PCC={vals.pcc:.0f}W>20kW DC-PV={vals.dc_pv:.2f}kW<=10.8kW")
+                    self._log(f"Relay4 3s: PCC={vals.pcc:.0f}W>20kW, DC-PV={vals.dc_pv:.2f}kW")
+                else:
+                    korr = vals.wirkleist + vals.wp_power
+                    self._relay.pulse_r4(reason=f"wirkleist_korr={korr:.0f}W<{self._cfg.wirkleist_r4_threshold}W")
+                    self._log(f"Relay4 3s: wirkleist={vals.wirkleist:.0f}W+WP={vals.wp_power:.0f}W={korr:.0f}W")
+
 
         # ── OUTPUT LAYER ──────────────────────────────────────────────────
         new_stable = 0 if decision.changed else vals.stable + 1
