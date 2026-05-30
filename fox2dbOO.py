@@ -1484,6 +1484,23 @@ class PowerController:
                     self._log(f"Relay4 3s: wirkleist={vals.wirkleist:.0f}W+WP={vals.wp_power:.0f}W={korr:.0f}W")
 
 
+        # ── LADEZEIT-PROGNOSE ─────────────────────────────────────────────
+        if vals.soc >= 0 and vals.soc < 100:
+            _chg_w = get_state_power(decision.final_state)
+            if _chg_w > 0:
+                _remain_wh = (100.0 - vals.soc) / 100.0 * self._cfg.bat2_capacity_wh
+                _h_to_full = _remain_wh / _chg_w
+                _full_at   = _dt.datetime.now() + _dt.timedelta(hours=_h_to_full)
+                self._log(
+                    f"EBox Prognose: voll ~{_full_at.strftime('%H:%M')} Uhr"
+                    f" ({_h_to_full*60:.0f} min"
+                    f", {_remain_wh:.0f} Wh"
+                    f" @ {_chg_w} W"
+                    f", SOC={vals.soc:.0f}%)"
+                )
+            else:
+                self._log(f"EBox Prognose: kein Laden (State=0, SOC={vals.soc:.0f}%)")
+
         # ── OUTPUT LAYER ──────────────────────────────────────────────────
         new_stable = 0 if decision.changed else vals.stable + 1
         self._writer.write_cycle(vals, decision, new_stable)
