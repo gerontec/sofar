@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""
+getdc YYYYMMDDHH  →  expected PV DC watts (2-array orientation model, no DB)
+
+Zwei Arrays (kalibriert aus inverter_data DC*1.8 an klaren Tagen):
+  PV1: tilt=25°, azimut=+80° von Süd (fast West),  P_peak=27854 W
+  PV2: tilt=60°, azimut= -5° von Süd (fast Süd),   P_peak=11138 W
+
+Atmosphäre: Meinel-Klarhimmel  T = 0.7^(AM^0.678)
+Monatlicher Clearness-Index KT kalibriert aus inverter_data 2025-12..2026-05.
+"""
+import sys, math, datetime as dt, zoneinfo
+from astral import LocationInfo
+from astral.sun import elevation as sun_elevation, azimuth as sun_azimuth
+
+LAT, LON = 47.6811, 11.5732
+TZ       = "Europe/Berlin"
+
+# Zwei PV-Arrays: [tilt_deg, az_from_S_deg, ppeak_W]
+# az_from_S: 0=Süd, +90=West, -90=Ost
+ARRAYS = [
+    (25,  80, 27_854),   # PV1 – 25° Tilt, fast West
+    (60,  -5, 11_138),   # PV2 – 60° Tilt, fast Süd
+]
+
+# Monatlicher Clearness-Index (Median aller Stunden mit elev>5°)
+# Gemessene Monate: 12/2025, 01-05/2026
+# Jun-Nov: Schätzung (TODO sobald Messdaten vorhanden)
+KT = {1: 0.331, 2: 0.402, 3: 0.563, 4: 0.838,
+      5: 0.909, 6: 0.880, 7: 0.840, 8: 0.820,
+      9: 0.760, 10: 0.600, 11: 0.350, 12: 0.134}
+
+_LOC = LocationInfo("Lenggries", "Germany", TZ, LAT, LON)
+_TZ  = zoneinfo.ZoneInfo(TZ)
+
+
+def _cos_aoi(elev_deg, az_sun_N, tilt_deg, az_panel_S):
+    e  = math.radians(elev_deg)
+    b  = math.radians(tilt_deg)
+    da = math.radians((az_sun_N - 180.0) - az_panel_S)
+    return math.sin(e) * math.cos(b) + math.cos(e) * math.sin(b) * math.cos(da)
+
+
+def dc_forecast(t: dt.datetime) -> float:
+    t_tz = t.replace(tzinfo=_TZ) if t.tzinfo is None else t
+    elev = sun_elevation(_LOC.observer, t_tz)
+    if elev <= 0:
+        return 0.0
+    az_N = sun_azimuth(_LOC.observer, t_tz)
+    am   = min(1.0 / math.sin(math.radians(elev)), 37.0)
+    T    = 0.7 ** (am ** 0.678)
+    kt   = KT.get(t.month, 0.60)
+    total = 0.0
+    for tilt, az_s, ppeak in ARRAYS:
+        coi = max(0.0, _cos_aoi(elev, az_N, tilt, az_s))
+        total += ppeak * T * coi
+    return total * kt
+
+
+arg = sys.argv[1] if len(sys.argv) > 1 else ""
+if len(arg) != 10 or not arg.isdigit():
+    sys.exit("Usage: getdc YYYYMMDDHH")
+
+y, mo, d, h = int(arg[:4]), int(arg[4:6]), int(arg[6:8]), int(arg[8:10])
+t = dt.datetime(y, mo, d, h, 30)   # Stundenmitte
+print(f"{dc_forecast(t):.0f}")
