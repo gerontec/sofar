@@ -3,7 +3,7 @@ digraph fox2dbOO_classes {
         rankdir=TB
         fontname="Helvetica"
         fontsize=11
-        label="fox2dbOO.py — Klassendiagramm (v1.58-Py)"
+        label="fox2dbOO.py — Klassendiagramm (v1.59-Py)"
         labelloc=t
         splines=ortho
         nodesep=0.5
@@ -37,6 +37,7 @@ digraph fox2dbOO_classes {
         feedin_forecast_url: str\l
         feedin_forecast_hours: int = 4\l
         feedin_forecast_bad_clouds: float = 70.0\l
+        feedin_dc_cap_safe_w: int = 18000\l
         mqtt_broker/port/topic/timeout\l
         path_*: str (8 Pfade)\l|
         + from_args() → Config\l
@@ -55,6 +56,7 @@ digraph fox2dbOO_classes {
         dc_pv: float\l
         wirkleist: float\l
         wp_power: float\l
+        dc_expected: float\l
     }" fillcolor="#eaf4fb" color="#3a7abf"]
 
     ControlDecision [label="{«dataclass»\nControlDecision|
@@ -120,7 +122,18 @@ digraph fox2dbOO_classes {
     StabilizingBlock [label="{StabilizingBlock\n[DOWN]}" fillcolor="#fef5e7" color="#e67e22"]
     HysteresisBlock  [label="{HysteresisBlock\n[DOWN]}" fillcolor="#fef5e7" color="#e67e22"]
 
-    // ─── WeatherForecast (NEU) ────────────────────────────────────────────
+    // ─── DcForecast (NEU v1.59) ──────────────────────────────────────────
+    DcForecast [label="{«NEU» DcForecast|
+        ARRAYS: [(tilt,az_S,ppeak)×2]\l
+        KT: dict[month→clearness]\l|
+        + at(t=None) → float\l
+        - _cos_aoi(elev,az,tilt,az_S)\l→ float\l
+        Meinel-Atmosphäre + 2-Array-Orientierung\l
+        PV1: 25° Tilt / West (+80°)  27.854 W\l
+        PV2: 60° Tilt / Süd  (−5°)  11.138 W\l
+    }" fillcolor="#fff3cd" color="#d4ac0d" style="filled,bold"]
+
+    // ─── WeatherForecast ──────────────────────────────────────────────────
     WeatherForecast [label="{WeatherForecast|
         _cfg: Config\l
         _cache: list | None\l
@@ -180,7 +193,8 @@ digraph fox2dbOO_classes {
         _trend: ExcessTrendCalc\l
         _writer: OutputWriter\l
         _fb: FbController\l
-        _feedin: FeedInLimiter\l|
+        _feedin: FeedInLimiter\l
+        _dc_forecast: DcForecast\l|
         + run_cycle() → None\l
     }" fillcolor="#fadbd8" color="#c0392b"]
 
@@ -215,6 +229,7 @@ digraph fox2dbOO_classes {
     PowerController -> OutputWriter       [arrowhead=diamond color="#c0392b"]
     PowerController -> FbController       [arrowhead=diamond color="#c0392b"]
     PowerController -> FeedInLimiter      [arrowhead=diamond color="#c0392b"]
+    PowerController -> DcForecast         [arrowhead=diamond color="#c0392b" label="NEU" fontcolor="#d4ac0d"]
 
     // ─── KOMPOSITION (FeedInLimiter → WeatherForecast) ────────────────────
     FeedInLimiter -> WeatherForecast [arrowhead=diamond label="1" color="#1abc9c"]

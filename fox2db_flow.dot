@@ -3,7 +3,7 @@ digraph fox2db {
         rankdir=TB
         fontname="Helvetica"
         fontsize=10
-        label="fox2dbOO.py v1.58-Py — Control Flow\nEBox-Ladesteuerung · FbController + FeedInLimiter + WeatherForecast\nBugfix: DO4→Ladestufe erhöhen wenn SOC2<100"
+        label="fox2dbOO.py v1.59-Py — Control Flow\nEBox-Ladesteuerung · FbController + FeedInLimiter + DcForecast + WeatherForecast\nNEU: DC_SAFE Proaktiv Laden wenn kein Cap-Risiko"
         labelloc=t
         labeljust=c
         splines=ortho
@@ -38,7 +38,7 @@ digraph fox2db {
                      fillcolor="#aed6f1"]
         EBOX_READ   [label="EBox read: bat_cur_A, min_SOC\n->> DB-Write pv_ebox2"
                      fillcolor="#aed6f1"]
-        READ_STATE  [label="Lese Zustandsdateien:\nrelay_st, stable, prot\nlast_excess, deep_discharge"
+        READ_STATE  [label="Lese Zustandsdateien:\nrelay_st, stable, prot\nlast_excess, deep_discharge\ndc_expected = DcForecast.at() [W]"
                      fillcolor="#aed6f1"]
     }
 
@@ -195,6 +195,25 @@ digraph fox2db {
                      fillcolor="#fadbd8" color="#c0392b"]
     }
 
+    // ─── Phase 3b: DC_SAFE Proaktiv Laden (NEU v1.59) ────────
+    subgraph cluster_dcsafe {
+        label="Phase 3b — DC_SAFE Proaktiv Laden  [NEU v1.59]\nWenn kein Cap-Risiko: sofort laden ohne DO4-Trigger abwarten"
+        style="filled,rounded"
+        fillcolor="#fffde7" color="#d4ac0d" fontcolor="#7d6608"
+        fontsize=10
+
+        DCS_SEASON  [label="Aktive Saison?\nNicht After-Peak?\n(gleiche Bedingung wie FeedInLimiter)"
+                     shape=diamond fillcolor="#fff9c4"]
+        DCS_EXPECT  [label="0 W < dc_expected < 18 000 W ?\n(Klarhimmel-Modell zeigt:\nkeine Gefahr für 20 kW Cap)"
+                     shape=diamond fillcolor="#fff9c4"]
+        DCS_STATE   [label="soc < 100 %\nUND relay_st < 7\nUND final_state < 1 ?"
+                     shape=diamond fillcolor="#fff9c4"]
+        DCS_ACT     [label="DC_SAFE → STUFE 1\nfinal = State 1  (sofort laden)\nLaden OHNE Warten auf DO4-Trigger\nTrace: DC_SAFE→STUFE1\n(dc_expected=XXXXw < 18000w)"
+                     fillcolor="#ffeb3b" color="#d4ac0d" style="filled,bold"]
+        DCS_SKIP    [label="DC_SAFE Bedingung\nnicht erfüllt\n→ keine Änderung"
+                     fillcolor="#fff9c4"]
+    }
+
     // ─── Phase 4: DO4 / Ladestufe-Erhöhung (BUGFIX) ──────────
     subgraph cluster_do4 {
         label="Phase 4 — DO4 / Ladestufe-Erhöhung  [Bugfix]\nNach FeedInLimiter: Überstrom-Reaktion mit SOC-Abfrage"
@@ -335,24 +354,34 @@ digraph fox2db {
     FIL_PEAK     -> FIL_SRC     [label="nein"]
     FIL_BRAKE    -> FIL_BRAKE_Y [label="ja  SOC >= 88%" color="#8e44ad"]
     FIL_BRAKE    -> FIL_AFTER_P [label="nein"]
-    FIL_BRAKE_Y  -> DO4_TRIG
-    FIL_AFTER_P  -> DO4_TRIG
+    FIL_BRAKE_Y  -> DCS_SEASON
+    FIL_AFTER_P  -> DCS_SEASON
 
     FIL_SRC      -> FIL_PROGNOSE
     FIL_PROGNOSE -> FIL_ON
 
     FIL_ON       -> FIL_ON_ACT  [label="ja  (>= 19 kW)" color="#8e44ad"]
     FIL_ON       -> FIL_PRL     [label="nein"]
-    FIL_ON_ACT   -> DO4_TRIG
+    FIL_ON_ACT   -> DCS_SEASON
 
     FIL_PRL      -> FIL_FC      [label="ja  (>= 22 kW)" color="#8e44ad"]
     FIL_PRL      -> FIL_OFF     [label="nein"]
 
     FIL_FC       -> FIL_PRL_OK  [label="< 70 % Wolken" color="#1abc9c"]
     FIL_FC       -> FIL_PRL_FC  [label=">= 70 % Wolken" color="#c0392b"]
-    FIL_PRL_OK   -> DO4_TRIG
-    FIL_PRL_FC   -> DO4_TRIG
-    FIL_OFF      -> DO4_TRIG
+    FIL_PRL_OK   -> DCS_SEASON
+    FIL_PRL_FC   -> DCS_SEASON
+    FIL_OFF      -> DCS_SEASON
+
+    // Phase 3b: DC_SAFE
+    DCS_SEASON   -> DCS_EXPECT  [label="ja" color="#d4ac0d"]
+    DCS_SEASON   -> DCS_SKIP    [label="nein\n(Winter / After-Peak)"]
+    DCS_EXPECT   -> DCS_STATE   [label="ja  (< 18 kW)" color="#d4ac0d"]
+    DCS_EXPECT   -> DCS_SKIP    [label="nein\n(Sonne zu stark\noder Nacht)"]
+    DCS_STATE    -> DCS_ACT     [label="ja" color="#d4ac0d"]
+    DCS_STATE    -> DCS_SKIP    [label="nein\n(SOC=100 od.\nState≥1 od.\nState=7)"]
+    DCS_ACT      -> DO4_TRIG    [color="#d4ac0d" style=bold]
+    DCS_SKIP     -> DO4_TRIG
 
     // Phase 4: DO4 / Ladestufe
     DO4_TRIG     -> LOG_DATA    [label="nein" color="#27ae60"]
