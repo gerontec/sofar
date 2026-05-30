@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import Optional
 
 import datetime as _dt
+import zoneinfo as _zoneinfo
 from astral import LocationInfo as _LocationInfo
-from astral.sun import sun as _astral_sun
+from astral.sun import sun as _astral_sun, elevation as _astral_elevation, azimuth as _astral_azimuth
 
 import urllib.request
 import pymysql
@@ -26,7 +27,7 @@ import paho.mqtt.client as mqtt
 # VERSION & KONSTANTEN
 # ═══════════════════════════════════════════════════════════════════════════
 
-VERSION = "v1.58-Py"
+VERSION = "v1.59-Py"
 MAX_LOG_BYTES = 122 * 1024  # 122 kB, dann truncate
 
 # Hardware-Zustandstabelle: state → Watt
@@ -97,6 +98,7 @@ class Config:
     feedin_forecast_url: str = "https://web1.heissa.de/web1/forecast_api.php"
     feedin_forecast_hours: int = 4         # Stunden voraus für PRELOAD-Gate
     feedin_forecast_bad_clouds: float = 70.0  # Wolkenbedeckung % > Schwelle → kein PRELOAD
+    feedin_dc_cap_safe_w: int = 18_000        # DC-Prognose < Schwelle → kein Cap-Risiko → sofort laden
     deep_discharge_lower: int = 6
     deep_discharge_upper: int = 8
     deep_discharge_charge_target: int = 7
@@ -279,6 +281,7 @@ class MeasuredValues:
     dc_pv: float = 0.0        # Sofar: Power_PV1 + Power_PV2 in kW
     wirkleist: float = 0.0    # Zähler: Wirkleistung in W (negativ = Einspeisung)
     wp_power: float = 0.0     # Wärmepumpe em0/54/power in W (nicht in Z2 enthalten)
+    dc_expected: float = 0.0  # Klarhimmel-DC-Prognose in W (getdc-Modell)
 
 
 @dataclass
@@ -910,6 +913,54 @@ class WeatherForecast:
         return ok, f"forecast_clouds={avg_clouds:.0f}%{cmp}{threshold:.0f}%"
 
 
+class DcForecast:
+    """
+    Klarhimmel-DC-Prognose (getdc-Modell, inline).
+    Gibt erwartete DC-Watt für jetzt zurück (Meinel-Atmosphäre, 2-Array-Orientierung).
+    """
+    _LAT, _LON = 47.6811, 11.5732
+    _TZ_NAME   = "Europe/Berlin"
+    _ARRAYS    = [(25, 80, 27_854), (60, -5, 11_138)]
+    _KT        = {1: 0.331, 2: 0.402, 3: 0.563, 4: 0.838,
+                  5: 0.909, 6: 0.880, 7: 0.840, 8: 0.820,
+                  9: 0.760, 10: 0.600, 11: 0.350, 12: 0.134}
+
+    def __init__(self) -> None:
+        import math as _m
+        self._math = _m
+        self._loc = _LocationInfo("Lenggries", "Germany", self._TZ_NAME,
+                                   self._LAT, self._LON)
+        self._tz  = _zoneinfo.ZoneInfo(self._TZ_NAME)
+
+    def _cos_aoi(self, elev_deg: float, az_sun_N: float,
+                 tilt_deg: float, az_panel_S: float) -> float:
+        m = self._math
+        e  = m.radians(elev_deg)
+        b  = m.radians(tilt_deg)
+        da = m.radians((az_sun_N - 180.0) - az_panel_S)
+        return m.sin(e) * m.cos(b) + m.cos(e) * m.sin(b) * m.cos(da)
+
+    def at(self, t: Optional[_dt.datetime] = None) -> float:
+        """DC-Watt Prognose für Zeitpunkt t (default: jetzt, Stundenmitte)."""
+        m = self._math
+        if t is None:
+            now = _dt.datetime.now(self._tz)
+            t = now.replace(minute=30, second=0, microsecond=0)
+        t_tz = t.replace(tzinfo=self._tz) if t.tzinfo is None else t
+        elev = _astral_elevation(self._loc.observer, t_tz)
+        if elev <= 0:
+            return 0.0
+        az_N = _astral_azimuth(self._loc.observer, t_tz)
+        am   = min(1.0 / m.sin(m.radians(elev)), 37.0)
+        T    = 0.7 ** (am ** 0.678)
+        kt   = self._KT.get(t.month, 0.60)
+        total = 0.0
+        for tilt, az_s, ppeak in self._ARRAYS:
+            coi = max(0.0, self._cos_aoi(elev, az_N, tilt, az_s))
+            total += ppeak * T * coi
+        return total * kt
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # FEED-IN LIMITER (Sommer-Einspeisebegrenzung)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1293,6 +1344,7 @@ class PowerController:
         ]
         self._fb = FbController(cfg, blocking_rules)
         self._feedin = FeedInLimiter(cfg)
+        self._dc_forecast = DcForecast()
 
     def run_cycle(self) -> None:
         t0 = time.monotonic()
@@ -1333,6 +1385,7 @@ class PowerController:
             last_excess=_read_file(self._cfg.path_last_excess, 0.0),
             wirkleist=wirkleist,
             wp_power=wp_power,
+            dc_expected=self._dc_forecast.at(),
         )
 
 
@@ -1355,6 +1408,22 @@ class PowerController:
 
         # ── FEED-IN LIMITER ────────────────────────────────────────────────
         self._feedin.apply(vals, decision)
+
+        # ══ DC-SAFE PROAKTIV LADEN ═════════════════════════════════════════
+        # Wenn DC-Prognose < feedin_dc_cap_safe_w → kein Risiko für 20kW-Cap
+        # → sofort State 1 laden, ohne auf DO4-Trigger (PCC > 20.6kW) zu warten.
+        # Nur im aktiven FeedIn-Sommer und außerhalb After-Peak.
+        if (self._feedin._is_active_season()
+                and not self._feedin._after_peak_window()[0]
+                and 0 < vals.dc_expected < self._cfg.feedin_dc_cap_safe_w
+                and vals.soc < 100 and vals.relay_st < 7
+                and decision.final_state < 1):
+            _old_dc = decision.final_state
+            decision.final_state = 1
+            decision.changed = (1 != vals.relay_st)
+            decision.trace += (f" | DC_SAFE→STUFE1"
+                               f" (dc_expected={vals.dc_expected:.0f}W"
+                               f"<{self._cfg.feedin_dc_cap_safe_w}W)")
 
         # ══ RELAIS-4 / LADESTUFE-ERHOEHUNG ════════════════════
         # Trigger: PCC > 20.6 kW  oder  (wirkleist + WP) < Schwelle
