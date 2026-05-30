@@ -1414,15 +1414,17 @@ class PowerController:
         # ══ DC-SAFE PROAKTIV LADEN + LADEZIEL BIS FENSTER-ENDE ═══════════
         # Im Cap-Risk-Fenster (noon ± feedin_dc_cap_window_min) ohne Cap-Gefahr:
         # Mindest-State berechnen damit bat2 (30 kWh) bis Fenster-Ende voll ist.
-        # Basis-Minimum: State 1 (DC_SAFE). Erhöhung wenn Ladezeit knapp.
+        # Cap-Risiko-Prüfung: tatsächliche dc_pv-Messung (nicht Modell) –
+        # das Modell überschätzt am bewölkten Mittag und würde DC_SAFE sperren.
         _dc_noon = _solar_noon(self._cfg.midday_latitude, self._cfg.midday_longitude)
         _dc_now  = _dt.datetime.now(_dc_noon.tzinfo)
         _dc_diff_min = abs((_dc_now - _dc_noon).total_seconds() / 60)
         _dc_in_window = _dc_diff_min <= self._cfg.feedin_dc_cap_window_min
+        _dc_actual_w  = vals.dc_pv * 1_000 * 1.8   # gemessene Gesamt-DC in W
         if (self._feedin._is_active_season()
                 and not self._feedin._after_peak_window()[0]
                 and _dc_in_window
-                and 0 < vals.dc_expected < self._cfg.feedin_dc_cap_safe_w
+                and 0 < _dc_actual_w < self._cfg.feedin_dc_cap_safe_w
                 and vals.soc >= 0 and vals.soc < 100 and vals.relay_st < 7):
             cfg = self._cfg
             # Aktuelle Einspeisung (gleiche Quelle wie FeedInLimiter)
@@ -1447,7 +1449,8 @@ class PowerController:
                     decision.changed = (_dc_target != vals.relay_st)
                     decision.trace += (
                         f" | DC_SAFE→STUFE{_dc_target}"
-                        f" (dc={vals.dc_expected:.0f}W<{cfg.feedin_dc_cap_safe_w}W"
+                        f" (dc_mess={_dc_actual_w:.0f}W<{cfg.feedin_dc_cap_safe_w}W"
+                        f" dc_modell={vals.dc_expected:.0f}W"
                         f", solar={_feed_in_w}W→cap=St{_solar_cap}"
                         f", soc={vals.soc:.0f}%"
                         f", need={_need_wh:.0f}Wh/{_min_left:.0f}min→{_need_w:.0f}W"
