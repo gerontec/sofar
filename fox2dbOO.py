@@ -1425,25 +1425,34 @@ class PowerController:
                 and 0 < vals.dc_expected < self._cfg.feedin_dc_cap_safe_w
                 and vals.soc >= 0 and vals.soc < 100 and vals.relay_st < 7):
             cfg = self._cfg
-            # Minuten bis Fenster-Ende (Noon + cap_window_min)
-            _win_end   = _dc_noon + _dt.timedelta(minutes=cfg.feedin_dc_cap_window_min)
-            _min_left  = max(1.0, (_win_end - _dc_now).total_seconds() / 60)
-            # Benötigte Ladeleistung um SOC auf 100% zu bringen
-            _need_wh   = (100.0 - vals.soc) / 100.0 * cfg.bat2_capacity_wh
-            _need_w    = _need_wh / (_min_left / 60.0)
-            # Mindest-State = State 1 (DC_SAFE-Basis), erhöhen wenn Leistung knapp
-            _dc_target = max(1, find_min_covering_state(int(_need_w)))
-            if decision.final_state < _dc_target:
-                _old_dc = decision.final_state
-                decision.final_state = _dc_target
-                decision.changed = (_dc_target != vals.relay_st)
-                decision.trace += (
-                    f" | DC_SAFE→STUFE{_dc_target}"
-                    f" (dc={vals.dc_expected:.0f}W<{cfg.feedin_dc_cap_safe_w}W"
-                    f", soc={vals.soc:.0f}%"
-                    f", need={_need_wh:.0f}Wh/{_min_left:.0f}min"
-                    f"→{_need_w:.0f}W, noon±{cfg.feedin_dc_cap_window_min}min)"
-                )
+            # Aktuelle Einspeisung (gleiche Quelle wie FeedInLimiter)
+            _feed_in_w = int(vals.pcc) if vals.pcc > 500 else int(abs(min(0.0, vals.wirkleist)))
+            # Obergrenze: nie mehr laden als solar verfügbar → kein Netzkauf
+            _solar_cap = find_best_state(_feed_in_w)   # max State ohne Netzkauf
+            if _solar_cap < 1:
+                pass   # solar reicht nicht mal für State 1 → kein DC_SAFE
+            else:
+                # Minuten bis Fenster-Ende (Noon + cap_window_min)
+                _win_end  = _dc_noon + _dt.timedelta(minutes=cfg.feedin_dc_cap_window_min)
+                _min_left = max(1.0, (_win_end - _dc_now).total_seconds() / 60)
+                # Benötigte Ladeleistung um SOC auf 100% zu bringen
+                _need_wh  = (100.0 - vals.soc) / 100.0 * cfg.bat2_capacity_wh
+                _need_w   = _need_wh / (_min_left / 60.0)
+                # Ziel-State: was wir bräuchten, gedeckelt durch verfügbares Solar
+                # Vergleich über STATE_POWER (nicht State-Nummer, da nicht monoton)
+                _want     = max(1, find_min_covering_state(int(_need_w)))
+                _dc_target = _want if get_state_power(_want) <= _feed_in_w else _solar_cap
+                if decision.final_state < _dc_target:
+                    decision.final_state = _dc_target
+                    decision.changed = (_dc_target != vals.relay_st)
+                    decision.trace += (
+                        f" | DC_SAFE→STUFE{_dc_target}"
+                        f" (dc={vals.dc_expected:.0f}W<{cfg.feedin_dc_cap_safe_w}W"
+                        f", solar={_feed_in_w}W→cap=St{_solar_cap}"
+                        f", soc={vals.soc:.0f}%"
+                        f", need={_need_wh:.0f}Wh/{_min_left:.0f}min→{_need_w:.0f}W"
+                        f", noon±{cfg.feedin_dc_cap_window_min}min)"
+                    )
 
         # ══ RELAIS-4 / LADESTUFE-ERHOEHUNG ════════════════════
         # Trigger: PCC > 20.6 kW  oder  (wirkleist + WP) < Schwelle
