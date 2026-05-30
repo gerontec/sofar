@@ -100,6 +100,7 @@ class Config:
     feedin_forecast_bad_clouds: float = 70.0  # Wolkenbedeckung % > Schwelle → kein PRELOAD
     feedin_dc_cap_safe_w: int = 18_000        # DC-Prognose < Schwelle → kein Cap-Risiko → sofort laden
     feedin_dc_cap_window_min: int = 165       # DC_SAFE aktiv innerhalb ±X min um Solar Noon (midday_window_minutes +45)
+    bat2_capacity_wh: int = 30_000            # EBox bat2 Kapazität in Wh (für Ladeziel-Berechnung)
     deep_discharge_lower: int = 6
     deep_discharge_upper: int = 8
     deep_discharge_charge_target: int = 7
@@ -1410,27 +1411,39 @@ class PowerController:
         # ── FEED-IN LIMITER ────────────────────────────────────────────────
         self._feedin.apply(vals, decision)
 
-        # ══ DC-SAFE PROAKTIV LADEN ═════════════════════════════════════════
-        # Wenn DC-Prognose < feedin_dc_cap_safe_w → kein Risiko für 20kW-Cap
-        # → sofort State 1 laden, ohne auf DO4-Trigger (PCC > 20.6kW) zu warten.
-        # Nur im Cap-Risk-Fenster (±feedin_dc_cap_window_min um Solar Noon):
-        # außerhalb gibt es kein Cap-Risiko → FeedInLimiter OFF gilt uneingeschränkt.
+        # ══ DC-SAFE PROAKTIV LADEN + LADEZIEL BIS FENSTER-ENDE ═══════════
+        # Im Cap-Risk-Fenster (noon ± feedin_dc_cap_window_min) ohne Cap-Gefahr:
+        # Mindest-State berechnen damit bat2 (30 kWh) bis Fenster-Ende voll ist.
+        # Basis-Minimum: State 1 (DC_SAFE). Erhöhung wenn Ladezeit knapp.
         _dc_noon = _solar_noon(self._cfg.midday_latitude, self._cfg.midday_longitude)
-        _dc_diff_min = abs((_dt.datetime.now(_dc_noon.tzinfo) - _dc_noon).total_seconds() / 60)
+        _dc_now  = _dt.datetime.now(_dc_noon.tzinfo)
+        _dc_diff_min = abs((_dc_now - _dc_noon).total_seconds() / 60)
         _dc_in_window = _dc_diff_min <= self._cfg.feedin_dc_cap_window_min
         if (self._feedin._is_active_season()
                 and not self._feedin._after_peak_window()[0]
                 and _dc_in_window
                 and 0 < vals.dc_expected < self._cfg.feedin_dc_cap_safe_w
-                and vals.soc < 100 and vals.relay_st < 7
-                and decision.final_state < 1):
-            _old_dc = decision.final_state
-            decision.final_state = 1
-            decision.changed = (1 != vals.relay_st)
-            decision.trace += (f" | DC_SAFE→STUFE1"
-                               f" (dc_expected={vals.dc_expected:.0f}W"
-                               f"<{self._cfg.feedin_dc_cap_safe_w}W"
-                               f", noon±{self._cfg.feedin_dc_cap_window_min}min)")
+                and vals.soc >= 0 and vals.soc < 100 and vals.relay_st < 7):
+            cfg = self._cfg
+            # Minuten bis Fenster-Ende (Noon + cap_window_min)
+            _win_end   = _dc_noon + _dt.timedelta(minutes=cfg.feedin_dc_cap_window_min)
+            _min_left  = max(1.0, (_win_end - _dc_now).total_seconds() / 60)
+            # Benötigte Ladeleistung um SOC auf 100% zu bringen
+            _need_wh   = (100.0 - vals.soc) / 100.0 * cfg.bat2_capacity_wh
+            _need_w    = _need_wh / (_min_left / 60.0)
+            # Mindest-State = State 1 (DC_SAFE-Basis), erhöhen wenn Leistung knapp
+            _dc_target = max(1, find_min_covering_state(int(_need_w)))
+            if decision.final_state < _dc_target:
+                _old_dc = decision.final_state
+                decision.final_state = _dc_target
+                decision.changed = (_dc_target != vals.relay_st)
+                decision.trace += (
+                    f" | DC_SAFE→STUFE{_dc_target}"
+                    f" (dc={vals.dc_expected:.0f}W<{cfg.feedin_dc_cap_safe_w}W"
+                    f", soc={vals.soc:.0f}%"
+                    f", need={_need_wh:.0f}Wh/{_min_left:.0f}min"
+                    f"→{_need_w:.0f}W, noon±{cfg.feedin_dc_cap_window_min}min)"
+                )
 
         # ══ RELAIS-4 / LADESTUFE-ERHOEHUNG ════════════════════
         # Trigger: PCC > 20.6 kW  oder  (wirkleist + WP) < Schwelle
