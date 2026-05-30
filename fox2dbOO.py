@@ -1412,9 +1412,11 @@ class PowerController:
         # ══ DC-SAFE PROAKTIV LADEN ═════════════════════════════════════════
         # Wenn DC-Prognose < feedin_dc_cap_safe_w → kein Risiko für 20kW-Cap
         # → sofort State 1 laden, ohne auf DO4-Trigger (PCC > 20.6kW) zu warten.
-        # Nur im aktiven FeedIn-Sommer und außerhalb After-Peak.
+        # Nur im Mittagsfenster (±midday_window_minutes um Solar Noon):
+        # außerhalb des Fensters gibt es kein Cap-Risiko → FeedInLimiter OFF gilt.
         if (self._feedin._is_active_season()
                 and not self._feedin._after_peak_window()[0]
+                and _in_midday_window(self._cfg)
                 and 0 < vals.dc_expected < self._cfg.feedin_dc_cap_safe_w
                 and vals.soc < 100 and vals.relay_st < 7
                 and decision.final_state < 1):
