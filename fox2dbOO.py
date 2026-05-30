@@ -99,6 +99,7 @@ class Config:
     feedin_forecast_hours: int = 4         # Stunden voraus für PRELOAD-Gate
     feedin_forecast_bad_clouds: float = 70.0  # Wolkenbedeckung % > Schwelle → kein PRELOAD
     feedin_dc_cap_safe_w: int = 18_000        # DC-Prognose < Schwelle → kein Cap-Risiko → sofort laden
+    feedin_dc_cap_window_min: int = 165       # DC_SAFE aktiv innerhalb ±X min um Solar Noon (midday_window_minutes +45)
     deep_discharge_lower: int = 6
     deep_discharge_upper: int = 8
     deep_discharge_charge_target: int = 7
@@ -1412,11 +1413,14 @@ class PowerController:
         # ══ DC-SAFE PROAKTIV LADEN ═════════════════════════════════════════
         # Wenn DC-Prognose < feedin_dc_cap_safe_w → kein Risiko für 20kW-Cap
         # → sofort State 1 laden, ohne auf DO4-Trigger (PCC > 20.6kW) zu warten.
-        # Nur im Mittagsfenster (±midday_window_minutes um Solar Noon):
-        # außerhalb des Fensters gibt es kein Cap-Risiko → FeedInLimiter OFF gilt.
+        # Nur im Cap-Risk-Fenster (±feedin_dc_cap_window_min um Solar Noon):
+        # außerhalb gibt es kein Cap-Risiko → FeedInLimiter OFF gilt uneingeschränkt.
+        _dc_noon = _solar_noon(self._cfg.midday_latitude, self._cfg.midday_longitude)
+        _dc_diff_min = abs((_dt.datetime.now(_dc_noon.tzinfo) - _dc_noon).total_seconds() / 60)
+        _dc_in_window = _dc_diff_min <= self._cfg.feedin_dc_cap_window_min
         if (self._feedin._is_active_season()
                 and not self._feedin._after_peak_window()[0]
-                and _in_midday_window(self._cfg)
+                and _dc_in_window
                 and 0 < vals.dc_expected < self._cfg.feedin_dc_cap_safe_w
                 and vals.soc < 100 and vals.relay_st < 7
                 and decision.final_state < 1):
@@ -1425,7 +1429,8 @@ class PowerController:
             decision.changed = (1 != vals.relay_st)
             decision.trace += (f" | DC_SAFE→STUFE1"
                                f" (dc_expected={vals.dc_expected:.0f}W"
-                               f"<{self._cfg.feedin_dc_cap_safe_w}W)")
+                               f"<{self._cfg.feedin_dc_cap_safe_w}W"
+                               f", noon±{self._cfg.feedin_dc_cap_window_min}min)")
 
         # ══ RELAIS-4 / LADESTUFE-ERHOEHUNG ════════════════════
         # Trigger: PCC > 20.6 kW  oder  (wirkleist + WP) < Schwelle
