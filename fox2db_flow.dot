@@ -3,7 +3,7 @@ digraph fox2db {
         rankdir=TB
         fontname="Helvetica"
         fontsize=10
-        label="fox2dbOO.py v1.59-Py — Control Flow\nEBox-Ladesteuerung · FbController + FeedInLimiter + DcForecast + WeatherForecast\nNEU: DC_SAFE Proaktiv Laden wenn kein Cap-Risiko"
+        label="fox2dbOO.py v1.59-Py — Control Flow\nEBox-Ladesteuerung · FbController + FeedInLimiter + DcForecast + WeatherForecast\nNEU: DC_SAFE — Proaktiv laden bis Fenster-Ende, niemals Netzkauf"
         labelloc=t
         labeljust=c
         splines=ortho
@@ -195,23 +195,25 @@ digraph fox2db {
                      fillcolor="#fadbd8" color="#c0392b"]
     }
 
-    // ─── Phase 3b: DC_SAFE Proaktiv Laden (NEU v1.59) ────────
+    // ─── Phase 3b: DC_SAFE Proaktiv Laden (v1.59) ────────────
     subgraph cluster_dcsafe {
-        label="Phase 3b — DC_SAFE Proaktiv Laden  [NEU v1.59]\nWenn kein Cap-Risiko: sofort laden ohne DO4-Trigger abwarten"
+        label="Phase 3b — DC_SAFE: Proaktiv laden bis Fenster-Ende  [v1.59]\nOhne Cap-Risiko + niemals Netzkauf · bat2=30 kWh"
         style="filled,rounded"
         fillcolor="#fffde7" color="#d4ac0d" fontcolor="#7d6608"
         fontsize=10
 
-        DCS_SEASON  [label="Aktive Saison?\nNicht After-Peak?\n(gleiche Bedingung wie FeedInLimiter)"
-                     shape=diamond fillcolor="#fff9c4"]
-        DCS_EXPECT  [label="0 W < dc_expected < 18 000 W ?\n(Klarhimmel-Modell zeigt:\nkeine Gefahr für 20 kW Cap)"
-                     shape=diamond fillcolor="#fff9c4"]
-        DCS_STATE   [label="soc < 100 %\nUND relay_st < 7\nUND final_state < 1 ?"
-                     shape=diamond fillcolor="#fff9c4"]
-        DCS_ACT     [label="DC_SAFE → STUFE 1\nfinal = State 1  (sofort laden)\nLaden OHNE Warten auf DO4-Trigger\nTrace: DC_SAFE→STUFE1\n(dc_expected=XXXXw < 18000w)"
-                     fillcolor="#ffeb3b" color="#d4ac0d" style="filled,bold"]
-        DCS_SKIP    [label="DC_SAFE Bedingung\nnicht erfüllt\n→ keine Änderung"
-                     fillcolor="#fff9c4"]
+        DCS_GATE  [label="Aktive Saison? Nicht After-Peak?\nnoon ± 165 min?\n0 W < dc_expected < 18 000 W?\nsoc ≥ 0  UND  soc < 100 %  UND  relay_st < 7 ?"
+                   shape=diamond fillcolor="#fff9c4"]
+        DCS_SOLAR [label="solar_cap = find_best_state(feed_in_w)\n(feed_in = PCC wenn > 500 W, sonst |Z2|)\nsolar_cap ≥ 1 ?\n(mind. 3 000 W Solar verfügbar)"
+                   shape=diamond fillcolor="#fff9c4"]
+        DCS_CALC  [label="Ladezeit-Ziel berechnen:\nmin_left = Minuten bis Noon + 165 min\nneed_wh = (100 − soc) / 100 × 30 000 Wh\nneed_w   = need_wh ÷ (min_left / 60)\nwant     = max(1, find_min_covering_state(need_w))\ntarget   = want  wenn STATE_POWER[want] ≤ feed_in_w\n           sonst  solar_cap  (kein Netzkauf!)"
+                   fillcolor="#fff176" color="#d4ac0d"]
+        DCS_RAISE [label="final_state < target ?"
+                   shape=diamond fillcolor="#fff9c4"]
+        DCS_ACT   [label="DC_SAFE → STUFEn\nfinal = target\nTrace: DC_SAFE→STUFEn\n(dc=XXXXw, solar=XXXXw→cap=StN\nsoc=NN%, need=XXXXwh/XXXmin→XXXXw\nnoon±165min)"
+                   fillcolor="#ffeb3b" color="#d4ac0d" style="filled,bold"]
+        DCS_SKIP  [label="DC_SAFE inaktiv\n→ keine Änderung"
+                   fillcolor="#fff9c4"]
     }
 
     // ─── Phase 4: DO4 / Ladestufe-Erhöhung (BUGFIX) ──────────
@@ -248,6 +250,8 @@ digraph fox2db {
         fillcolor="#f4ecf7" color="#8e44ad" fontcolor="#6c3483"
         fontsize=10
 
+        EBOX_PROG   [label="EBox Ladezeit-Prognose loggen:\nState > 0: 'EBox Prognose: voll ~HH:MM Uhr'\n  (X min, Y Wh @ Z W, SOC=N%)\nState = 0: 'kein Laden (State=0)'"
+                     fillcolor="#ce93d8" color="#8e44ad" style="filled,bold"]
         LOG_DATA    [label="Log schreiben:\nData: SOC / PCC / Z2 / Bat / EBox / State / Stable\nTrend: Excess-Verlauf / drop_rate\nResult: final_state + vollständiger TRACE\nSolarNoon: Uhrzeit / Abstand / IN-OUT-Window"
                      fillcolor="#d7bde2"]
         MQTT_PUB    [label="MQTT Publish ->> fox2db/state\nJSON: ts, version, soc_bat1/2, pcc, bat1,\nebox, wirkleist, state, state_before,\nstable, excess, drop_rate, trace,\ndeep_discharge_active"
@@ -348,7 +352,7 @@ digraph fox2db {
 
     FIL_SEASON   -> FIL_SKIP    [label="nein" color="#27ae60"]
     FIL_SEASON   -> FIL_PEAK    [label="ja" color="#8e44ad"]
-    FIL_SKIP     -> DO4_TRIG
+    FIL_SKIP     -> DCS_GATE
 
     FIL_PEAK     -> FIL_BRAKE   [label="ja (nach Cutoff)" color="#8e44ad"]
     FIL_PEAK     -> FIL_SRC     [label="nein"]
@@ -374,32 +378,34 @@ digraph fox2db {
     FIL_OFF      -> DCS_SEASON
 
     // Phase 3b: DC_SAFE
-    DCS_SEASON   -> DCS_EXPECT  [label="ja" color="#d4ac0d"]
-    DCS_SEASON   -> DCS_SKIP    [label="nein\n(Winter / After-Peak)"]
-    DCS_EXPECT   -> DCS_STATE   [label="ja  (< 18 kW)" color="#d4ac0d"]
-    DCS_EXPECT   -> DCS_SKIP    [label="nein\n(Sonne zu stark\noder Nacht)"]
-    DCS_STATE    -> DCS_ACT     [label="ja" color="#d4ac0d"]
-    DCS_STATE    -> DCS_SKIP    [label="nein\n(SOC=100 od.\nState≥1 od.\nState=7)"]
-    DCS_ACT      -> DO4_TRIG    [color="#d4ac0d" style=bold]
-    DCS_SKIP     -> DO4_TRIG
+    DCS_GATE  -> DCS_SOLAR  [label="ja" color="#d4ac0d"]
+    DCS_GATE  -> DCS_SKIP   [label="nein\n(Saison/Fenster/\nCap/SOC)"]
+    DCS_SOLAR -> DCS_CALC   [label="ja  (≥ 3 kW Solar)" color="#d4ac0d"]
+    DCS_SOLAR -> DCS_SKIP   [label="nein\n(solar < State 1)"]
+    DCS_CALC  -> DCS_RAISE
+    DCS_RAISE -> DCS_ACT    [label="ja" color="#d4ac0d"]
+    DCS_RAISE -> DCS_SKIP   [label="nein\n(bereits hoch genug)"]
+    DCS_ACT   -> DO4_TRIG   [color="#d4ac0d" style=bold]
+    DCS_SKIP  -> DO4_TRIG
 
     // Phase 4: DO4 / Ladestufe
-    DO4_TRIG     -> LOG_DATA    [label="nein" color="#27ae60"]
+    DO4_TRIG     -> EBOX_PROG   [label="nein" color="#27ae60"]
+    EBOX_PROG    -> LOG_DATA
     DO4_TRIG     -> DO4_SOC     [label="ja" color="#ca6f1e"]
 
     DO4_SOC      -> DO4_STUFE   [label="ja\n(SOC<100, State<7)" color="#ca6f1e"]
     DO4_SOC      -> DO4_PCC_CHK [label="nein\n(SOC=100 od. State=7)"]
 
-    DO4_STUFE    -> LOG_DATA    [color="#ca6f1e"]
+    DO4_STUFE    -> EBOX_PROG   [color="#ca6f1e"]
 
     DO4_PCC_CHK  -> DO4_60      [label="ja ->> 60 s" color="#e67e22"]
     DO4_PCC_CHK  -> DO4_PCC3    [label="nein"]
-    DO4_60       -> LOG_DATA
+    DO4_60       -> EBOX_PROG
 
     DO4_PCC3     -> DO4_3PCC    [label="ja ->> 3 s" color="#e67e22"]
     DO4_PCC3     -> DO4_3WL     [label="nein (wirkleist)"]
-    DO4_3PCC     -> LOG_DATA
-    DO4_3WL      -> LOG_DATA
+    DO4_3PCC     -> EBOX_PROG
+    DO4_3WL      -> EBOX_PROG
 
     LOG_DATA     -> MQTT_PUB
     MQTT_PUB     -> WRITE_FILES
