@@ -26,7 +26,7 @@ import paho.mqtt.client as mqtt
 # VERSION & KONSTANTEN
 # ═══════════════════════════════════════════════════════════════════════════
 
-VERSION = "v1.72-Py"
+VERSION = "v1.73-Py"
 MAX_LOG_BYTES = 122 * 1024  # 122 kB, dann truncate
 
 def _solar_noon(lat: float, lon: float) -> _dt.datetime:
@@ -669,7 +669,8 @@ class RelayController:
         prefix = "python3 " if script.endswith(".py") else ""
         return f"{prefix}{script} {args}"
 
-    def db_log_decisions(self, state_from: int, state_to: int, trace: str) -> None:
+    def db_log_decisions(self, state_from: int, state_to: int, trace: str,
+                          pcc_w: int, bat1_w: int, soc: float, excess_w: int) -> None:
         """Schreibt jeden Trace-Token als eigene Zeile in pv_decision_log."""
         rows = []
         for token in trace.split(" | "):
@@ -681,7 +682,8 @@ class RelayController:
                 detail   = token[token.index("(")+1:token.rindex(")")] if ")" in token else ""
             else:
                 decision, detail = token, ""
-            rows.append((state_from, state_to, decision[:64], detail[:255]))
+            rows.append((state_from, state_to, decision[:64], detail[:255],
+                         pcc_w, bat1_w, soc, excess_w))
         if not rows:
             return
         try:
@@ -691,8 +693,9 @@ class RelayController:
             )
             cur = conn.cursor()
             cur.executemany(
-                "INSERT INTO pv_decision_log (ts, state_from, state_to, decision, detail) "
-                "VALUES (NOW(), %s, %s, %s, %s)",
+                "INSERT INTO pv_decision_log"
+                " (ts, state_from, state_to, decision, detail, pcc_w, bat1_w, soc, excess_w)"
+                " VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s)",
                 rows,
             )
             conn.commit()
@@ -1529,7 +1532,11 @@ class PowerController:
         else:
             self._relay.keep_state(decision.final_state)
 
-        self._relay.db_log_decisions(vals.relay_st, decision.final_state, decision.trace)
+        self._relay.db_log_decisions(
+            vals.relay_st, decision.final_state, decision.trace,
+            pcc_w=int(vals.pcc), bat1_w=int(vals.bat1),
+            soc=vals.soc, excess_w=int(decision.excess),
+        )
 
         t_end = time.monotonic()
         cells_s = f" cells={t_cells - t_ebox_read:.1f}s" if (t_cells - t_ebox_read) > 0.1 else ""
