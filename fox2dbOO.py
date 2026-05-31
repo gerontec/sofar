@@ -3,14 +3,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 import math
 import os
 import subprocess
 import sys
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -27,11 +26,8 @@ import paho.mqtt.client as mqtt
 # VERSION & KONSTANTEN
 # ═══════════════════════════════════════════════════════════════════════════
 
-VERSION = "v1.59-Py"
+VERSION = "v1.70-Py"
 MAX_LOG_BYTES = 122 * 1024  # 122 kB, dann truncate
-
-# Hardware-Zustandstabelle: state → Watt
-# ─── Solar-Mittag-Berechnung ─────────────────────────────────────────────────
 
 def _solar_noon(lat: float, lon: float) -> _dt.datetime:
     """Solarer Höchststand heute als timezone-aware datetime (Europe/Berlin)."""
@@ -39,16 +35,6 @@ def _solar_noon(lat: float, lon: float) -> _dt.datetime:
     s = _astral_sun(loc.observer, date=_dt.date.today(), tzinfo=loc.timezone)
     return s["noon"]
 
-
-def _in_midday_window(cfg) -> bool:
-    """True wenn jetzt innerhalb ±midday_window_minutes um den solaren Mittag."""
-    try:
-        noon = _solar_noon(cfg.midday_latitude, cfg.midday_longitude)
-        now_dt = _dt.datetime.now(noon.tzinfo)
-        diff_min = abs((now_dt - noon).total_seconds() / 60)
-        return diff_min <= cfg.midday_window_minutes
-    except Exception:
-        return False
 
 
 STATE_POWER: dict[int, int] = {
@@ -73,7 +59,7 @@ class Config:
 
     # Regelwerk
     min_excess: int = 1010
-    max_grid_draw: int = 1500
+    max_grid_draw: int = 400
     max_soc: int = 99
     hysteresis: int = 505
     stabilization_cycles: int = 2
@@ -83,23 +69,17 @@ class Config:
     sweet_spot_bat: int = -310
     max_drop_rate: int = -20
     midday_soc_threshold: int = 70      # SOC2-Schwelle für Mittagskapp
-    midday_window_minutes: int = 120     # ±Minuten um den solaren Mittag
     midday_latitude: float = 47.6811    # Lenggries (PLZ 83661)
     midday_longitude: float = 11.5732
-    midday_season_start_month: int = 4  # April (Sommerhalbjahr)
-    midday_season_end_month: int = 9    # September (Ende Sommerhalbjahr)
-    feedin_season_start_month: int = 4  # April: FeedInLimiter aktiv
-    feedin_season_end_month: int = 9    # September: FeedInLimiter aktiv
+    feedin_dc_season_threshold_w: int = 12_000  # DC-Modell Mittag > X W → FeedIn/Midday aktiv
     feedin_limit_w: int = 19_000        # Einspeisung ab der geladen wird
     feedin_preload_w: int = 22_000      # Prognose-Schwelle für State-1-Vorschalten
-    feedin_system_peak_kw: float = 17.0 # Installierte DC-Spitzenleistung der Anlage
-    feedin_after_noon_hours: float = 2.0    # FeedInLimiter aus nach Solar Noon + X Stunden
     feedin_max_prognose_w: int = 35_000    # Prognose-Cap: gemessenes Allzeit-Maximum
     feedin_forecast_url: str = "https://web1.heissa.de/web1/forecast_api.php"
     feedin_forecast_hours: int = 4         # Stunden voraus für PRELOAD-Gate
     feedin_forecast_bad_clouds: float = 70.0  # Wolkenbedeckung % > Schwelle → kein PRELOAD
-    feedin_dc_cap_safe_w: int = 18_000        # DC-Prognose < Schwelle → kein Cap-Risiko → sofort laden
-    feedin_dc_cap_window_min: int = 165       # DC_SAFE aktiv innerhalb ±X min um Solar Noon (midday_window_minutes +45)
+    feedin_clouds_no_peak: float = 60.0       # Wolken % > Schwelle → kein Cap-Risiko → CLOUD_FREE
+    feedin_dc_cap_safe_w: int = 18_000        # dc_expected > X W → Risikofenster aktiv (Mittag/Bremse/DC_SAFE)
     bat2_capacity_wh: int = 30_000            # EBox bat2 Kapazität in Wh (für Ladeziel-Berechnung)
     deep_discharge_lower: int = 6
     deep_discharge_upper: int = 8
@@ -162,22 +142,14 @@ class Config:
         p.add_argument("--deep-discharge-upper", type=int, default=8)
         p.add_argument("--deep-discharge-target", type=int, default=7)
         p.add_argument("--midday-soc-threshold", type=int, default=80)
-        p.add_argument("--midday-window", type=int, default=60,
-                       help="±Minuten um solaren Mittag (default 60)")
         p.add_argument("--midday-lat", type=float, default=47.6811)
         p.add_argument("--midday-lon", type=float, default=11.5732)
-        p.add_argument("--midday-season-start", type=int, default=4)
-        p.add_argument("--midday-season-end", type=int, default=9)
-        p.add_argument("--feedin-season-start", type=int, default=4)
-        p.add_argument("--feedin-season-end", type=int, default=9)
+        p.add_argument("--feedin-dc-season-threshold", type=int, default=12_000,
+                       help="DC-Klarhimmel-Mittag > X W → FeedIn/Midday aktiv (default 12000)")
         p.add_argument("--feedin-limit", type=int, default=19_000,
                        help="Einspeisung (W) ab der FeedInLimiter lädt (default 19000)")
         p.add_argument("--feedin-preload", type=int, default=22_000,
                        help="Prognose-Schwelle (W) für State-1-Vorschalten (default 22000)")
-        p.add_argument("--feedin-system-peak", type=float, default=17.0,
-                       help="Installierte DC-Spitzenleistung kW (default 17.0)")
-        p.add_argument("--feedin-after-noon-hours", type=float, default=2.0,
-                       help="FeedInLimiter aus nach Solar Noon + X Stunden (default 2.0)")
         p.add_argument("--feedin-forecast-url",
                        default="https://web1.heissa.de/web1/forecast_api.php")
         p.add_argument("--feedin-forecast-hours", type=int, default=4,
@@ -209,17 +181,11 @@ class Config:
             deep_discharge_upper=a.deep_discharge_upper,
             deep_discharge_charge_target=a.deep_discharge_target,
             midday_soc_threshold=a.midday_soc_threshold,
-            midday_window_minutes=a.midday_window,
             midday_latitude=a.midday_lat,
             midday_longitude=a.midday_lon,
-            midday_season_start_month=a.midday_season_start,
-            midday_season_end_month=a.midday_season_end,
-            feedin_season_start_month=a.feedin_season_start,
-            feedin_season_end_month=a.feedin_season_end,
+            feedin_dc_season_threshold_w=a.feedin_dc_season_threshold,
             feedin_limit_w=a.feedin_limit,
             feedin_preload_w=a.feedin_preload,
-            feedin_system_peak_kw=a.feedin_system_peak,
-            feedin_after_noon_hours=a.feedin_after_noon_hours,
             feedin_forecast_url=a.feedin_forecast_url,
             feedin_forecast_hours=a.feedin_forecast_hours,
             feedin_forecast_bad_clouds=a.feedin_forecast_bad_clouds,
@@ -297,7 +263,6 @@ class ControlDecision:
     has_drop_rate: bool = False
     after_peak: bool = False
     trace: str = ""
-    reason: str = ""
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -914,6 +879,13 @@ class WeatherForecast:
         cmp = "<" if ok else ">="
         return ok, f"forecast_clouds={avg_clouds:.0f}%{cmp}{threshold:.0f}%"
 
+    def avg_cloudiness(self) -> float:
+        """Mittlere Wolkenbedeckung % für das Forecast-Fenster (0 wenn n/a)."""
+        rows = self._fetch()
+        if not rows:
+            return 0.0
+        return sum(r.get("cloudiness", 0) for r in rows) / len(rows)
+
 
 class DcForecast:
     """
@@ -928,32 +900,35 @@ class DcForecast:
                   9: 0.760, 10: 0.600, 11: 0.350, 12: 0.134}
 
     def __init__(self) -> None:
-        import math as _m
-        self._math = _m
         self._loc = _LocationInfo("Lenggries", "Germany", self._TZ_NAME,
                                    self._LAT, self._LON)
         self._tz  = _zoneinfo.ZoneInfo(self._TZ_NAME)
+        self._noon_cache: tuple[_dt.date, float] = (_dt.date.min, 0.0)
 
     def _cos_aoi(self, elev_deg: float, az_sun_N: float,
                  tilt_deg: float, az_panel_S: float) -> float:
-        m = self._math
-        e  = m.radians(elev_deg)
-        b  = m.radians(tilt_deg)
-        da = m.radians((az_sun_N - 180.0) - az_panel_S)
-        return m.sin(e) * m.cos(b) + m.cos(e) * m.sin(b) * m.cos(da)
+        e  = math.radians(elev_deg)
+        b  = math.radians(tilt_deg)
+        da = math.radians((az_sun_N - 180.0) - az_panel_S)
+        return math.sin(e) * math.cos(b) + math.cos(e) * math.sin(b) * math.cos(da)
+
+    def at_noon(self) -> float:
+        """DC-Watt Prognose für solaren Mittag heute (tagesweise gecacht)."""
+        today = _dt.date.today()
+        if self._noon_cache[0] != today:
+            self._noon_cache = (today, self.at(_solar_noon(self._LAT, self._LON)))
+        return self._noon_cache[1]
 
     def at(self, t: Optional[_dt.datetime] = None) -> float:
-        """DC-Watt Prognose für Zeitpunkt t (default: jetzt, Stundenmitte)."""
-        m = self._math
+        """DC-Watt Prognose für Zeitpunkt t (default: jetzt, exakte Minute)."""
         if t is None:
-            now = _dt.datetime.now(self._tz)
-            t = now.replace(minute=30, second=0, microsecond=0)
+            t = _dt.datetime.now(self._tz).replace(second=0, microsecond=0)
         t_tz = t.replace(tzinfo=self._tz) if t.tzinfo is None else t
         elev = _astral_elevation(self._loc.observer, t_tz)
         if elev <= 0:
             return 0.0
         az_N = _astral_azimuth(self._loc.observer, t_tz)
-        am   = min(1.0 / m.sin(m.radians(elev)), 37.0)
+        am   = min(1.0 / math.sin(math.radians(elev)), 37.0)
         T    = 0.7 ** (am ** 0.678)
         kt   = self._KT.get(t.month, 0.60)
         total = 0.0
@@ -977,46 +952,48 @@ class FeedInLimiter:
       OFF     — sonst              → State 0
     """
 
-    def __init__(self, cfg: Config) -> None:
+    def __init__(self, cfg: Config, dc_forecast: "DcForecast") -> None:
         self._cfg = cfg
         self._forecast = WeatherForecast(cfg)
+        self._dc_forecast = dc_forecast
 
     def _is_active_season(self) -> bool:
-        m = _dt.datetime.now().month
-        return self._cfg.feedin_season_start_month <= m <= self._cfg.feedin_season_end_month
+        return self._dc_forecast.at_noon() > self._cfg.feedin_dc_season_threshold_w
 
-    def _after_peak_window(self) -> tuple[bool, str]:
-        """True wenn Solar Noon + feedin_after_noon_hours bereits überschritten."""
-        try:
-            noon = _solar_noon(self._cfg.midday_latitude, self._cfg.midday_longitude)
-            cutoff = noon + _dt.timedelta(hours=self._cfg.feedin_after_noon_hours)
-            now_tz = _dt.datetime.now(noon.tzinfo)
-            past = now_tz >= cutoff
-            return past, cutoff.strftime("%H:%M")
-        except Exception as e:
-            return False, f"error:{e}"
+    def _feedin_forecast_clouds(self) -> float:
+        """Mittlere Wolkenbedeckung % aus WeatherForecast (0 wenn n/a)."""
+        return self._forecast.avg_cloudiness()
 
     def apply(self, vals: MeasuredValues, decision: ControlDecision) -> None:
         if not self._is_active_season() or vals.prot:
             return
-        after_peak, cutoff_time = self._after_peak_window()
-        if after_peak:
-            if vals.soc >= 88.0:
-                # Battery nearly full — cap charging to State 2 so the drop at 100% SOC
-                # adds only ~3.6 kW to the grid instead of 11.4 kW (State 7).
-                cap = 1
-                if decision.final_state > cap:
-                    old = decision.final_state
-                    decision.final_state = cap
-                    decision.changed = (cap != vals.relay_st)
-                    decision.trace += (f" | FeedInLimiter AFTER_PEAK_BRAKE"
-                                       f" (SOC={vals.soc:.0f}%≥88%) State{old}→{cap}")
-                else:
-                    decision.trace += (f" | FeedInLimiter AFTER_PEAK_BRAKE"
-                                       f" (SOC={vals.soc:.0f}%≥88%, State{decision.final_state} already ≤{cap})")
-                return
-            decision.trace += f" | FeedInLimiter AFTER_PEAK (>{cutoff_time} → Winterregel)"
-            decision.after_peak = True
+        # Kein Peak-Risiko wenn wolken-korrigiertes Tagesmaximum unter Einspeiselimit:
+        #   dc_noon × (1 − clouds/100) < feedin_limit_w
+        # Deckt ab: Winter/Übergang (dc_noon < 19 kW), Sommer Schlechtwetter (Wolken ↑)
+        _dc_noon_raw = self._dc_forecast.at_noon()
+        _clouds      = self._feedin_forecast_clouds()
+        _noon_eff    = _dc_noon_raw * max(0.0, 1.0 - _clouds / 100.0)
+        if _noon_eff < self._cfg.feedin_limit_w:
+            decision.trace += (f" | FeedInLimiter SKIP"
+                               f" (noon={_dc_noon_raw:.0f}W"
+                               f"×{1-_clouds/100:.2f}clouds={_noon_eff:.0f}W"
+                               f"<{self._cfg.feedin_limit_w}W)")
+            return
+        # Batterie fast voll während Hochleistungsphase → Ladung deckeln (sanfter Übergang zu 100%)
+        if vals.soc >= 88.0 and vals.dc_expected > self._cfg.feedin_dc_cap_safe_w:
+            cap = 1
+            if decision.final_state > cap:
+                old = decision.final_state
+                decision.final_state = cap
+                decision.changed = (cap != vals.relay_st)
+                decision.trace += (f" | FeedInLimiter SOC_BRAKE"
+                                   f" (SOC={vals.soc:.0f}%≥88%"
+                                   f", dc={vals.dc_expected:.0f}W>{self._cfg.feedin_dc_cap_safe_w}W)"
+                                   f" State{old}→{cap}")
+            else:
+                decision.trace += (f" | FeedInLimiter SOC_BRAKE"
+                                   f" (SOC={vals.soc:.0f}%≥88%"
+                                   f", dc={vals.dc_expected:.0f}W, State{decision.final_state}≤{cap})")
             return
         cfg = self._cfg
         # PCC = direkte Messung der Netzeinspeisung am Wechselrichter (bevorzugt).
@@ -1060,13 +1037,34 @@ class FeedInLimiter:
                                    f" ({fc_reason}) State{old_state}→0")
 
         else:
-            # Einspeisung zu niedrig → Sommer-Modus erzwingt State 0 (kein Laden)
-            old_state = decision.final_state
-            decision.final_state = 0
-            decision.changed = (0 != vals.relay_st)
-            decision.trace += (f" | FeedInLimiter OFF [{feed_in_src}]"
-                               f" ({feed_in_w}W < {cfg.feedin_limit_w}W"
-                               f", prognose={prognose_w}W, {fc_reason}) State{old_state}→0")
+            # Kein Cap-Risiko wenn:
+            # A) Wolken > 60 % → CLOUD_FREE
+            # B) Modell sinkt UND dc_expected < feedin_limit + max_ebox → POST_PEAK_FREE
+            #    Schwellwert: 19 000 + 11 400 = 30 400 W — bei Ladung State 7 absorbiert
+            #    EBox 11 400 W, daher PCC = dc − 11 400 − Haus < 19 000 W garantiert.
+            avg_clouds = self._forecast.avg_cloudiness()
+            _dc_now  = vals.dc_expected
+            _peak_free_w = cfg.feedin_limit_w + max(STATE_POWER.values())
+            _dc_30m  = self._dc_forecast.at(
+                _dt.datetime.now() + _dt.timedelta(minutes=30))
+            _past_peak = (_dc_now < _peak_free_w and _dc_30m <= _dc_now)
+
+            if avg_clouds > cfg.feedin_clouds_no_peak:
+                decision.trace += (f" | FeedInLimiter OFF→CLOUD_FREE [{feed_in_src}]"
+                                   f" ({feed_in_w}W < {cfg.feedin_limit_w}W"
+                                   f", clouds={avg_clouds:.0f}%>{cfg.feedin_clouds_no_peak:.0f}%)")
+            elif _past_peak:
+                decision.trace += (f" | FeedInLimiter OFF→POST_PEAK_FREE [{feed_in_src}]"
+                                   f" (dc={_dc_now:.0f}W<{_peak_free_w:.0f}W"
+                                   f", dc+30min={_dc_30m:.0f}W↓)")
+            else:
+                # Einspeisung zu niedrig → Sommer-Modus erzwingt State 0 (kein Laden)
+                old_state = decision.final_state
+                decision.final_state = 0
+                decision.changed = (0 != vals.relay_st)
+                decision.trace += (f" | FeedInLimiter OFF [{feed_in_src}]"
+                                   f" ({feed_in_w}W < {cfg.feedin_limit_w}W"
+                                   f", prognose={prognose_w}W, {fc_reason}) State{old_state}→0")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1149,16 +1147,12 @@ class FbController:
                 trace += f" | RAMP_LIMITED ({best}->{next_st})"
                 best = next_st
 
-        # Mittagskapp: SOC2 > Schwelle UND innerhalb ±window um Sonnenmittag → max State 1
-        _now = time.localtime()
-        now_m = _now.tm_mon
-        if (cfg.midday_season_start_month <= now_m <= cfg.midday_season_end_month
+        # Mittagskapp: SOC2 > Schwelle UND dc_expected im Risikofenster → max State 1
+        if (v.dc_expected > cfg.feedin_dc_cap_safe_w
                 and v.soc >= cfg.midday_soc_threshold
-                and best > 1
-                and _in_midday_window(cfg)):
-            trace += (f" | MIDDAY_SOC_CAP (SOC={v.soc:.0f}%≥"
-                      f"{cfg.midday_soc_threshold}%,"
-                      f" ±{cfg.midday_window_minutes}min Sonnenmittag, Monat {now_m})")
+                and best > 1):
+            trace += (f" | MIDDAY_SOC_CAP (SOC={v.soc:.0f}%≥{cfg.midday_soc_threshold}%"
+                      f", dc={v.dc_expected:.0f}W>{cfg.feedin_dc_cap_safe_w}W)")
             best = 1
 
         return best, excess, trace
@@ -1205,14 +1199,8 @@ class ExcessTrendCalc:
     def __init__(self, path_last_excess: str) -> None:
         self._path = path_last_excess
 
-    def read_last(self) -> float:
-        """Letzten gespeicherten Überschuss lesen, ohne zu schreiben."""
-        return _read_file(self._path, 0.0)
-
     def write(self, excess: float) -> None:
-        """Neuen Überschuss persistieren."""
         _write_file(self._path, f"{excess:.1f}")
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1345,8 +1333,8 @@ class PowerController:
             HysteresisBlock(cfg),
         ]
         self._fb = FbController(cfg, blocking_rules)
-        self._feedin = FeedInLimiter(cfg)
         self._dc_forecast = DcForecast()
+        self._feedin = FeedInLimiter(cfg, self._dc_forecast)
 
     def run_cycle(self) -> None:
         t0 = time.monotonic()
@@ -1405,57 +1393,40 @@ class PowerController:
 
         # Phase 3: Blocking einmalig mit korrektem drop_rate (kein Doppellauf)
         # after_peak: TREND_BLOCK nur überspringen wenn Batterie noch nicht voll
-        decision.after_peak = self._feedin._after_peak_window()[0] and vals.soc < 88.0
+        decision.after_peak = vals.dc_expected > self._cfg.feedin_dc_cap_safe_w and vals.soc < 88.0
         self._fb.apply_blocking(vals, decision)
 
         # ── FEED-IN LIMITER ────────────────────────────────────────────────
         self._feedin.apply(vals, decision)
 
-        # ══ DC-SAFE PROAKTIV LADEN + LADEZIEL BIS FENSTER-ENDE ═══════════
-        # Im Cap-Risk-Fenster (noon ± feedin_dc_cap_window_min) ohne Cap-Gefahr:
-        # Mindest-State berechnen damit bat2 (30 kWh) bis Fenster-Ende voll ist.
-        # Cap-Risiko-Prüfung: tatsächliche dc_pv-Messung (nicht Modell) –
-        # das Modell überschätzt am bewölkten Mittag und würde DC_SAFE sperren.
-        _dc_noon = _solar_noon(self._cfg.midday_latitude, self._cfg.midday_longitude)
-        _dc_now  = _dt.datetime.now(_dc_noon.tzinfo)
-        _dc_diff_min = abs((_dc_now - _dc_noon).total_seconds() / 60)
-        _dc_in_window = _dc_diff_min <= self._cfg.feedin_dc_cap_window_min
-        _dc_actual_w  = vals.dc_pv * 1_000 * 1.8   # gemessene Gesamt-DC in W
-        if (self._feedin._is_active_season()
-                and not self._feedin._after_peak_window()[0]
-                and _dc_in_window
-                and 0 < _dc_actual_w < self._cfg.feedin_dc_cap_safe_w
-                and vals.soc >= 0 and vals.soc < 100 and vals.relay_st < 7):
-            cfg = self._cfg
-            # Aktuelle Einspeisung (gleiche Quelle wie FeedInLimiter)
-            _feed_in_w = int(vals.pcc) if vals.pcc > 500 else int(abs(min(0.0, vals.wirkleist)))
-            # Obergrenze: nie mehr laden als solar verfügbar → kein Netzkauf
-            _solar_cap = find_best_state(_feed_in_w)   # max State ohne Netzkauf
-            if _solar_cap < 1:
-                pass   # solar reicht nicht mal für State 1 → kein DC_SAFE
-            else:
-                # Minuten bis Fenster-Ende (Noon + cap_window_min)
-                _win_end  = _dc_noon + _dt.timedelta(minutes=cfg.feedin_dc_cap_window_min)
-                _min_left = max(1.0, (_win_end - _dc_now).total_seconds() / 60)
-                # Benötigte Ladeleistung um SOC auf 100% zu bringen
-                _need_wh  = (100.0 - vals.soc) / 100.0 * cfg.bat2_capacity_wh
-                _need_w   = _need_wh / (_min_left / 60.0)
-                # Ziel-State: was wir bräuchten, gedeckelt durch verfügbares Solar
-                # Vergleich über STATE_POWER (nicht State-Nummer, da nicht monoton)
-                _want     = max(1, find_min_covering_state(int(_need_w)))
-                _dc_target = _want if get_state_power(_want) <= _feed_in_w else _solar_cap
-                if decision.final_state < _dc_target:
-                    decision.final_state = _dc_target
-                    decision.changed = (_dc_target != vals.relay_st)
-                    decision.trace += (
-                        f" | DC_SAFE→STUFE{_dc_target}"
-                        f" (dc_mess={_dc_actual_w:.0f}W<{cfg.feedin_dc_cap_safe_w}W"
-                        f" dc_modell={vals.dc_expected:.0f}W"
-                        f", solar={_feed_in_w}W→cap=St{_solar_cap}"
-                        f", soc={vals.soc:.0f}%"
-                        f", need={_need_wh:.0f}Wh/{_min_left:.0f}min→{_need_w:.0f}W"
-                        f", noon±{cfg.feedin_dc_cap_window_min}min)"
-                    )
+        # ══ SAISON-GATE ══════════════════════════════════════════════════════════
+        # Aktiver Tag (noon > 12 kW):
+        #   Wolken > 60 % → kein Cap-Risiko → CLOUD_FREE: sofort best state
+        #   Nach Peak (dc_expected < cap_safe UND >= 60% Noon) → POST_PEAK_FREE
+        #   Sonst Vor/während Cap-Risiko → EBox wartet auf PCC > 19 kW
+        # Winter/Wolken (noon < 12 kW): POWER_MATCHING lädt sofort aus Überschuss.
+        if self._feedin._is_active_season() and vals.pcc < self._cfg.feedin_limit_w:
+            _dc_noon    = self._dc_forecast.at_noon()
+            _avg_clouds = self._feedin._forecast.avg_cloudiness()
+            _cloud_free = _avg_clouds > self._cfg.feedin_clouds_no_peak
+            _past_peak  = (vals.dc_expected < self._cfg.feedin_dc_cap_safe_w
+                           and vals.dc_expected >= _dc_noon * 0.6)
+            if _cloud_free:
+                decision.trace += (f" | CLOUD_FREE"
+                                   f" (clouds={_avg_clouds:.0f}%"
+                                   f">{self._cfg.feedin_clouds_no_peak:.0f}%)")
+            elif _past_peak:
+                decision.trace += (f" | POST_PEAK_FREE"
+                                   f" (dc={vals.dc_expected:.0f}W"
+                                   f"<{self._cfg.feedin_dc_cap_safe_w}W"
+                                   f", ≥60%noon={_dc_noon*0.6:.0f}W)")
+            elif decision.final_state > 0:
+                decision.final_state = 0
+                decision.changed = (vals.relay_st != 0)
+                decision.trace += (f" | SEASON_GATE→0"
+                                   f" (PCC={vals.pcc:.0f}W<{self._cfg.feedin_limit_w}W"
+                                   f", dc={vals.dc_expected:.0f}W"
+                                   f", noon={_dc_noon:.0f}W)")
 
         # ══ RELAIS-4 / LADESTUFE-ERHOEHUNG ════════════════════
         # Trigger: PCC > 20.6 kW  oder  (wirkleist + WP) < Schwelle
@@ -1513,12 +1484,9 @@ class PowerController:
             _noon = _solar_noon(self._cfg.midday_latitude, self._cfg.midday_longitude)
             _now_tz = _dt.datetime.now(_noon.tzinfo)
             _diff_min = (_noon - _now_tz).total_seconds() / 60
-            _in_win = _in_midday_window(self._cfg)
             self._log(
-                f"SolarNoon: {_noon.strftime('%H:%M')} CEST"
-                f" ({_diff_min:+.0f} min)"
-                f" window=±{self._cfg.midday_window_minutes}min"
-                f" {'IN' if _in_win else 'OUT'}"
+                f"SolarNoon: {_noon.strftime('%H:%M')} CEST ({_diff_min:+.0f} min)"
+                f" dc_expected={vals.dc_expected:.0f}W"
             )
         except Exception as e:
             self._log(f"SolarNoon error: {e}")
