@@ -26,7 +26,7 @@ import paho.mqtt.client as mqtt
 # VERSION & KONSTANTEN
 # ═══════════════════════════════════════════════════════════════════════════
 
-VERSION = "v1.71-Py"
+VERSION = "v1.72-Py"
 MAX_LOG_BYTES = 122 * 1024  # 122 kB, dann truncate
 
 def _solar_noon(lat: float, lon: float) -> _dt.datetime:
@@ -111,7 +111,6 @@ class Config:
     path_last_excess: str = "/tmp/last_excess.txt"
     path_ebox_data: str = "/tmp/ebox15k.txt"
     path_inverter_csv: str = "/tmp/inverter.csv"
-    path_ebox_script: str = "/home/pi/python/ebox1arg.py"
     path_ebyte_script: str = "/home/pi/python/ebyte_ctrl.py"
 
     @classmethod
@@ -156,7 +155,6 @@ class Config:
                        help="Stunden voraus für PRELOAD-Gate (default 4)")
         p.add_argument("--feedin-forecast-bad-clouds", type=float, default=70.0,
                        help="Wolkenbedeckung %% > Schwelle → PRELOAD unterdrückt (default 70)")
-        p.add_argument("--ebox-script", default="/home/pi/python/ebox1arg.py")
         p.add_argument("--ebyte-script", default="/home/pi/python/ebyte_ctrl.py")
         p.add_argument("--mqtt-publish-broker", default="")
         p.add_argument("--mqtt-publish-port", type=int, default=0)
@@ -202,7 +200,6 @@ class Config:
             mqtt_publish_retain=a.mqtt_publish_retain,
             mqtt_publish_qos=a.mqtt_publish_qos,
             path_ebyte_script=a.ebyte_script,
-            path_ebox_script=a.ebox_script,
         )
 
 
@@ -671,6 +668,38 @@ class RelayController:
         script = self._cfg.path_ebyte_script
         prefix = "python3 " if script.endswith(".py") else ""
         return f"{prefix}{script} {args}"
+
+    def db_log_decisions(self, state_from: int, state_to: int, trace: str) -> None:
+        """Schreibt jeden Trace-Token als eigene Zeile in pv_decision_log."""
+        rows = []
+        for token in trace.split(" | "):
+            token = token.strip()
+            if not token:
+                continue
+            if "(" in token:
+                decision = token[:token.index("(")].strip()
+                detail   = token[token.index("(")+1:token.rindex(")")] if ")" in token else ""
+            else:
+                decision, detail = token, ""
+            rows.append((state_from, state_to, decision[:64], detail[:255]))
+        if not rows:
+            return
+        try:
+            conn = pymysql.connect(
+                host="192.168.178.218", database="wagodb",
+                user="gh", password="a12345", connect_timeout=5,
+            )
+            cur = conn.cursor()
+            cur.executemany(
+                "INSERT INTO pv_decision_log (ts, state_from, state_to, decision, detail) "
+                "VALUES (NOW(), %s, %s, %s, %s)",
+                rows,
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            self._log(f"Decision DB log error: {e}")
 
     def _db_log(self, action: str, relay: str, duration_s: int | None,
                 state_new: int | None, reason: str) -> None:
@@ -1499,6 +1528,8 @@ class PowerController:
             self._relay.set_state(decision.final_state, reason=decision.trace)
         else:
             self._relay.keep_state(decision.final_state)
+
+        self._relay.db_log_decisions(vals.relay_st, decision.final_state, decision.trace)
 
         t_end = time.monotonic()
         cells_s = f" cells={t_cells - t_ebox_read:.1f}s" if (t_cells - t_ebox_read) > 0.1 else ""
