@@ -26,7 +26,7 @@ import paho.mqtt.client as mqtt
 # VERSION & KONSTANTEN
 # ═══════════════════════════════════════════════════════════════════════════
 
-VERSION = "v1.70-Py"
+VERSION = "v1.71-Py"
 MAX_LOG_BYTES = 122 * 1024  # 122 kB, dann truncate
 
 def _solar_noon(lat: float, lon: float) -> _dt.datetime:
@@ -129,7 +129,7 @@ class Config:
         p.add_argument("--wirkleist-r4-threshold", type=int, default=-20_100,
                        help="Zähler-Wirkleistung (W) unter der Relais-4 ausgelöst wird (negativ=Einspeisung)")
         p.add_argument("--min-excess", type=int, default=1010)
-        p.add_argument("--max-grid-draw", type=int, default=1500)
+        p.add_argument("--max-grid-draw", type=int, default=400)
         p.add_argument("--max-soc", type=int, default=99)
         p.add_argument("--hysteresis", type=int, default=505)
         p.add_argument("--stabilization-cycles", type=int, default=2)
