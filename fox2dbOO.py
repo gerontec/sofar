@@ -18,7 +18,6 @@ import zoneinfo as _zoneinfo
 from astral import LocationInfo as _LocationInfo
 from astral.sun import sun as _astral_sun, elevation as _astral_elevation, azimuth as _astral_azimuth
 
-import urllib.request
 import pymysql
 import paho.mqtt.client as mqtt
 
@@ -26,7 +25,7 @@ import paho.mqtt.client as mqtt
 # VERSION & KONSTANTEN
 # ═══════════════════════════════════════════════════════════════════════════
 
-VERSION = "v1.73-Py"
+VERSION = "v1.74-Py"
 MAX_LOG_BYTES = 122 * 1024  # 122 kB, dann truncate
 
 def _solar_noon(lat: float, lon: float) -> _dt.datetime:
@@ -75,9 +74,7 @@ class Config:
     feedin_limit_w: int = 19_000        # Einspeisung ab der geladen wird
     feedin_preload_w: int = 22_000      # Prognose-Schwelle für State-1-Vorschalten
     feedin_max_prognose_w: int = 35_000    # Prognose-Cap: gemessenes Allzeit-Maximum
-    feedin_forecast_url: str = "https://web1.heissa.de/web1/forecast_api.php"
-    feedin_forecast_hours: int = 4         # Stunden voraus für PRELOAD-Gate
-    feedin_forecast_bad_clouds: float = 70.0  # Wolkenbedeckung % > Schwelle → kein PRELOAD
+    feedin_forecast_bad_clouds: float = 70.0  # dc_clouds % > Schwelle → kein PRELOAD
     feedin_clouds_no_peak: float = 60.0       # Wolken % > Schwelle → kein Cap-Risiko → CLOUD_FREE
     feedin_dc_cap_safe_w: int = 18_000        # dc_expected > X W → Risikofenster aktiv (Mittag/Bremse/DC_SAFE)
     bat2_capacity_wh: int = 30_000            # EBox bat2 Kapazität in Wh (für Ladeziel-Berechnung)
@@ -149,12 +146,8 @@ class Config:
                        help="Einspeisung (W) ab der FeedInLimiter lädt (default 19000)")
         p.add_argument("--feedin-preload", type=int, default=22_000,
                        help="Prognose-Schwelle (W) für State-1-Vorschalten (default 22000)")
-        p.add_argument("--feedin-forecast-url",
-                       default="https://web1.heissa.de/web1/forecast_api.php")
-        p.add_argument("--feedin-forecast-hours", type=int, default=4,
-                       help="Stunden voraus für PRELOAD-Gate (default 4)")
         p.add_argument("--feedin-forecast-bad-clouds", type=float, default=70.0,
-                       help="Wolkenbedeckung %% > Schwelle → PRELOAD unterdrückt (default 70)")
+                       help="dc_clouds %% > Schwelle → PRELOAD unterdrückt (default 70)")
         p.add_argument("--ebyte-script", default="/home/pi/python/ebyte_ctrl.py")
         p.add_argument("--mqtt-publish-broker", default="")
         p.add_argument("--mqtt-publish-port", type=int, default=0)
@@ -184,8 +177,6 @@ class Config:
             feedin_dc_season_threshold_w=a.feedin_dc_season_threshold,
             feedin_limit_w=a.feedin_limit,
             feedin_preload_w=a.feedin_preload,
-            feedin_forecast_url=a.feedin_forecast_url,
-            feedin_forecast_hours=a.feedin_forecast_hours,
             feedin_forecast_bad_clouds=a.feedin_forecast_bad_clouds,
             mqtt_broker=a.mqtt_broker,
             mqtt_port=a.mqtt_port,
@@ -876,49 +867,6 @@ class HysteresisBlock(BlockingRule):
 # WEATHER FORECAST (Wolkenbedeckungs-Prognose von heissa.de)
 # ═══════════════════════════════════════════════════════════════════════════
 
-class WeatherForecast:
-    """Holt Forecast-JSON von web1.heissa.de und prüft Solar-Erwartung."""
-
-    def __init__(self, cfg: Config) -> None:
-        self._cfg = cfg
-        self._cache: Optional[list] = None
-        self._cache_ts: float = 0.0
-
-    def _fetch(self) -> list:
-        now = time.monotonic()
-        if self._cache is not None and (now - self._cache_ts) < 1800:
-            return self._cache
-        try:
-            url = (f"{self._cfg.feedin_forecast_url}"
-                   f"?hours={self._cfg.feedin_forecast_hours}")
-            with urllib.request.urlopen(url, timeout=5) as resp:
-                data = json.loads(resp.read().decode())
-            rows = data.get("rows", [])
-            self._cache = rows
-            self._cache_ts = now
-        except Exception:
-            self._cache = self._cache if self._cache is not None else []
-        return self._cache
-
-    def solar_expected(self) -> tuple[bool, str]:
-        """True wenn mittlere Wolkenbedeckung < feedin_forecast_bad_clouds."""
-        rows = self._fetch()
-        if not rows:
-            return True, "forecast_n/a→ok"
-        avg_clouds = sum(r.get("cloudiness", 0) for r in rows) / len(rows)
-        threshold = self._cfg.feedin_forecast_bad_clouds
-        ok = avg_clouds < threshold
-        cmp = "<" if ok else ">="
-        return ok, f"forecast_clouds={avg_clouds:.0f}%{cmp}{threshold:.0f}%"
-
-    def avg_cloudiness(self) -> float:
-        """Mittlere Wolkenbedeckung % für das Forecast-Fenster (0 wenn n/a)."""
-        rows = self._fetch()
-        if not rows:
-            return 0.0
-        return sum(r.get("cloudiness", 0) for r in rows) / len(rows)
-
-
 class DcForecast:
     """
     Klarhimmel-DC-Prognose (getdc-Modell, inline).
@@ -969,6 +917,15 @@ class DcForecast:
             total += ppeak * T * coi
         return total * kt
 
+    def effective_cloud_pct(self, dc_pv_kw: float) -> float:
+        """Bewölkung % aus Messung vs. Klarhimmel-Modell (0=klar, 100=bedeckt).
+        Gibt 0 zurück wenn Sonnenstand zu niedrig für sinnvolle Messung."""
+        dc_now = self.at()
+        if dc_now < 500:
+            return 0.0
+        measured_w = dc_pv_kw * 1000 * 1.8
+        return max(0.0, min(100.0, (1.0 - measured_w / dc_now) * 100.0))
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # FEED-IN LIMITER (Sommer-Einspeisebegrenzung)
@@ -986,24 +943,20 @@ class FeedInLimiter:
 
     def __init__(self, cfg: Config, dc_forecast: "DcForecast") -> None:
         self._cfg = cfg
-        self._forecast = WeatherForecast(cfg)
         self._dc_forecast = dc_forecast
 
     def _is_active_season(self) -> bool:
         return self._dc_forecast.at_noon() > self._cfg.feedin_dc_season_threshold_w
 
-    def _feedin_forecast_clouds(self) -> float:
-        """Mittlere Wolkenbedeckung % aus WeatherForecast (0 wenn n/a)."""
-        return self._forecast.avg_cloudiness()
-
     def apply(self, vals: MeasuredValues, decision: ControlDecision) -> None:
         if not self._is_active_season() or vals.prot:
             return
+        # Bewölkung aus Messung vs. Klarhimmel-Modell ableiten
+        _clouds      = self._dc_forecast.effective_cloud_pct(vals.dc_pv)
         # Kein Peak-Risiko wenn wolken-korrigiertes Tagesmaximum unter Einspeiselimit:
         #   dc_noon × (1 − clouds/100) < feedin_limit_w
         # Deckt ab: Winter/Übergang (dc_noon < 19 kW), Sommer Schlechtwetter (Wolken ↑)
         _dc_noon_raw = self._dc_forecast.at_noon()
-        _clouds      = self._feedin_forecast_clouds()
         _noon_eff    = _dc_noon_raw * max(0.0, 1.0 - _clouds / 100.0)
         if _noon_eff < self._cfg.feedin_limit_w:
             decision.trace += (f" | FeedInLimiter SKIP"
@@ -1041,7 +994,8 @@ class FeedInLimiter:
             cfg.feedin_max_prognose_w,
         )
 
-        fc_ok, fc_reason = self._forecast.solar_expected()
+        fc_ok     = _clouds < cfg.feedin_forecast_bad_clouds
+        fc_reason = f"dc_clouds={_clouds:.0f}%{'<' if fc_ok else '>='}{cfg.feedin_forecast_bad_clouds:.0f}%"
 
         if feed_in_w >= cfg.feedin_limit_w:
             absorption_needed = feed_in_w - cfg.feedin_limit_w
@@ -1074,7 +1028,7 @@ class FeedInLimiter:
             # B) Modell sinkt UND dc_expected < feedin_limit + max_ebox → POST_PEAK_FREE
             #    Schwellwert: 19 000 + 11 400 = 30 400 W — bei Ladung State 7 absorbiert
             #    EBox 11 400 W, daher PCC = dc − 11 400 − Haus < 19 000 W garantiert.
-            avg_clouds = self._forecast.avg_cloudiness()
+            avg_clouds = _clouds
             _dc_now  = vals.dc_expected
             _peak_free_w = cfg.feedin_limit_w + max(STATE_POWER.values())
             _dc_30m  = self._dc_forecast.at(
@@ -1439,7 +1393,7 @@ class PowerController:
         # Winter/Wolken (noon < 12 kW): POWER_MATCHING lädt sofort aus Überschuss.
         if self._feedin._is_active_season() and vals.pcc < self._cfg.feedin_limit_w:
             _dc_noon    = self._dc_forecast.at_noon()
-            _avg_clouds = self._feedin._forecast.avg_cloudiness()
+            _avg_clouds = self._dc_forecast.effective_cloud_pct(vals.dc_pv)
             _cloud_free = _avg_clouds > self._cfg.feedin_clouds_no_peak
             _past_peak  = (vals.dc_expected < self._cfg.feedin_dc_cap_safe_w
                            and vals.dc_expected >= _dc_noon * 0.6)
