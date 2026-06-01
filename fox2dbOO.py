@@ -25,7 +25,7 @@ import paho.mqtt.client as mqtt
 # VERSION & KONSTANTEN
 # ═══════════════════════════════════════════════════════════════════════════
 
-VERSION = "v1.75-Py"
+VERSION = "v1.76-Py"
 MAX_LOG_BYTES = 122 * 1024  # 122 kB, dann truncate
 
 def _solar_noon(lat: float, lon: float) -> _dt.datetime:
@@ -661,7 +661,8 @@ class RelayController:
         return f"{prefix}{script} {args}"
 
     def db_log_decisions(self, state_from: int, state_to: int, trace: str,
-                          pcc_w: int, bat1_w: int, soc: float, excess_w: int) -> None:
+                          pcc_w: int, bat1_w: int, soc: float, excess_w: int,
+                          dc_pv_w: int, dc_expected_w: int) -> None:
         """Schreibt jeden Trace-Token als eigene Zeile in pv_decision_log."""
         rows = []
         for token in trace.split(" | "):
@@ -674,7 +675,7 @@ class RelayController:
             else:
                 decision, detail = token, ""
             rows.append((state_from, state_to, decision[:64], detail[:255],
-                         pcc_w, bat1_w, soc, excess_w))
+                         pcc_w, bat1_w, soc, excess_w, dc_pv_w, dc_expected_w))
         if not rows:
             return
         try:
@@ -685,8 +686,9 @@ class RelayController:
             cur = conn.cursor()
             cur.executemany(
                 "INSERT INTO pv_decision_log"
-                " (ts, state_from, state_to, decision, detail, pcc_w, bat1_w, soc, excess_w)"
-                " VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s)",
+                " (ts, state_from, state_to, decision, detail,"
+                "  pcc_w, bat1_w, soc, excess_w, dc_pv_w, dc_expected_w)"
+                " VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 rows,
             )
             conn.commit()
@@ -1503,6 +1505,8 @@ class PowerController:
             vals.relay_st, decision.final_state, decision.trace,
             pcc_w=int(vals.pcc), bat1_w=int(vals.bat1),
             soc=vals.soc, excess_w=int(decision.excess),
+            dc_pv_w=int(vals.dc_pv * 1000),
+            dc_expected_w=int(vals.dc_expected),
         )
 
         t_end = time.monotonic()
