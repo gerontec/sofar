@@ -25,7 +25,7 @@ import paho.mqtt.client as mqtt
 # VERSION & KONSTANTEN
 # ═══════════════════════════════════════════════════════════════════════════
 
-VERSION = "v1.74-Py"
+VERSION = "v1.75-Py"
 MAX_LOG_BYTES = 122 * 1024  # 122 kB, dann truncate
 
 def _solar_noon(lat: float, lon: float) -> _dt.datetime:
@@ -918,13 +918,22 @@ class DcForecast:
         return total * kt
 
     def effective_cloud_pct(self, dc_pv_kw: float) -> float:
-        """Bewölkung % aus Messung vs. Klarhimmel-Modell (0=klar, 100=bedeckt).
+        """Bewölkung % aus WR1-Messung vs. WR1-Klarhimmel (0=klar, 100=bedeckt).
         Gibt 0 zurück wenn Sonnenstand zu niedrig für sinnvolle Messung."""
         dc_now = self.at()
         if dc_now < 500:
             return 0.0
-        measured_w = dc_pv_kw * 1000 * 1.8
+        measured_w = dc_pv_kw * 1000
         return max(0.0, min(100.0, (1.0 - measured_w / dc_now) * 100.0))
+
+
+class DcForecastEast(DcForecast):
+    """WR2-Klarhimmel-Prognose (getdceast-Modell): Ost/West-Arrays."""
+    _ARRAYS = [
+        (41, -74, 19_852),   # PV2 Ost  (SE, dominant)
+        (60,  90,  2_078),   # PV2 West
+        (32,  94,  2_378),   # PV1 West
+    ]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -941,12 +950,15 @@ class FeedInLimiter:
       OFF     — sonst              → State 0
     """
 
-    def __init__(self, cfg: Config, dc_forecast: "DcForecast") -> None:
+    def __init__(self, cfg: Config, dc_forecast: "DcForecast",
+                 dc_forecast_east: "DcForecastEast") -> None:
         self._cfg = cfg
         self._dc_forecast = dc_forecast
+        self._dc_forecast_east = dc_forecast_east
 
     def _is_active_season(self) -> bool:
-        return self._dc_forecast.at_noon() > self._cfg.feedin_dc_season_threshold_w
+        total_noon = self._dc_forecast.at_noon() + self._dc_forecast_east.at_noon()
+        return total_noon > self._cfg.feedin_dc_season_threshold_w
 
     def apply(self, vals: MeasuredValues, decision: ControlDecision) -> None:
         if not self._is_active_season() or vals.prot:
@@ -954,9 +966,9 @@ class FeedInLimiter:
         # Bewölkung aus Messung vs. Klarhimmel-Modell ableiten
         _clouds      = self._dc_forecast.effective_cloud_pct(vals.dc_pv)
         # Kein Peak-Risiko wenn wolken-korrigiertes Tagesmaximum unter Einspeiselimit:
-        #   dc_noon × (1 − clouds/100) < feedin_limit_w
-        # Deckt ab: Winter/Übergang (dc_noon < 19 kW), Sommer Schlechtwetter (Wolken ↑)
-        _dc_noon_raw = self._dc_forecast.at_noon()
+        #   (dc_noon_WR1 + dc_noon_WR2) × (1 − clouds/100) < feedin_limit_w
+        # Deckt ab: Winter/Übergang (total_noon < 19 kW), Sommer Schlechtwetter (Wolken ↑)
+        _dc_noon_raw = self._dc_forecast.at_noon() + self._dc_forecast_east.at_noon()
         _noon_eff    = _dc_noon_raw * max(0.0, 1.0 - _clouds / 100.0)
         if _noon_eff < self._cfg.feedin_limit_w:
             decision.trace += (f" | FeedInLimiter SKIP"
@@ -1320,7 +1332,8 @@ class PowerController:
         ]
         self._fb = FbController(cfg, blocking_rules)
         self._dc_forecast = DcForecast()
-        self._feedin = FeedInLimiter(cfg, self._dc_forecast)
+        self._dc_forecast_east = DcForecastEast()
+        self._feedin = FeedInLimiter(cfg, self._dc_forecast, self._dc_forecast_east)
 
     def run_cycle(self) -> None:
         t0 = time.monotonic()
@@ -1392,7 +1405,7 @@ class PowerController:
         #   Sonst Vor/während Cap-Risiko → EBox wartet auf PCC > 19 kW
         # Winter/Wolken (noon < 12 kW): POWER_MATCHING lädt sofort aus Überschuss.
         if self._feedin._is_active_season() and vals.pcc < self._cfg.feedin_limit_w:
-            _dc_noon    = self._dc_forecast.at_noon()
+            _dc_noon    = self._dc_forecast.at_noon() + self._dc_forecast_east.at_noon()
             _avg_clouds = self._dc_forecast.effective_cloud_pct(vals.dc_pv)
             _cloud_free = _avg_clouds > self._cfg.feedin_clouds_no_peak
             _past_peak  = (vals.dc_expected < self._cfg.feedin_dc_cap_safe_w
