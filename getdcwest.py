@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """
-getdc MMDDHH      →  expected PV DC watts (Stundenmitte :30)
-getdc MMDDHHMM    →  expected PV DC watts (exakte Minute)
+getdcwest MMDDHH      →  expected PV DC watts WR1 (Stundenmitte :30)
+getdcwest MMDDHHMM    →  expected PV DC watts WR1 (exakte Minute)
 
-Zwei Arrays (kalibriert aus inverter_data DC*1.8 an klaren Tagen):
+WR1 (Sofar-Inverter, Power_PV1+PV2 via MQTT) — zwei kalibrierte Arrays:
   PV1: tilt=25°, azimut=+80° von Süd (fast West),  P_peak=27854 W
   PV2: tilt=60°, azimut= -5° von Süd (fast Süd),   P_peak=11138 W
 
-Atmosphäre: Meinel-Klarhimmel  T = 0.7^(AM^0.678)
-Monatlicher Clearness-Index KT kalibriert aus inverter_data 2025-12..2026-05.
+Kalibrierung:
+  Datenquelle: inverter_data.Power_PV1+Power_PV2, 2025-12 bis 2026-05
+  Methode: Ratio-Verteilung (1348 Stunden-Mittelwerte) — Klarhimmel-Peak bei
+           ratio≈1.0 (10.5% aller Messstunden). KT-Werte validiert, nicht abgesenkt.
+  Cloud-Edge-Effekte (ratio>1.4, 2.5% der Fälle) nicht modellierbar.
+  Nur WR1 (Sofar). WR2 (15kWp Ost) → getdceast.py
 """
 import sys, math, datetime as dt, zoneinfo
 from astral import LocationInfo
@@ -17,16 +21,14 @@ from astral.sun import elevation as sun_elevation, azimuth as sun_azimuth
 LAT, LON = 47.6811, 11.5732
 TZ       = "Europe/Berlin"
 
-# Zwei PV-Arrays: [tilt_deg, az_from_S_deg, ppeak_W]
+# WR1 Arrays: [tilt_deg, az_from_S_deg, ppeak_W]
 # az_from_S: 0=Süd, +90=West, -90=Ost
 ARRAYS = [
     (25,  80, 27_854),   # PV1 – 25° Tilt, fast West
     (60,  -5, 11_138),   # PV2 – 60° Tilt, fast Süd
 ]
 
-# Monatlicher Clearness-Index (Median aller Stunden mit elev>5°)
-# Gemessene Monate: 12/2025, 01-05/2026
-# Jun-Nov: Schätzung (TODO sobald Messdaten vorhanden)
+# Monatlicher Clearness-Index — validiert aus inverter_data Ratio-Verteilung (Klarhimmel-Peak ≈1.0)
 KT = {1: 0.331, 2: 0.402, 3: 0.563, 4: 0.838,
       5: 0.909, 6: 0.880, 7: 0.840, 8: 0.820,
       9: 0.760, 10: 0.600, 11: 0.350, 12: 0.134}
@@ -50,7 +52,7 @@ def dc_forecast(t: dt.datetime) -> float:
     az_N = sun_azimuth(_LOC.observer, t_tz)
     am   = min(1.0 / math.sin(math.radians(elev)), 37.0)
     T    = 0.7 ** (am ** 0.678)
-    kt   = KT.get(t.month, 0.60)
+    kt   = KT.get(t.month, 0.50)
     total = 0.0
     for tilt, az_s, ppeak in ARRAYS:
         coi = max(0.0, _cos_aoi(elev, az_N, tilt, az_s))
@@ -67,5 +69,5 @@ elif len(arg) == 8 and arg.isdigit():
     mo, d, h, mi = int(arg[:2]), int(arg[2:4]), int(arg[4:6]), int(arg[6:8])
     t = dt.datetime(y, mo, d, h, mi)
 else:
-    sys.exit("Usage: getdc MMDDHH  oder  getdc MMDDHHMM")
+    sys.exit("Usage: getdcwest MMDDHH  oder  getdcwest MMDDHHMM")
 print(f"{dc_forecast(t):.0f}")

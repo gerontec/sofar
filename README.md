@@ -11,6 +11,88 @@ This project provides tools for managing and monitoring Sofar solar inverters:
 - **Battery Management** (`soyo1min`) - Intelligent battery discharge control based on grid status, SOC, time of day, and heat pump integration
 - **Register Reader** (`read_inverter`) - Comprehensive Modbus RTU register reader with CSV export
 
+---
+
+## fox2dbOO / getdc — Modellbasierte Saisonsteuerung (v1.61+)
+
+### Das getdc-Modell
+
+`getdc` (ausführbar als `getdc MMDDHH`) berechnet die zu erwartende DC-Leistung der PV-Anlage
+für einen beliebigen Zeitpunkt — ohne Datenbankzugriff, rein physikalisch:
+
+```
+getdc 053114   →  z. B. 24830  (Watt, 31. Mai 14:00 Uhr)
+```
+
+**Physikalisches Modell (Meinel-Klarhimmel):**
+
+1. **Sonnenposition** — Elevation und Azimut werden via `astral` berechnet (Lenggries, 47.68°N 11.57°O).
+2. **Atmosphärische Transmission** — Meinel-Formel:
+   `T = 0.7^(AM^0.678)`, wobei `AM = 1/sin(elevation)` die Luftmasse ist.
+3. **Einfallswinkel pro Array** — `cos(AOI)` berücksichtigt Tilt und Azimut jedes Arrays:
+   ```
+   PV1: Tilt 25°, Azimut +80° von Süd (fast West)  →  Peak ~14–16 Uhr CEST
+   PV2: Tilt 60°, Azimut  −5° von Süd (fast Süd)   →  Peak ~12–13 Uhr CEST
+   ```
+4. **Monatlicher Clearness-Index KT** — kalibriert aus gemessenen `inverter_data`-Werten
+   (DC×1.8 an klaren Tagen, Monate 12/2025–05/2026):
+   ```python
+   KT = {1: 0.331, 2: 0.402, 3: 0.563, 4: 0.838,
+         5: 0.909, 6: 0.880, 7: 0.840, 8: 0.820,
+         9: 0.760, 10: 0.600, 11: 0.350, 12: 0.134}
+   ```
+   Das Ergebnis: `DC_total = Σ(ppeak × T × cos(AOI)) × KT`
+
+Das Modell ist **identisch** in `getdc` (CLI-Tool) und in `fox2dbOO.py` (`DcForecast`-Klasse),
+sodass beide Werkzeuge exakt dieselben Werte liefern.
+
+---
+
+### Warum starre Monats- und Stundenfenster obsolet sind
+
+Frühere Versionen von `fox2dbOO` verwendeten harte Zeitgrenzen:
+
+| Mechanismus | alte Implementierung | Problem |
+|---|---|---|
+| Saisonscheck | Monat 4–9 (April–September) | Frühjahrsbeginn/Herbstende ungenau |
+| Mittagskapp-Fenster | `±120 min` um astronomischen Sonnenmittag | Westversatz von PV1 ignoriert |
+| DC_SAFE-Fenster | `±165 min` um Sonnenmittag | Westversatz von PV1 ignoriert |
+| AFTER_PEAK / Winterregel | Sonnenmittag + 2 h → FeedInLimiter aus | Westproduktion bis ~18 Uhr abgeschnitten |
+
+**Das Kernproblem:** PV1 ist stark nach West gedreht (Azimut +80°). Der astronomische Mittag
+liegt bei ~13:15 CEST, aber das PV1-Maximum bei ~15:30 CEST. Ein festes Fenster um 13:15
+erwischt also die eigentliche Hochleistungsphase nur halb.
+
+**Die Lösung ab v1.61:** `dc_expected` (Modellwert für die aktuelle Stunde) *ist* das Fenster.
+
+```
+dc_expected > feedin_dc_cap_safe_w (18 000 W)
+    → Wir sind jetzt in der Hochleistungsphase
+    → Mittagskapp, SOC-Bremse und TrendBlock-Override aktivieren
+
+dc_forecast.at_noon() > feedin_dc_season_threshold_w (12 000 W)
+    → Heute ist ein Sonnentag mit Einspeisepotenzial
+    → FeedInLimiter für diesen Tag aktivieren
+
+Modell-Scan vorwärts (stündlich) bis dc_expected < 18 000 W
+    → Ergibt dynamisch die verbleibenden Minuten für DC_SAFE-Ladeberechnung
+    → Korrekt für jeden Azimut und jede Jahreszeit
+```
+
+**Konkrete Auswirkungen:**
+
+- **Mittagskapp** schaltet sich automatisch bei realer Hochleistung ein — auch wenn diese um
+  15:30 statt um 13:15 liegt.
+- **SOC-Bremse** (SOC ≥ 88 % → max. State 1) greift nur während tatsächlich hoher DC-Produktion,
+  nicht pauschal ab einem Uhrzeitwert.
+- **FeedInLimiter** bleibt aktiv solange PV1 Westsonne liefert — nicht nur bis Noon + 2 h.
+- **DC_SAFE-Ladeberechnung** weiß durch den Modell-Scan genau, wie viele Minuten Hochleistung
+  noch verbleiben, und setzt den Ziel-State entsprechend.
+- **Saison-Übergang** erfolgt fließend: im März steigt KT schrittweise, `at_noon()` überquert
+  die 12-kW-Schwelle automatisch ohne fixen Monatssprung.
+
+---
+
 ## Features
 
 ### Battery Management System (soyo1min)
