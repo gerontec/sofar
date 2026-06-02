@@ -28,12 +28,12 @@ WHERE d.decision IS NULL
 GROUP BY l.decision
 ORDER BY cnt DESC;
 
--- 3) STABILIZING hält State obwohl Bat1 stark entlädt
+-- 3) STABILIZING hält State obwohl Bat1 stark entlädt (nur in detail, nicht mehr primäre decision)
 SELECT ts, state_from, state_to, detail,
        bat1_w, excess_w, soc,
        dc_pv_w, dc_expected_w
 FROM pv_decision_log
-WHERE decision = 'STABILIZING'
+WHERE detail LIKE '%STABILIZING%'
   AND bat1_w < -500
 ORDER BY ts DESC LIMIT 50;
 
