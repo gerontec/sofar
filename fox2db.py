@@ -318,7 +318,9 @@ def read_ebox() -> Tuple[float, float]:
                         socs.append(float(p.replace("%", "")))
                     except ValueError:
                         pass
-        return current / 1000.0, (min(socs) if socs else -1.0)
+        if not socs or 0.0 in socs:
+            return current / 1000.0, -1.0
+        return current / 1000.0, sum(socs) / len(socs)
     except Exception as e:
         _log(f"EBox read error: {e}")
         return 0.0, -1.0
@@ -523,6 +525,7 @@ def main():
         "drop_rate": round(drop_rate, 1) if has_drop and drop_rate != 0 else None,
         "trace": trace,
         "deep_discharge_active": prot,
+        "need_downward_regulation": pcc > CONFIG['pcc_peak_threshold'] and not trace.startswith("PCC_OVER_20KW"),
     })
 
     # Dateien
@@ -553,7 +556,8 @@ def main():
         _write(PATHS['relay_state'], final)
 
     # DO4-Puls: nur wenn PCC>20kW aber kein State-Erhöhung möglich (SOC=100 oder State=7)
-    if pcc > CONFIG['pcc_peak_threshold'] and not trace.startswith("PCC_OVER_20KW"):
+    need_downward_regulation = pcc > CONFIG['pcc_peak_threshold'] and not trace.startswith("PCC_OVER_20KW")
+    if need_downward_regulation:
         pulse_do4()
 
 
