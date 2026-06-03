@@ -18,7 +18,7 @@ from astral.sun import elevation as _astral_elevation, azimuth as _astral_azimut
 # ═══════════════════════════════════════════════════════════════════════════
 #                             KONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════
-VERSION = "v2.0-Py"
+VERSION = "v2.1-Py"
 MAX_LOG_BYTES = 220 * 1024
 
 STATE_TO_POWER = {0: 0, 1: 3000, 2: 3650, 3: 6650, 4: 3900, 5: 7100, 6: 7800, 7: 11400}
@@ -369,17 +369,24 @@ def publish_mqtt(payload: dict):
 
 def decide(soc, pcc, bat_cur, bat1, relay_st, prot) -> Tuple[int, str, float]:
     """
-    Entscheidungslogik — dominanzgeordnet, erste passende Regel gewinnt.
+    Entscheidungslogik — dominanzgeordnet (prio 1=höchste), erste Regel gewinnt.
     BATTERY_FULL_STOP und CRITICAL_SOC sind in HARD_GUARDS (nach decide).
     """
     ebox_eff = max(bat_cur * 2 * 53 + 1, STATE_TO_POWER.get(relay_st, 0)) if relay_st > 0 else 0
     excess   = pcc + ebox_eff + bat1
 
-    # SOC unbekannt → aktuellen State halten
+    # SOC unbekannt → aktuellen State halten (strukturelle Sicherheit vor prio-Check)
     if soc < 0:
         ebox_actual = (bat_cur * 2 * 53 + 1) if relay_st > 0 else 0
         excess = pcc + ebox_actual + bat1
-        return relay_st, f"EBOX_SOC_UNKNOWN_HOLD", excess
+        return relay_st, "EBOX_SOC_UNKNOWN_HOLD", excess
+
+    # prio 1 — PCC_OVER_20KW: Netzeinspeisung zu hoch → State+1
+    # DO4 wird nur gepulst wenn kein State-Erhöhung möglich (SOC=100 oder State=7)
+    if pcc > CONFIG['pcc_peak_threshold'] and soc < 100:
+        next_st = min(relay_st + 1, 7)
+        if next_st > relay_st:
+            return next_st, f"PCC_OVER_20KW (SOC={soc:.0f}% State{relay_st}→{next_st})", excess
 
     # Tiefentladeschutz aktiv
     if prot:
@@ -538,24 +545,16 @@ def main():
     # DB Logging
     _db_decision_log(relay_st, final, trace, pcc, bat1, soc, excess, ebox_w, dc_expected)
 
-    # Relay schalten
+    # Relay schalten — max. eine Schaltung pro Zyklus
     if changed:
         _db_relay_event("state_change", "ebox", final, trace)
         set_relay(final)
     else:
         _write(PATHS['relay_state'], final)
 
-    # PCC_OVER_20KW — Post-Guard (prio 1: höchste Dominanz)
-    # SOC < 100 → State+1; SOC = 100 oder State bereits max → DO4
-    if pcc > CONFIG['pcc_peak_threshold']:
-        next_st = min(final + 1, 7)
-        if soc < 100 and next_st > final:
-            reason = f"PCC>20kW SOC={soc:.0f}%<100% State{final}→{next_st}"
-            _log(f"PCC>20kW: {reason} (kein DO4)")
-            _db_relay_event("state_change", "ebox", next_st, reason)
-            set_relay(next_st)
-        else:
-            pulse_do4()
+    # DO4-Puls: nur wenn PCC>20kW aber kein State-Erhöhung möglich (SOC=100 oder State=7)
+    if pcc > CONFIG['pcc_peak_threshold'] and not trace.startswith("PCC_OVER_20KW"):
+        pulse_do4()
 
 
 if __name__ == "__main__":
