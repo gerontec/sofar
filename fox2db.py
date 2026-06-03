@@ -469,7 +469,10 @@ def main():
     stable        = _read(PATHS['last_change'])
     prot          = _read(PATHS['deep_discharge']) == 1
     last_excess   = _read(PATHS['last_excess'], as_float=True)
-    dc_expected   = DC.now()
+    dc_expected                         = DC.now()
+    _peak_w, _peak_t, _has_peak, _win_end = DC.peak_today()
+    _peak_str = (f"DC_peak={_peak_w/1000:.1f}kW@{_peak_t.strftime('%H:%M')}"
+                 f" win_end={_win_end.strftime('%H:%M')}") if _has_peak and _peak_t else "DC_peak=<20kW"
 
     # Z2-Fallback wenn PCC=NaN
     if math.isnan(raw_pcc):
@@ -506,7 +509,7 @@ def main():
          f"PCC={pcc:.0f}W Z2={wirkleist:.0f}W "
          f"Bat1={bat1:.0f}W EBox={ebox_w:.0f}W "
          f"DC_exp={dc_expected:.0f}W DC_delta={dc_delta:+.0f}W "
-         f"(State={relay_st}) Stable={new_stable}")
+         f"{_peak_str} (State={relay_st}) Stable={new_stable}")
     _log(f"Result: State {final} (TRACE: {trace})")
 
     # MQTT publish
@@ -526,6 +529,8 @@ def main():
         "trace": trace,
         "deep_discharge_active": prot,
         "need_downward_regulation": pcc > CONFIG['pcc_peak_threshold'] and not trace.startswith("PCC_OVER_20KW"),
+        "dc_peak_time":   _peak_t.strftime('%H:%M') if _has_peak and _peak_t else None,
+        "dc_window_end":  _win_end.strftime('%H:%M') if _has_peak and _win_end else None,
     })
 
     # Dateien
