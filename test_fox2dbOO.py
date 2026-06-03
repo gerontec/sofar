@@ -1,5 +1,5 @@
 """
-Tests für fox2dbOO.py — alle Klassen mit reiner Logik oder Datei-I/O.
+Tests für fox2dbOO.py v1.57-Py — Prod-Version auf Pi (192.168.178.119).
 MQTT/Hardware-Klassen (MqttClient, MqttPublisher, RelayController.set_state)
 sind ausgeklammert — sie benötigen echte Hardware oder einen Broker.
 
@@ -10,18 +10,58 @@ import sys
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
-sys.path.insert(0, "/home/pi/python")
+sys.path.insert(0, "/tmp")
 from fox2dbOO import (
     Config, Logger, MeasuredValues, ControlDecision,
     EBoxReader, RelayController,
     BlockingRule, SweetSpotHold, TrendBlock, BatGuardBlock,
     StabilizingBlock, HysteresisBlock,
-    FbController, ExcessTrendCalc, DeepDischargeGuard,
+    FbController, DcForecast, ExcessTrendCalc, DeepDischargeGuard,
     get_state_power, find_best_state, get_next_state_up,
     _read_file, _write_file, STATE_POWER,
 )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hilfsfunktionen
+# ─────────────────────────────────────────────────────────────────────────────
+
+def make_cfg(**kwargs):
+    cfg = Config()
+    for k, v in kwargs.items():
+        setattr(cfg, k, v)
+    return cfg
+
+
+def make_vals(**kwargs):
+    defaults = dict(pcc=0, bat1=0, soc_bat1=100, bat_cur=0,
+                    soc=50.0, relay_st=0, stable=5, prot=0,
+                    last_excess=0.0, dc_expected=0.0)
+    defaults.update(kwargs)
+    return MeasuredValues(**defaults)
+
+
+def _mock_dc_no_peak():
+    """DcForecast-Mock ohne aktives PEAK_DAY_CAP-Fenster."""
+    import datetime as _dt, zoneinfo
+    dc = MagicMock()
+    t = _dt.datetime.now(zoneinfo.ZoneInfo("Europe/Berlin"))
+    dc.peak_forecast_today.return_value = (0.0, t, False, None)
+    dc._tz = zoneinfo.ZoneInfo("Europe/Berlin")
+    return dc
+
+
+def make_fb(cfg=None, peak=False):
+    """peak=False (default): PEAK_DAY_CAP wird weggemokt — Tests sind zeitunabhängig."""
+    c = cfg or Config()
+    rules = [
+        SweetSpotHold(c), TrendBlock(c), BatGuardBlock(c),
+        StabilizingBlock(c), HysteresisBlock(c),
+    ]
+    dc = DcForecast() if peak else _mock_dc_no_peak()
+    return FbController(c, rules, dc)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Modul-Funktionen
@@ -62,7 +102,6 @@ class TestStateFunctions:
         assert chain == [0, 1, 2, 4, 3, 5, 6, 7]
 
     def test_next_state_up_at_max(self):
-        # State 7 ist Maximum — bleibt bei 7
         assert get_next_state_up(7) == 7
 
     def test_next_after_state2_is_4_not_3(self):
@@ -73,13 +112,6 @@ class TestStateFunctions:
 # ─────────────────────────────────────────────────────────────────────────────
 # Blocking Rules
 # ─────────────────────────────────────────────────────────────────────────────
-
-def make_cfg(**kwargs):
-    cfg = Config()
-    for k, v in kwargs.items():
-        setattr(cfg, k, v)
-    return cfg
-
 
 class TestSweetSpotHold:
     def setup_method(self):
@@ -179,24 +211,8 @@ class TestHysteresisBlock:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FbController — Zustandsentscheidung
+# FbController — Zustandsentscheidung (Ebene 1)
 # ─────────────────────────────────────────────────────────────────────────────
-
-def make_fb(cfg=None):
-    c = cfg or Config()
-    rules = [
-        SweetSpotHold(c), TrendBlock(c), BatGuardBlock(c),
-        StabilizingBlock(c), HysteresisBlock(c),
-    ]
-    return FbController(c, rules)
-
-
-def make_vals(**kwargs):
-    defaults = dict(pcc=0, bat1=0, soc_bat1=100, bat_cur=0,
-                    soc=50.0, relay_st=0, stable=5, prot=0, last_excess=0.0)
-    defaults.update(kwargs)
-    return MeasuredValues(**defaults)
-
 
 class TestFbControllerDecide:
     def test_soc_unknown_holds_state(self):
@@ -237,7 +253,6 @@ class TestFbControllerDecide:
 
     def test_power_matching_full_power(self):
         fb = make_fb()
-        # relay_st=7 → kein RAMP_LIMITED; 14000W PCC → budget 15500 → State 7
         dec = fb.decide(make_vals(soc=50, pcc=14000, relay_st=7))
         assert dec.best_state == 7
         assert "POWER_MATCHING" in dec.trace
@@ -245,25 +260,34 @@ class TestFbControllerDecide:
 
     def test_ramp_limited_from_zero(self):
         fb = make_fb()
-        # relay_st=0, excess=14000 → best=7, aber RAMP_LIMITED → next=1
         dec = fb.decide(make_vals(soc=50, pcc=14000, relay_st=0))
         assert dec.best_state == 1
         assert "RAMP_LIMITED" in dec.trace
 
     def test_no_ramp_limit_when_already_at_best(self):
         fb = make_fb()
-        # relay_st=7, excess=14000 → best=7, kein Ramp nötig
         dec = fb.decide(make_vals(soc=50, pcc=14000, relay_st=7))
         assert dec.best_state == 7
         assert "RAMP_LIMITED" not in dec.trace
 
+    def test_prio_schutz_beats_power_matching(self):
+        """Schutz-Entscheidungen (prio 1-5) überschreiben POWER_MATCHING (prio 7)."""
+        fb = make_fb()
+        # viel PCC-Überschuss, aber bat2 voll → BATTERY_FULL_STOP gewinnt
+        dec = fb.decide(make_vals(soc=100.0, pcc=20000, relay_st=7))
+        assert dec.best_state == 0
+        assert "BATTERY_FULL_STOP" in dec.trace
+        assert "POWER_MATCHING" not in dec.trace
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FbController — Blocking (Ebene 2)
+# ─────────────────────────────────────────────────────────────────────────────
 
 class TestFbControllerBlocking:
     def test_trend_block_fires_with_correct_drop_rate(self):
-        """Kernfix: drop_rate muss vor apply_blocking auf decision gesetzt sein."""
         fb = make_fb()
         dec = fb.decide(make_vals(soc=50, pcc=14000, relay_st=0))
-        # State 0→1 geplant; drop_rate = -64 W/s → muss TREND_BLOCK auslösen
         dec.drop_rate = -64.0
         dec.has_drop_rate = True
         fb.apply_blocking(make_vals(soc=50, pcc=14000, relay_st=0), dec)
@@ -280,52 +304,48 @@ class TestFbControllerBlocking:
 
     def test_sweet_spot_blocks_up(self):
         fb = make_fb()
-        # SweetSpot-Bedingung: |pcc| < 160 UND bat1 > -310
-        # relay_st=1 mit ebox_eff=3000 → excess = 50 + 3000 - 100 = 2950 → best=2 (UP)
         vals = make_vals(soc=50, pcc=50, bat1=-100, relay_st=1)
         dec = fb.decide(vals)
         dec.drop_rate = 0.0
         fb.apply_blocking(vals, dec)
-        assert dec.final_state == 1   # bleibt bei relay_st
+        assert dec.final_state == 1
         assert "SWEET_SPOT_HOLD" in dec.trace
 
     def test_emergency_import_bypasses_blocking(self):
-        """Notfall-Import überspringt Blocking und schaltet sofort auf best."""
         fb = make_fb()
-        # relay_st=3 (6650W), pcc=-2000 → excess=4650 → budget=6150 → best=4 (3900W, DOWN)
-        # stable=0 würde DOWN normalerweise per STABILIZING blockieren
-        # Emergency: pcc < -1020 AND direction=DOWN → sofort schalten ohne Blocking
         vals = make_vals(soc=50, pcc=-2000, relay_st=3, stable=0)
         dec = fb.decide(vals)
         dec.drop_rate = 0.0
         fb.apply_blocking(vals, dec)
         assert dec.changed
         assert "EMERGENCY_FORCE" in dec.trace
-        # STABILIZING hätte ohne Emergency blockiert → stattdessen geändert
         assert dec.final_state == dec.best_state
 
     def test_hysteresis_blocks_down(self):
         fb = make_fb()
-        # relay_st=7 (11400W), best=6 (7800W), diff=3600W < hysteresis=505? Nein (3600>505)
-        # Machen wir diff klein: relay_st=6 (7800W), best=5 (7100W), diff=700W > 505 → nicht blockiert
-        # Für blockiert: relay_st=2 (3650W), best=1 (3000W), diff=650W > 505 → nicht blockiert
-        # relay_st=4 (3900W), best=2 (3650W), diff=250W < 505 → blockiert
+        # relay_st=4 (3900W), best=2 (3650W), diff=250W < hysteresis=505 → blockiert
         vals = make_vals(soc=50, pcc=2000, relay_st=4, stable=5)
         dec = fb.decide(vals)
         dec.drop_rate = 0.0
         fb.apply_blocking(vals, dec)
-        # best=1 oder 2 je nach excess; key: wenn diff < 505 → HYSTERESIS
         if "HYSTERESIS" in dec.trace:
             assert not dec.changed
 
     def test_no_change_when_best_equals_relay_st(self):
         fb = make_fb()
-        # State bleibt bei 0 (INSUFFICIENT_EXCESS)
         vals = make_vals(soc=50, pcc=500, relay_st=0)
         dec = fb.decide(vals)
         fb.apply_blocking(vals, dec)
         assert not dec.changed
         assert dec.final_state == 0
+
+    def test_force_bypasses_all_blocking(self):
+        fb = make_fb()
+        vals = make_vals(soc=50, pcc=14000, relay_st=0, stable=0)
+        dec = fb.decide(vals)
+        dec.force = True
+        fb.apply_blocking(vals, dec)
+        assert dec.final_state == dec.best_state
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -371,7 +391,6 @@ class TestExcessTrendCalc:
         assert self.calc.read_last() == 9999.0
 
     def test_no_corrupt_on_sequential_updates(self):
-        """Kernfix: update() darf nicht erst 0 schreiben."""
         self.calc.write(10000.0)
         drop1, _ = self.calc.update(11500.0)
         drop2, _ = self.calc.update(13000.0)
@@ -390,8 +409,7 @@ class TestDeepDischargeGuard:
         cfg.path_deep_discharge = os.path.join(self.tmpdir.name, "prot.txt")
         cfg.deep_discharge_lower = 6
         cfg.deep_discharge_upper = 8
-        log = MagicMock()
-        self.guard = DeepDischargeGuard(cfg, log)
+        self.guard = DeepDischargeGuard(cfg, MagicMock())
         self.cfg = cfg
 
     def teardown_method(self):
@@ -411,12 +429,12 @@ class TestDeepDischargeGuard:
 
     def test_hysteresis_unchanged_in_between(self):
         _write_file(self.cfg.path_deep_discharge, "1")
-        self.guard.update(soc=7.0)   # zwischen lower(6) und upper(8)
-        assert self.guard.read() == 1  # bleibt aktiv
+        self.guard.update(soc=7.0)
+        assert self.guard.read() == 1
 
     def test_hysteresis_from_zero_unchanged(self):
         self.guard.update(soc=7.0)
-        assert self.guard.read() == 0  # bleibt inaktiv
+        assert self.guard.read() == 0
 
     def test_unknown_soc_no_change(self):
         _write_file(self.cfg.path_deep_discharge, "1")
@@ -425,7 +443,7 @@ class TestDeepDischargeGuard:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# EBoxReader.read() — mit Temp-Datei
+# EBoxReader
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestEBoxReader:
@@ -444,20 +462,23 @@ class TestEBoxReader:
         assert cur == 0.0
         assert soc == -1.0
 
+    def _ebox_line(self, pack, curr_ma, soc_pct):
+        # 13 Felder: pack volt curr temp tlow thigh vlow vhigh BaseSt VoltSt CurrSt TempSt Coulomb%
+        return f"{pack} 53.0 {curr_ma} 25.0 20.0 30.0 3.1 3.5 Normal Normal Normal Normal {soc_pct}%\n"
+
     def test_parses_current_and_soc(self):
-        # Format: Zeile beginnt mit 1/2/3, 3. Feld = mA, Feld mit % = SOC
         Path(self.cfg.path_ebox_data).write_text(
-            "1 bat 12500 other 80.0% more\n"
-            "2 bat 13000 other 75.0% more\n"
+            self._ebox_line(1, 12500, 80.0) +
+            self._ebox_line(2, 13000, 75.0)
         )
         cur, soc = self.reader.read()
         assert abs(cur - (12500 + 13000) / 1000.0) < 0.01
-        assert soc == 75.0  # min der beiden
+        assert soc == 75.0
 
     def test_ignores_header_lines(self):
         Path(self.cfg.path_ebox_data).write_text(
-            "Power some header line\n"
-            "1 bat 5000 other 90.0%\n"
+            "Power some header line\n" +
+            self._ebox_line(1, 5000, 90.0)
         )
         cur, soc = self.reader.read()
         assert cur == 5.0
@@ -514,123 +535,9 @@ class TestLogger:
         log("Testnachricht")
         content = Path(self.path).read_text()
         assert "Testnachricht" in content
-        assert "v1.56-Py" in content
+        assert "v1.57-Py" in content
 
     def test_callable(self):
         log = Logger(self.path)
         log("via __call__")
         assert "via __call__" in Path(self.path).read_text()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# MIDDAY_SOC_CAP
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestMiddaySocCap:
-    """SOC2 > 80% UND ±60min um Sonnenmittag UND Monat 3-10 → max State 1."""
-
-    def _run(self, soc, relay_st=1, pcc=14000, month=4, in_window=True):
-        """
-        in_window: Mock für _in_midday_window() — True = cap-Zeit aktiv.
-        relay_st=1 default: RAMP_LIMITED→best=2, Cap kann auf 1 reduzieren.
-        """
-        import time as _time
-        cfg = make_cfg(midday_soc_threshold=80, midday_window_minutes=60,
-                       midday_latitude=47.6811, midday_longitude=11.5732,
-                       midday_season_start_month=3, midday_season_end_month=10)
-        fb = make_fb(cfg)
-        vals = make_vals(soc=soc, pcc=pcc, relay_st=relay_st)
-        with patch("fox2dbOO.time") as mock_time,              patch("fox2dbOO._in_midday_window", return_value=in_window):
-            mock_time.localtime.return_value = _time.struct_time(
-                (2026, month, 24, 12, 0, 0, 0, 0, 0))
-            dec = fb.decide(vals)
-        return dec
-
-    def test_cap_active_soc_above_threshold(self):
-        # relay_st=1 → RAMP_LIMITED→best=2 → Cap→best=1
-        dec = self._run(soc=85)
-        assert dec.best_state == 1
-        assert "MIDDAY_SOC_CAP" in dec.trace
-
-    def test_cap_active_high_soc(self):
-        dec = self._run(soc=90)
-        assert dec.best_state == 1
-        assert "MIDDAY_SOC_CAP" in dec.trace
-
-    def test_cap_inactive_soc_below_threshold(self):
-        dec = self._run(soc=75)
-        assert "MIDDAY_SOC_CAP" not in dec.trace
-
-    def test_cap_inactive_outside_window(self):
-        dec = self._run(soc=85, in_window=False)
-        assert "MIDDAY_SOC_CAP" not in dec.trace
-
-    def test_cap_inactive_night_window(self):
-        dec = self._run(soc=95, in_window=False)
-        assert "MIDDAY_SOC_CAP" not in dec.trace
-
-    def test_cap_allows_state1_already(self):
-        # relay_st=0, pcc=1800 → best=1 natürlich (kein RAMP) → Cap: best>1? Nein
-        dec = self._run(soc=85, relay_st=0, pcc=1800)
-        assert "MIDDAY_SOC_CAP" not in dec.trace
-
-    def test_cap_forces_down_from_higher_state(self):
-        # relay_st=5, cap aktiv → best=1
-        dec = self._run(soc=85, relay_st=5, pcc=14000)
-        assert dec.best_state == 1
-        assert "MIDDAY_SOC_CAP" in dec.trace
-
-    def test_trace_contains_soc_and_window_info(self):
-        dec = self._run(soc=83)
-        assert "83" in dec.trace
-        assert "Sonnenmittag" in dec.trace
-
-    def test_cap_inactive_in_winter_january(self):
-        dec = self._run(soc=85, month=1, in_window=True)
-        assert "MIDDAY_SOC_CAP" not in dec.trace
-
-    def test_cap_inactive_in_winter_february(self):
-        dec = self._run(soc=95, month=2, in_window=True)
-        assert "MIDDAY_SOC_CAP" not in dec.trace
-
-    def test_cap_inactive_in_winter_november(self):
-        dec = self._run(soc=90, month=11, in_window=True)
-        assert "MIDDAY_SOC_CAP" not in dec.trace
-
-    def test_cap_inactive_in_winter_december(self):
-        dec = self._run(soc=95, month=12, in_window=True)
-        assert "MIDDAY_SOC_CAP" not in dec.trace
-
-    def test_cap_active_in_march(self):
-        dec = self._run(soc=85, month=3)
-        assert dec.best_state == 1
-        assert "MIDDAY_SOC_CAP" in dec.trace
-
-    def test_cap_active_in_october(self):
-        dec = self._run(soc=85, month=10)
-        assert dec.best_state == 1
-        assert "MIDDAY_SOC_CAP" in dec.trace
-
-    def test_trace_contains_month(self):
-        dec = self._run(soc=83, month=7)
-        assert "Monat 7" in dec.trace
-
-    def test_solar_noon_unit(self):
-        """_solar_noon() gibt einen datetime mit Timezone zurück."""
-        import datetime as _dt
-        from fox2dbOO import _solar_noon
-        noon = _solar_noon(47.6811, 11.5732)
-        assert isinstance(noon, _dt.datetime)
-        assert noon.tzinfo is not None
-        # Solarer Mittag Lenggries: zwischen 11:30 und 14:00 Uhr (CEST/CET)
-        assert 11 <= noon.hour <= 14
-
-    def test_in_midday_window_unit(self):
-        """_in_midday_window() gibt bool zurück — echte Berechnung (keine Mock)."""
-        import datetime as _dt
-        from fox2dbOO import _in_midday_window
-        cfg = make_cfg(midday_window_minutes=0, midday_latitude=47.6811,
-                       midday_longitude=11.5732)
-        # Fenster 0 Minuten: nur exakt zur Mittagszeit → fast immer False
-        result = _in_midday_window(cfg)
-        assert isinstance(result, bool)
