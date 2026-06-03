@@ -54,7 +54,7 @@ import pymysql
 # VERSION & KONSTANTEN
 # ═══════════════════════════════════════════════════════════════════════════
 
-VERSION = "v1.63-Py"
+VERSION = "v1.64-Py"
 MAX_LOG_BYTES = 220 * 1024  # 220 kB, dann truncate
 
 # Hardware-Zustandstabelle: state → Watt
@@ -183,8 +183,6 @@ class Config:
     deep_discharge_lower: int = 6
     deep_discharge_upper: int = 8
     deep_discharge_charge_target: int = 7
-    clear_sky_cap_threshold: int = 8000  # dc_delta < Wert → Klarhimmel → cap bis window_end
-
     # MQTT Empfang
     mqtt_broker: str = "kellertreppe.fritz.box"
     mqtt_port: int = 1883
@@ -769,19 +767,6 @@ class FbController:
             if best > next_st:
                 trace += f" | RAMP_LIMITED ({best}->{next_st})"
                 best = next_st
-
-        # CLEAR_SKY_CAP — bei kleiner DC-Abweichung (Klarhimmel) cap bis Fensterende
-        # Bei großer Abweichung (bewölkt) kein Risiko → best_state frei
-        if best > 1 and v.dc_expected > 5_000:
-            dc_delta = v.dc_expected - excess
-            if dc_delta < cfg.clear_sky_cap_threshold:
-                peak_w, peak_t, peak_day, window_end = self._dc.peak_forecast_today()
-                if peak_day and window_end is not None:
-                    now = _dt.datetime.now(self._dc._tz)
-                    if now <= window_end:
-                        trace += (f" | CLEAR_SKY_CAP (delta={dc_delta:.0f}W"
-                                  f" end={window_end:%H:%M} State{best}→1)")
-                        best = 1
 
         return best, excess, trace
 
