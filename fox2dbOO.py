@@ -976,8 +976,10 @@ class OutputWriter:
         _write_file(self._cfg.path_inverter_csv,
                     f"{vals.pcc:.0f},{vals.bat1:.0f},{vals.soc:.1f},"
                     f"{vals.soc_bat1:.1f},{vals.bat_cur:.1f},{dec.final_state}\n")
+        _dc_delta = vals.dc_expected - vals.pcc
         self._log(f"Data: SOC2={vals.soc:.1f}% SOC1={vals.soc_bat1:.1f}% "
                   f"PCC={vals.pcc:.0f}W Bat1={vals.bat1:.0f}W EBox={ebox_w:.0f}W "
+                  f"DC_exp={vals.dc_expected:.0f}W DC_delta={_dc_delta:+.0f}W "
                   f"(State={vals.relay_st}) Stable={new_stable}")
         if dec.has_drop_rate and dec.drop_rate != 0:
             self._log(f"Trend: Excess {vals.last_excess:.0f}W→{dec.excess:.0f}W "
