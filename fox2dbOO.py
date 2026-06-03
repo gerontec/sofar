@@ -28,7 +28,7 @@ import paho.mqtt.client as mqtt
 # VERSION & KONSTANTEN
 # ═══════════════════════════════════════════════════════════════════════════
 
-VERSION = "v2.3-Py"
+VERSION = "v2.4-Py"
 MAX_LOG_BYTES = 220 * 1024  # 220 kB, dann truncate
 
 STATE_POWER: dict[int, int] = {
@@ -43,10 +43,6 @@ STATE_POWER: dict[int, int] = {
 }
 
 
-def _solar_noon(lat: float, lon: float) -> _dt.datetime:
-    loc = _LocationInfo("Standort", "Germany", "Europe/Berlin", lat, lon)
-    s = _astral_sun(loc.observer, date=_dt.date.today(), tzinfo=loc.timezone)
-    return s["noon"]
 
 
 
@@ -607,20 +603,45 @@ class DcForecast:
                   5: 0.909, 6: 0.880, 7: 0.840, 8: 0.820,
                   9: 0.760, 10: 0.600, 11: 0.350, 12: 0.134}
 
+    _GATE_THRESHOLD: int = 20_000  # W — Gate bleibt zu solange WR1+WR2 > threshold erwartet
+
     def __init__(self) -> None:
         self._loc = _LocationInfo("Lenggries", "Germany", self._TZ_NAME,
                                    self._LAT, self._LON)
         self._tz  = _zoneinfo.ZoneInfo(self._TZ_NAME)
-        self._noon_cache:       tuple[_dt.date, float] = (_dt.date.min, 0.0)
-        self._peak_seen_cache:  tuple[_dt.date, bool]  = (_dt.date.min, False)
+        self._day_cache: tuple[_dt.date, _dt.datetime, float, Optional[_dt.datetime]] = (
+            _dt.date.min, _dt.datetime.min, 0.0, None
+        )
 
-    def at_noon(self) -> float:
-        """DC-Watt Klarhimmel-Prognose für solaren Mittag heute (tagesweise gecacht)."""
+    def _scan_day(self) -> None:
+        """2-Min-Scan 05:00–22:00 → Peak und letzter Zeitpunkt >= GATE_THRESHOLD. Tages-Cache."""
         today = _dt.date.today()
-        if self._noon_cache[0] != today:
-            noon_dt = _solar_noon(self._LAT, self._LON)
-            self._noon_cache = (today, self.at(noon_dt))
-        return self._noon_cache[1]
+        if self._day_cache[0] == today:
+            return
+        tz = self._tz
+        t   = _dt.datetime(today.year, today.month, today.day, 5, 0, tzinfo=tz)
+        end = _dt.datetime(today.year, today.month, today.day, 22, 0, tzinfo=tz)
+        step = _dt.timedelta(minutes=2)
+        best_w, best_t = 0.0, t
+        window_end: Optional[_dt.datetime] = None
+        while t <= end:
+            w = self.at(t) + self.at_east(t)
+            if w > best_w:
+                best_w, best_t = w, t
+            if w >= self._GATE_THRESHOLD:
+                window_end = t
+            t += step
+        self._day_cache = (today, best_t, best_w, window_end)
+
+    def peak_today(self) -> tuple[_dt.datetime, float]:
+        """Tatsächlicher kombinierter Peak WR1+WR2 (2-Min-Auflösung, tages-gecacht)."""
+        self._scan_day()
+        return self._day_cache[1], self._day_cache[2]
+
+    def window_end_today(self) -> Optional[_dt.datetime]:
+        """Letzter Zeitpunkt heute mit WR1+WR2 >= 20 kW (tages-gecacht). None = kein Peak-Tag."""
+        self._scan_day()
+        return self._day_cache[3]
 
     def _cos_aoi(self, elev_deg: float, az_sun_N: float,
                  tilt_deg: float, az_panel_S: float) -> float:
@@ -694,14 +715,6 @@ class DcForecast:
         """Klarhimmel-Gesamt-DC (WR1+WR2) jetzt in Watt — reine Geometrie, kein Wolken-Check."""
         return self.at() + self.at_east()
 
-    def peak_seen_today(self) -> bool:
-        """True sobald at_total() heute einmal >= 20 kW war — dann Gate dauerhaft offen."""
-        today = _dt.date.today()
-        if self._peak_seen_cache[0] != today:
-            self._peak_seen_cache = (today, False)
-        if not self._peak_seen_cache[1] and self.at_total() >= 20_000:
-            self._peak_seen_cache = (today, True)
-        return self._peak_seen_cache[1]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -732,27 +745,25 @@ class NoonPacer:
         # 5-min DB-Avg bevorzugt; Fallback: Momentanwert
         clouds_avg = self._dc.avg_cloud_5min()
         cloud_pct = clouds_avg if clouds_avg is not None else self._dc.cloud_pct(vals.dc_pv)
-        noon_eff = self._dc.at_noon() * max(0.0, 1.0 - cloud_pct / 100.0)
-        if noon_eff <= self._cfg.peak_guard_threshold:
+        peak_t, peak_w = self._dc.peak_today()
+        peak_eff = peak_w * max(0.0, 1.0 - cloud_pct / 100.0)
+        if peak_eff <= self._cfg.peak_guard_threshold:
             return
-        try:
-            noon = _solar_noon(self._cfg.noon_latitude, self._cfg.noon_longitude)
-            time_to_noon_h = (noon - _dt.datetime.now(noon.tzinfo)).total_seconds() / 3600.0
-        except Exception:
-            return
-        if time_to_noon_h <= 0:
+        time_to_peak_h = (peak_t - _dt.datetime.now(peak_t.tzinfo)).total_seconds() / 3600.0
+        if time_to_peak_h <= 0:
             return
         remaining_wh = max(0.0, (self._cfg.max_soc - vals.soc) / 100.0
                            * self._cfg.bat2_capacity_wh)
-        pace_w = remaining_wh / time_to_noon_h
+        pace_w = remaining_wh / time_to_peak_h
         paced_state = find_min_covering_state(int(pace_w))
         if decision.final_state > paced_state:
             old = decision.final_state
             decision.final_state = paced_state
             decision.changed = (paced_state != vals.relay_st)
-            decision.trace += (f" | NOON_PACER (noon_eff={noon_eff:.0f}W"
+            decision.trace += (f" | NOON_PACER (peak={peak_eff:.0f}W"
+                               f"@{peak_t:%H:%M}"
                                f", clouds={cloud_pct:.0f}%"
-                               f", +{time_to_noon_h*60:.0f}min"
+                               f", +{time_to_peak_h*60:.0f}min"
                                f", pace={pace_w:.0f}W→State{paced_state}"
                                f", remain={remaining_wh:.0f}Wh"
                                f") State{old}→{paced_state}")
@@ -1093,15 +1104,29 @@ class PowerController:
         # Phase 3: Blocking
         self._fb.apply_blocking(vals, decision)
 
-        # Phase 4: NoonPacer — Laderate deckeln damit Batterie erst beim Mittag voll
+        # Phase 4: NoonPacer — Laderate deckeln damit Batterie erst beim Peak voll
+        _peak_t_log, _peak_w_log = self._dc_forecast.peak_today()
+        _wend_log = self._dc_forecast.window_end_today()
+        _now_log  = _dt.datetime.now(_peak_t_log.tzinfo)
+        _wend_str = _wend_log.strftime("%H:%M") if _wend_log else "—"
+        self._log(f"DC-Forecast: peak={_peak_w_log/1000:.1f}kW@{_peak_t_log:%H:%M}"
+                  f" window_end={_wend_str}"
+                  f" after_window={_wend_log is not None and _now_log >= _wend_log}")
         self._noon_pacer.apply(vals, decision)
 
-        # Phase 4b: Peak-Window-Gate — vor dem Peak kein Laden; nach Peak frei per POWER_MATCHING
-        _dc_total = self._dc_forecast.at_total()
-        if _dc_total < 20_000 and not self._dc_forecast.peak_seen_today() and decision.final_state > 0:
-            decision.final_state = 0
-            decision.changed = (vals.relay_st != 0)
-            decision.trace += f" | PEAK_GATE (dc_total={_dc_total:.0f}W<20kW→State0)"
+        # Phase 4b: Peak-Window-Gate — State > 1 gesperrt bis window_end; danach POWER_MATCHING frei
+        _window_end = self._dc_forecast.window_end_today()
+        if _window_end is not None:
+            _now = _dt.datetime.now(_window_end.tzinfo)
+            if _now < _window_end and decision.final_state > 1:
+                _peak_t, _peak_w = self._dc_forecast.peak_today()
+                old_st = decision.final_state
+                decision.final_state = 1
+                decision.changed = (vals.relay_st != 1)
+                decision.trace += (f" | PEAK_GATE (peak={_peak_w/1000:.1f}kW"
+                                   f"@{_peak_t:%H:%M}"
+                                   f" end={_window_end:%H:%M}"
+                                   f" State{old_st}→1)")
 
         # Phase 5: PCC > 20 kW — SOC zuerst prüfen, dann State 7, DO4 als letzter Ausweg
         if vals.pcc > 20_000:
