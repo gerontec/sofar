@@ -127,9 +127,9 @@ def fetch_mqtt() -> Dict[str, float]:
             j = json.loads(payload)
             
             data = {
-                'pcc': float(j.get('ActivePower_PCC_Total', 0)) * 1000,  # vorsicht sofar niemals negieren
-                'bat1': float(j.get('Power_Bat1', 0)) * 1000,
-                'soc_bat1': float(j.get('SOC_Bat1', 0))
+                'pcc': float(j.get('ActivePower_PCC_Total') or 0) * 1000,
+                'bat1': float(j.get('Power_Bat1') or 0) * 1000,
+                'soc_bat1': float(j.get('SOC_Bat1') or 0)
             }
             
             log(f"MQTT Received: PCC={data['pcc']:.0f}W, Bat1={data['bat1']:.0f}W, SOC_Bat1={data['soc_bat1']:.1f}%")
