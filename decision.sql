@@ -3,6 +3,7 @@
 
 -- 1) Alle bekannten Entscheidungen mit Häufigkeit (dim_ als Basis, nie = NULL)
 SELECT
+    d.prio,
     d.kategorie,
     d.decision,
     d.erklaerung,
@@ -13,8 +14,8 @@ SELECT
     CASE WHEN COUNT(l.id) = 0 THEN '*** NIE ***' ELSE '' END     AS hinweis
 FROM dim_decisions d
 LEFT JOIN pv_decision_log l USING (decision)
-GROUP BY d.decision, d.kategorie, d.erklaerung
-ORDER BY d.kategorie, gesamt DESC;
+GROUP BY d.prio, d.decision, d.kategorie, d.erklaerung
+ORDER BY d.prio;
 
 -- 2) Undokumentierte Entscheidungen (in Log aber nicht in dim_)
 SELECT
@@ -66,6 +67,7 @@ ORDER BY ts DESC LIMIT 50;
 
 -- 7) Übersicht verdächtige Fälle nach Typ (letzte 30 Tage)
 SELECT
+    d.prio,
     d.kategorie,
     l.decision,
     d.erklaerung,
@@ -77,8 +79,8 @@ FROM pv_decision_log l
 JOIN dim_decisions d USING (decision)
 WHERE l.ts >= NOW() - INTERVAL 30 DAY
   AND (l.bat1_w < -500 OR l.pcc_w > 15000 OR l.pcc_w < -800)
-GROUP BY l.decision, d.kategorie, d.erklaerung
-ORDER BY verdächtige_fälle DESC;
+GROUP BY l.decision, d.prio, d.kategorie, d.erklaerung
+ORDER BY d.prio;
 
 -- 9) Tägliche Häufigkeit je Entscheidung — Ausreisser erkennen (letzte 14 Tage)
 SELECT
@@ -99,11 +101,12 @@ SELECT
 FROM pv_decision_log l
 JOIN dim_decisions d USING (decision)
 WHERE l.ts >= NOW() - INTERVAL 14 DAY
-GROUP BY DATE(l.ts), l.decision, d.kategorie
-ORDER BY tag DESC, abweichung DESC;
+GROUP BY DATE(l.ts), l.decision, d.prio, d.kategorie
+ORDER BY tag DESC, d.prio;
 
 -- 10) Bewölkungs-Abweichungsanalyse pro Entscheidung
 SELECT
+    d.prio,
     d.kategorie,
     l.decision,
     COUNT(*)                                                          AS cnt,
@@ -113,5 +116,5 @@ SELECT
 FROM pv_decision_log l
 JOIN dim_decisions d USING (decision)
 WHERE l.dc_expected_w > 500
-GROUP BY l.decision, d.kategorie
-ORDER BY d.kategorie, avg_clouds_pct DESC;
+GROUP BY l.decision, d.prio, d.kategorie
+ORDER BY d.prio;
