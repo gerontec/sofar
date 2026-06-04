@@ -89,7 +89,7 @@ ORDER BY ts DESC LIMIT 50;
 -- ─────────────────────────────────────────────────────────────────────────────
 SELECT
     ts, state_from, state_to, decision,
-    pcc_w, bat1_w, excess_w, dc_pv_w, dc_expected_w
+    pcc_w, bat1_w, excess_w, ebox_w, dc_expected_w
 FROM pv_decision_log
 WHERE pcc_w < -800
 ORDER BY ts DESC LIMIT 50;
