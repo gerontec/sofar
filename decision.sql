@@ -1,11 +1,14 @@
--- Entscheidungs-Report fox2db v2.0
+-- Entscheidungs-Report fox2db v2.8
 -- Nutzung: mysql -h 192.168.178.218 -u gh -pa12345 wagodb < decision.sql
 --
--- Hinweis Architektur v2.0:
---   prio 1..2  = Post-Decision (PCC_OVER_20KW, EMERGENCY_FORCE) — in detail als "| EMERGENCY_FORCE" sichtbar
---   prio 3..8  = Primary Decisions (decide()) — in decision-Spalte
---   prio 6..7  = HARD_GUARDS (CRITICAL_SOC, BATTERY_FULL_STOP) — in detail als "| GUARD:X" sichtbar
---   prio 9     = POWER_MATCHING — Default, in decision-Spalte
+-- Architektur:
+--   prio 0       = LADESPERRE_BIS_PCC_20KW (Hard Guard, greift nach decide())
+--   prio 1       = PCC_OVER_20KW (Peak-Begrenzung, in decide())
+--   prio 2       = EMERGENCY_FORCE (Blocking-Bypass, in detail sichtbar)
+--   prio 3..8    = Primary Decisions (decide()) — in decision-Spalte
+--   prio 7..8    = HARD_GUARDS (BATTERY_FULL_STOP, CRITICAL_SOC) — in detail als "| GUARD:X"
+--   prio 9       = POWER_MATCHING + RAMP_LIMITED — Default, in decision-Spalte / detail
+--   prio 11..15  = Blocking Rules (SWEET_SPOT_HOLD..HYSTERESIS) — in detail sichtbar
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1) Alle bekannten Entscheidungen mit Häufigkeit (dim_ als Basis, nie = NULL)
@@ -22,11 +25,18 @@ SELECT
     CASE WHEN COUNT(l.id) = 0 THEN '*** NIE ***' ELSE '' END      AS hinweis
 FROM dim_decisions d
 LEFT JOIN pv_decision_log l ON (
-    l.decision = d.decision                              -- Primary Decision Match
-    OR (d.decision = 'EMERGENCY_FORCE'  AND l.detail LIKE '%EMERGENCY_FORCE%')
-    OR (d.decision = 'PCC_OVER_20KW'    AND l.detail LIKE '%PCC>20kW%')
-    OR (d.decision = 'BATTERY_FULL_STOP'     AND l.detail LIKE '%GUARD:BATTERY_FULL_STOP%')
-    OR (d.decision = 'CRITICAL_SOC_PROTECTION_ACTIVATE' AND l.detail LIKE '%GUARD:CRITICAL_SOC%')
+    l.decision = d.decision
+    OR (d.decision = 'LADESPERRE_BIS_PCC_20KW'          AND l.detail LIKE '%GUARD:LADESPERRE_BIS_PCC_20KW%')
+    OR (d.decision = 'EMERGENCY_FORCE'                   AND l.detail LIKE '%EMERGENCY_FORCE%')
+    OR (d.decision = 'PCC_OVER_20KW'                     AND l.detail LIKE '%PCC>20kW%')
+    OR (d.decision = 'BATTERY_FULL_STOP'                 AND l.detail LIKE '%GUARD:BATTERY_FULL_STOP%')
+    OR (d.decision = 'CRITICAL_SOC_PROTECTION_ACTIVATE'  AND l.detail LIKE '%GUARD:CRITICAL_SOC%')
+    OR (d.decision = 'RAMP_LIMITED'                      AND l.detail LIKE '%RAMP_LIMITED%')
+    OR (d.decision = 'SWEET_SPOT_HOLD'                   AND l.detail LIKE '%SWEET_SPOT_HOLD%')
+    OR (d.decision = 'TREND_BLOCK'                       AND l.detail LIKE '%TREND_BLOCK%')
+    OR (d.decision = 'BAT_GUARD_BLOCK'                   AND l.detail LIKE '%BAT_GUARD_BLOCK%')
+    OR (d.decision = 'STABILIZING'                       AND l.detail LIKE '%STABILIZING%')
+    OR (d.decision = 'HYSTERESIS'                        AND l.detail LIKE '%HYSTERESIS%')
 )
 GROUP BY d.prio, d.decision, d.kategorie, d.erklaerung
 ORDER BY d.prio;
@@ -46,7 +56,7 @@ GROUP BY l.decision
 ORDER BY cnt DESC;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 3) HARD_GUARDS: wann haben BATTERY_FULL_STOP / CRITICAL_SOC eingegriffen?
+-- 3) HARD_GUARDS: wann haben Guards eingegriffen?
 -- ─────────────────────────────────────────────────────────────────────────────
 SELECT
     ts, state_from, state_to, decision, detail, soc, pcc_w
@@ -64,13 +74,14 @@ WHERE detail LIKE '%EMERGENCY_FORCE%'
 ORDER BY ts DESC LIMIT 50;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 5) PCC_OVER_20KW + DO4: Peak-Ereignisse (aus pv_relay_events)
+-- 5) PCC_OVER_20KW + DO4 + Ladesperre: Peak- und Release-Ereignisse
 -- ─────────────────────────────────────────────────────────────────────────────
 SELECT
     ts, action, relay, duration_s, state_new, reason
 FROM pv_relay_events
 WHERE reason LIKE '%PCC>20kW%'
    OR relay = 'do4'
+   OR relay = 'ladesperre'
 ORDER BY ts DESC LIMIT 50;
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -155,9 +166,9 @@ SELECT
     d.kategorie,
     l.decision,
     COUNT(*)                                                           AS cnt,
-    ROUND(AVG(l.dc_pv_w))                                             AS avg_dc_pv_w,
+    ROUND(AVG(l.ebox_w))                                               AS avg_ebox_w,
     ROUND(AVG(l.dc_expected_w))                                        AS avg_dc_expected_w,
-    ROUND(AVG(1 - l.dc_pv_w / NULLIF(l.dc_expected_w, 0)) * 100, 1)  AS avg_clouds_pct
+    ROUND(AVG(l.dc_delta_w / NULLIF(l.dc_expected_w, 0)) * 100, 1)   AS avg_clouds_pct
 FROM pv_decision_log l
 JOIN dim_decisions d USING (decision)
 WHERE l.dc_expected_w > 500
