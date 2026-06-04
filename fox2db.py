@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Hauptziel:  EBox mit best_state laden (POWER_MATCHING).
+# Nebenziel:  PCC-Einspeisung <20kW halten (PCC_OVER_20KW → State+1, DO4-Puls → Relais 4 schaltet WR2 ab).
+# Takt:       Cron jede Minute.
 import subprocess
 import os
 import math
@@ -18,7 +21,7 @@ from astral.sun import elevation as _astral_elevation, azimuth as _astral_azimut
 # ═══════════════════════════════════════════════════════════════════════════
 #                             KONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════
-VERSION = "v2.1-Py"
+VERSION = "v2.9-Py"
 MAX_LOG_BYTES = 220 * 1024
 
 STATE_TO_POWER = {0: 0, 1: 3000, 2: 3650, 3: 6650, 4: 3900, 5: 7100, 6: 7800, 7: 11400}
@@ -122,10 +125,40 @@ DC = _DcForecast()
 # Format: (bedingung_fn, erzwungener_state, name)
 # Werden NACH decide() angewendet — kein Code kann sie umgehen
 
-def _hard_guards(soc):
+def _ladesperre_active() -> bool:
+    """True solange heute kein DO4-Trigger oder Schlechtwetter-Release in pv_relay_events."""
+    try:
+        conn = _db_connect()
+        cur  = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM pv_relay_events "
+                    "WHERE relay IN ('do4','ladesperre') AND DATE(ts) = CURDATE()")
+        count = cur.fetchone()[0]
+        conn.close()
+        return count == 0
+    except Exception:
+        return False
+
+def _ladesperre_release_db(reason: str):
+    _db_relay_event("schlechtwetter", "ladesperre", 0, reason)
+
+def _pcc_avg_10min():
+    try:
+        conn = _db_connect()
+        cur  = conn.cursor()
+        cur.execute("SELECT AVG(pcc_w), COUNT(*) FROM pv_decision_log "
+                    "WHERE ts >= NOW() - INTERVAL 10 MINUTE AND pcc_w IS NOT NULL")
+        avg, count = cur.fetchone()
+        conn.close()
+        return float(avg) if avg is not None and count >= 3 else None
+    except Exception:
+        return None
+
+
+def _hard_guards(soc, ladesperre=False):
     return [
-        (lambda: soc > CONFIG['max_soc'],          0, "BATTERY_FULL_STOP"),
-        (lambda: 0 <= soc < CONFIG['deep_discharge_lower'], 1, "CRITICAL_SOC_PROTECTION_ACTIVATE"),
+        (lambda: ladesperre,                                  0, "LADESPERRE_BIS_PCC_20KW"),
+        (lambda: soc > CONFIG['max_soc'],                     0, "BATTERY_FULL_STOP"),
+        (lambda: 0 <= soc < CONFIG['deep_discharge_lower'],   1, "CRITICAL_SOC_PROTECTION_ACTIVATE"),
     ]
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -202,21 +235,21 @@ def _db_relay_event(action, relay, state_new, reason, duration_s=None):
         _log(f"DB relay_event error: {e}")
 
 
-def _db_decision_log(relay_st, final, trace, pcc, bat1, soc, excess, dc_pv, dc_exp):
+def _db_decision_log(relay_st, final, trace, pcc, bat1, soc, excess, ebox, dc_exp, dc_delta):
     try:
         conn = _db_connect()
         cur  = conn.cursor()
         decision = trace.split("|")[0].split("(")[0].strip()[:64]
         cur.execute(
             "INSERT INTO pv_decision_log "
-            "(ts,state_from,state_to,decision,detail,pcc_w,bat1_w,soc,excess_w,dc_pv_w,dc_expected_w) "
-            "VALUES (NOW(),%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (relay_st, final, decision, trace[:255],
+            "(ts,version,state_from,state_to,decision,detail,pcc_w,bat1_w,soc,excess_w,ebox_w,dc_expected_w,dc_delta_w) "
+            "VALUES (NOW(),%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (VERSION, relay_st, final, decision, trace[:255],
              int(pcc), int(bat1), round(soc, 1), int(excess),
-             int(dc_pv), int(dc_exp)))
+             int(ebox), int(dc_exp), int(dc_delta)))
         conn.commit(); conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        _log(f"DB decision_log error: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════════
 #                         INPUT LAYER
@@ -268,7 +301,7 @@ def fetch_mqtt() -> Optional[Dict]:
     return data
 
 
-def fetch_z2() -> float:
+def fetch_z2() -> float:  # Ersatzwert für PCC bei Modbus-Lesefehler (NaN)
     received = []
 
     def on_message(_c, _u, msg):
@@ -342,7 +375,7 @@ def set_relay(state: int, reason: str = "") -> bool:
     return False
 
 
-def pulse_do4(duration=3):
+def pulse_do4(duration=3):  # Relais 4 (r4) → schaltet WR2 (Wechselrichter 2) ab → Abregelung PV-Einspeisung
     script = PATHS['ebyte_script']
     try:
         proc = subprocess.Popen(["python3", script, "r4", "pulse", str(duration)])
@@ -371,8 +404,9 @@ def publish_mqtt(payload: dict):
 
 def decide(soc, pcc, bat_cur, bat1, relay_st, prot) -> Tuple[int, str, float]:
     """
-    Entscheidungslogik — dominanzgeordnet (prio 1=höchste), erste Regel gewinnt.
-    BATTERY_FULL_STOP und CRITICAL_SOC sind in HARD_GUARDS (nach decide).
+    Hauptpfad: POWER_MATCHING wählt besten Lade-State (läuft ~95% aller Zyklen).
+    PCC_OVER_20KW greift nur ein wenn PCC>20kW — erhöht State um 1 (mehr Laden = Peak weg).
+    Schutz-Regeln davor verhindern Datenfehler oder Tiefentladung.
     """
     ebox_eff = max(bat_cur * 2 * 53 + 1, STATE_TO_POWER.get(relay_st, 0)) if relay_st > 0 else 0
     excess   = pcc + ebox_eff + bat1
@@ -383,8 +417,8 @@ def decide(soc, pcc, bat_cur, bat1, relay_st, prot) -> Tuple[int, str, float]:
         excess = pcc + ebox_actual + bat1
         return relay_st, "EBOX_SOC_UNKNOWN_HOLD", excess
 
-    # prio 1 — PCC_OVER_20KW: Netzeinspeisung zu hoch → State+1
-    # DO4 wird nur gepulst wenn kein State-Erhöhung möglich (SOC=100 oder State=7)
+    # PCC_OVER_20KW: Einspeisung >20kW → State+1 (mehr laden = Peak dämpfen)
+    # DO4-Puls wenn kein State-Erhöhung möglich (SOC=100 oder State=7)
     if pcc > CONFIG['pcc_peak_threshold'] and soc < 100:
         next_st = min(relay_st + 1, 7)
         if next_st > relay_st:
@@ -418,9 +452,9 @@ def decide(soc, pcc, bat_cur, bat1, relay_st, prot) -> Tuple[int, str, float]:
     return best, trace, excess
 
 
-def apply_guards(best, soc, trace) -> Tuple[int, str]:
+def apply_guards(best, soc, trace, ladesperre=False) -> Tuple[int, str]:
     """HARD_GUARDS — physikalische Invarianten, nach decide(), unüberwindbar."""
-    for cond, state, name in _hard_guards(soc):
+    for cond, state, name in _hard_guards(soc, ladesperre):
         if cond():
             if best != state:
                 trace += f" | GUARD:{name}"
@@ -479,17 +513,34 @@ def main():
         pcc = abs(min(0.0, wirkleist))
         _log(f"PCC=NaN → Z2-Fallback: wirkleist={wirkleist:.0f}W → pcc={pcc:.0f}W")
     else:
-        pcc = raw_pcc
+        pcc = raw_pcc  # pcc=0W = perfekte Balance (Einspeisung = Verbrauch, kein Netzbezug)
 
     bat1     = mqtt_data['bat1']
     soc_bat1 = mqtt_data['soc_bat1']
     ebox_w   = bat_cur * 2 * 53
+    dc_delta = dc_expected - (pcc + ebox_w + bat1)
+    pcc_avg  = _pcc_avg_10min()
+
+    ladesperre = _ladesperre_active()
+    if ladesperre:
+        if pcc_avg is not None and dc_expected > 5000:
+            dc_delta_avg = dc_expected - (pcc_avg + ebox_w + bat1)
+            ratio = dc_delta_avg / dc_expected
+            if ratio > 0.8:
+                reason = f"Schlechtwetter PCC-avg={pcc_avg:.0f}W ratio={ratio:.0%}"
+                _ladesperre_release_db(reason)
+                _log(f"LADESPERRE aufgehoben — {reason} > 80%")
+                ladesperre = False
+            else:
+                _log(f"LADESPERRE aktiv — warte auf DO4-Peak (PCC-avg={pcc_avg:.0f}W ratio={ratio:.0%})")
+        else:
+            _log("LADESPERRE aktiv — warte auf DO4-Peak (PCC-Avg noch aufbauend)")
 
     # ── DECIDE ─────────────────────────────────────────────────────────────
     best, trace, excess = decide(soc, pcc, bat_cur, bat1, relay_st, prot)
 
     # HARD_GUARDS — physikalisch unüberwindbar
-    best, trace = apply_guards(best, soc, trace)
+    best, trace = apply_guards(best, soc, trace, ladesperre)
 
     # Trend
     drop_rate    = (excess - last_excess) / 30.0 if last_excess > 0 else 0
@@ -503,7 +554,6 @@ def main():
 
     # ── OUTPUT ─────────────────────────────────────────────────────────────
     new_stable = 0 if changed else stable + 1
-    dc_delta   = dc_expected - (pcc + ebox_w + bat1)
 
     _log(f"Data: SOC2={soc:.1f}% SOC1={soc_bat1:.1f}% "
          f"PCC={pcc:.0f}W Z2={wirkleist:.0f}W "
@@ -528,7 +578,9 @@ def main():
         "drop_rate": round(drop_rate, 1) if has_drop and drop_rate != 0 else None,
         "trace": trace,
         "deep_discharge_active": prot,
-        "need_downward_regulation": pcc > CONFIG['pcc_peak_threshold'] and not trace.startswith("PCC_OVER_20KW"),
+        "need_downward_regulation": pcc > CONFIG['pcc_peak_threshold'] and (
+            not trace.startswith("PCC_OVER_20KW") or ladesperre),
+        "ladesperre": ladesperre,
         "dc_peak_time":   _peak_t.strftime('%H:%M') if _has_peak and _peak_t else None,
         "dc_window_end":  _win_end.strftime('%H:%M') if _has_peak and _win_end else None,
     })
@@ -551,7 +603,8 @@ def main():
             _write(PATHS['deep_discharge'], 0)
 
     # DB Logging
-    _db_decision_log(relay_st, final, trace, pcc, bat1, soc, excess, ebox_w, dc_expected)
+    if dc_expected > 0:
+        _db_decision_log(relay_st, final, trace, pcc, bat1, soc, excess, ebox_w, dc_expected, dc_delta)
 
     # Relay schalten — max. eine Schaltung pro Zyklus
     if changed:
@@ -560,9 +613,13 @@ def main():
     else:
         _write(PATHS['relay_state'], final)
 
-    # DO4-Puls: nur wenn PCC>20kW aber kein State-Erhöhung möglich (SOC=100 oder State=7)
-    need_downward_regulation = pcc > CONFIG['pcc_peak_threshold'] and not trace.startswith("PCC_OVER_20KW")
+    # DO4-Puls: wenn PCC>20kW und kein State-Erhöhung möglich (SOC=100/State=7) ODER Ladesperre aktiv
+    need_downward_regulation = pcc > CONFIG['pcc_peak_threshold'] and (
+        not trace.startswith("PCC_OVER_20KW") or ladesperre
+    )
     if need_downward_regulation:
+        if ladesperre:
+            _log("LADESPERRE aufgehoben — erster DO4-Trigger heute")
         pulse_do4()
 
 
