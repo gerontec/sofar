@@ -160,7 +160,7 @@ def _pcc_avg_10min():
 def _hard_guards(soc, ladesperre=False):
     return [
         (lambda: ladesperre,                                  0, "LADESPERRE_BIS_PCC_20KW"),
-        (lambda: soc > CONFIG['max_soc'],                     0, "BATTERY_FULL_STOP"),
+        (lambda: soc >= CONFIG['max_soc'],                     0, "BATTERY_FULL_STOP"),
         (lambda: 0 <= soc < CONFIG['deep_discharge_lower'],   1, "CRITICAL_SOC_PROTECTION_ACTIVATE"),
     ]
 
@@ -461,14 +461,15 @@ def decide(soc, pcc, ebox_w, bat1, relay_st, prot) -> Tuple[int, str, float]:
     return best, trace, excess
 
 
-def apply_guards(best, soc, trace, ladesperre=False) -> Tuple[int, str]:
-    """HARD_GUARDS — physikalische Invarianten, nach decide(), unüberwindbar."""
+def apply_guards(best, soc, trace, ladesperre=False) -> Tuple[int, str, bool]:
+    """HARD_GUARDS — physikalische Invarianten, nach decide(), unüberwindbar.
+    guard_fired=True überspringt die Blocking-Ebene (Schutz vor STABILIZING/HYSTERESIS)."""
     for cond, state, name in _hard_guards(soc, ladesperre):
         if cond():
             if best != state:
                 trace += f" | GUARD:{name}"
-            return state, trace
-    return best, trace
+            return state, trace, True
+    return best, trace, False
 
 
 def apply_blocking(best, relay_st, pcc, bat1, stable, drop_rate, trace) -> Tuple[int, bool, str]:
@@ -571,8 +572,8 @@ def main():
     # ── DECIDE ─────────────────────────────────────────────────────────────
     best, trace, excess = decide(soc, pcc, ebox_w, bat1, relay_st, prot)
 
-    # HARD_GUARDS — physikalisch unüberwindbar
-    best, trace = apply_guards(best, soc, trace, ladesperre)
+    # HARD_GUARDS — physikalisch unüberwindbar (Schutz hat Vorrang vor Blocking)
+    best, trace, guard_fired = apply_guards(best, soc, trace, ladesperre)
 
     # Trend
     drop_rate    = (excess - last_excess) / 30.0 if last_excess > 0 else 0
@@ -581,8 +582,11 @@ def main():
     if has_drop and drop_rate != 0:
         _log(f"Trend: Excess {last_excess:.0f}W→{excess:.0f}W ({drop_rate:+.1f}W/s)")
 
-    # Blocking
-    final, changed, trace = apply_blocking(best, relay_st, pcc, bat1, stable, drop_rate, trace)
+    # Blocking — von Hard Guards uebersprungen (Schutz unueberwindbar)
+    if guard_fired:
+        final, changed = best, (best != relay_st)
+    else:
+        final, changed, trace = apply_blocking(best, relay_st, pcc, bat1, stable, drop_rate, trace)
 
     # ── OUTPUT ─────────────────────────────────────────────────────────────
     new_stable = 0 if changed else stable + 1
