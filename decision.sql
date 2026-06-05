@@ -1,14 +1,19 @@
--- Entscheidungs-Report fox2db v2.8
+-- Entscheidungs-Report fox2db v2.9
 -- Nutzung: mysql -h 192.168.178.218 -u gh -pa12345 wagodb < decision.sql
 --
--- Architektur:
---   prio 0       = LADESPERRE_BIS_PCC_20KW (Hard Guard, greift nach decide())
+-- Architektur (3 Ebenen, je Erste-Regel-gewinnt):
+--   prio 0       = LADESPERRE_BIS_PCC_20KW + GUTWETTER_REBLOCK (Hard Guards, nach decide())
 --   prio 1       = PCC_OVER_20KW (Peak-Begrenzung, in decide())
 --   prio 2       = EMERGENCY_FORCE (Blocking-Bypass, in detail sichtbar)
 --   prio 3..8    = Primary Decisions (decide()) — in decision-Spalte
---   prio 7..8    = HARD_GUARDS (BATTERY_FULL_STOP, CRITICAL_SOC) — in detail als "| GUARD:X"
+--   prio 7..8    = HARD_GUARDS (BATTERY_FULL_STOP SOC2>=100, CRITICAL_SOC) — in detail als "| GUARD:X"
 --   prio 9       = POWER_MATCHING + RAMP_LIMITED — Default, in decision-Spalte / detail
 --   prio 11..15  = Blocking Rules (SWEET_SPOT_HOLD..HYSTERESIS) — in detail sichtbar
+--
+-- WICHTIG v2.9: Hard Guards überspringen apply_blocking() (guard_fired) — ein Trace
+--   mit "GUARD:X" enthält daher NIE zugleich eine Blocking-Regel. Steuerung nur via SOC2;
+--   SOC1 (Sofar) ist autark. GUTWETTER_REBLOCK feuert den LADESPERRE-Guard, erscheint
+--   selbst nur in pv_relay_events (action='gutwetter') — siehe Query 5.
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1) Alle bekannten Entscheidungen mit Häufigkeit (dim_ als Basis, nie = NULL)
@@ -117,6 +122,7 @@ ORDER BY d.prio;
 -- ─────────────────────────────────────────────────────────────────────────────
 SELECT
     CASE
+        WHEN detail LIKE '%GUARD:%'           THEN 'GUARD_BYPASS'
         WHEN detail LIKE '%SWEET_SPOT_HOLD%'  THEN 'SWEET_SPOT_HOLD'
         WHEN detail LIKE '%TREND_BLOCK%'      THEN 'TREND_BLOCK'
         WHEN detail LIKE '%BAT_GUARD_BLOCK%'  THEN 'BAT_GUARD_BLOCK'
