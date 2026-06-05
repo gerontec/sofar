@@ -1,0 +1,323 @@
+# ════════════════════════════════════════════════════════════════════════════
+#  Sofar fox2db v2.9 auf Waveshare ESP32-S3 6CH Relay
+#  Aufbau auf gerontec/waveshare (erprobte Basis) + fox2db-Steuerlogik (Header).
+#
+#  Relais-Mapping:
+#    CH1 (GPIO1)  = EBox-State Bit0 ┐
+#    CH2 (GPIO2)  = EBox-State Bit1 ├─ State 0..7 binär (Log: State7 -> [1,1,1])
+#    CH3 (GPIO41) = EBox-State Bit2 ┘
+#    CH4 (GPIO42) = DO4  -> WR2 abregeln (3s-Puls)
+#    CH5 (GPIO45) = frei
+#    CH6 (GPIO46) = frei
+#
+#  SAFETY (erster Test):
+#    - Alle Relais ALWAYS_OFF beim Boot (EBox aus, DO4 aus)
+#    - auto_enable = FALSE  -> keine Auto-Regelung bis per MQTT freigegeben
+#    - ladesperre_enable = FALSE -> Forecast/Ladesperre erst nach Core-Test
+#    - MQTT-Stale > 3min -> Zwangs-State 0
+#
+#  MQTT IN:   inverter/power_grid_exchange/json  (PCC, Bat1, SOC1)
+#             ebox/status   {"soc":..,"power":..} (SOC2, EBox-Leistung)  <-- Pi muss publizieren
+#  MQTT OUT:  sofar/state   (Entscheidung -> Pi schreibt in DB)
+#  CONTROL:   sofar/auto       {"ENABLE":1}
+#             sofar/ladesperre {"ENABLE":1}
+#             waveshare/relay/1..6, waveshare/relay/all  (Hand-Test)
+# ════════════════════════════════════════════════════════════════════════════
+
+substitutions:
+  device_name: sofar-waveshare
+  mqtt_broker: 192.168.178.218
+  wifi_ssid: f24
+  wifi_password: "9876543210"
+  ota_password: waveshare2026
+  soyo_resend: 2s          # Soyo-Watchdog: dauernd resenden (2s erprobt, 3s ok)
+
+esphome:
+  name: ${device_name}
+  friendly_name: Sofar fox2db Relay
+  includes:
+    - fox2db_logic.h
+    - open_wifi_scan.h
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: pub_status
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: arduino
+
+network:
+  enable_ipv6: true
+
+logger:
+  baud_rate: 0   # UART aus; Log läuft über MQTT-Topic sofar-waveshare/debug
+
+ota:
+  - platform: esphome
+    password: ${ota_password}
+
+wifi:
+  id: wifi_comp
+  ssid: ${wifi_ssid}
+  password: ${wifi_password}
+  reboot_timeout: 5min
+  ap:
+    ssid: Sofar-Waveshare-AP
+    password: ${ota_password}
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: "CET-1CEST,M3.5.0,M10.5.0/3"
+
+# RS485 zum Soyosource-Inverter (one-way, nur senden, 4800 8N1)
+uart:
+  id: rs485
+  tx_pin: GPIO17     # Waveshare RS485 TXD  ← im Wiki bestätigen
+  rx_pin: GPIO18     # RX ungenutzt (Soyo gibt nie Feedback)
+  baud_rate: 4800
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+
+globals:
+  # Eingänge (aus MQTT)
+  - { id: in_pcc,   type: float, restore_value: false, initial_value: '0' }
+  - { id: in_bat1,  type: float, restore_value: false, initial_value: '0' }
+  - { id: in_soc1,  type: float, restore_value: false, initial_value: '0' }
+  - { id: in_soc2,  type: float, restore_value: false, initial_value: '-1' }   # -1 = unbekannt -> HOLD
+  - { id: in_ebox,  type: float, restore_value: false, initial_value: '0' }
+  - { id: last_inv_ms, type: int, restore_value: false, initial_value: '0' }
+  # Schalter (per MQTT)
+  - { id: auto_enable,       type: bool, restore_value: false, initial_value: 'false' }
+  - { id: ladesperre_enable, type: bool, restore_value: false, initial_value: 'false' }
+  - { id: do4_req,           type: bool, restore_value: false, initial_value: 'false' }
+  # Soyo-Sollwert (W) via MQTT, wird alle ${soyo_resend} per RS485 gesendet
+  - { id: soyo_w,  type: int, restore_value: false, initial_value: '0' }
+  - { id: soyo_ms, type: int, restore_value: false, initial_value: '0' }
+  # Geräte-IP (wird von pub_status aktuell gehalten, in jedes JSON gemeldet)
+  - { id: dev_ip,  type: std::string, restore_value: false, initial_value: '"0.0.0.0"' }
+  - { id: dev_ip6, type: std::string, restore_value: false, initial_value: '""' }
+
+output:
+  - platform: gpio
+    id: buzzer_out
+    pin: GPIO21
+
+switch:
+  - { platform: gpio, id: relay_ch1, name: CH1, pin: GPIO1,  restore_mode: ALWAYS_OFF }
+  - { platform: gpio, id: relay_ch2, name: CH2, pin: GPIO2,  restore_mode: ALWAYS_OFF }
+  - { platform: gpio, id: relay_ch3, name: CH3, pin: GPIO41, restore_mode: ALWAYS_OFF }
+  - { platform: gpio, id: relay_ch4, name: CH4_DO4, pin: GPIO42, restore_mode: ALWAYS_OFF }
+  - { platform: gpio, id: relay_ch5, name: CH5, pin: GPIO45, restore_mode: ALWAYS_OFF }
+  - { platform: gpio, id: relay_ch6, name: CH6, pin: GPIO46, restore_mode: ALWAYS_OFF }
+
+script:
+  - id: beep
+    mode: single
+    then:
+      - output.turn_on: buzzer_out
+      - delay: 50ms
+      - output.turn_off: buzzer_out
+
+  # DO4-Puls: CH4 3s an -> WR2 abregeln, mit akustischem Alarm
+  - id: do4_script
+    mode: restart
+    then:
+      - switch.turn_on: relay_ch4
+      - script.execute: beep
+      - delay: 3s
+      - switch.turn_off: relay_ch4
+
+  # Schlanke Board-Telemetrie
+  - id: pub_status
+    mode: restart
+    then:
+      - lambda: |-
+          // IP/IPv6 ermitteln und in Globals halten
+          char ip4[16] = "0.0.0.0"; char ip6[41] = "";
+          bool got4 = false, got6 = false;
+          for (auto &a : id(wifi_comp).get_ip_addresses()) {
+            if (!a.is_set()) continue;
+            std::string s = a.str();
+            if (s.find(':') == std::string::npos && !got4) { strncpy(ip4, s.c_str(), 15); got4 = true; }
+            else if (s.find(':') != std::string::npos && !got6) { strncpy(ip6, s.c_str(), 40); got6 = true; }
+          }
+          id(dev_ip) = ip4; id(dev_ip6) = ip6;
+          char json[320];
+          snprintf(json, sizeof(json),
+            "{\"ip\":\"%s\",\"ip6\":\"%s\",\"state\":%d,\"auto\":%d,\"ladesperre_en\":%d,"
+            "\"uptime\":%lu,\"mem_free\":%lu}",
+            ip4, ip6, fox::g_state.relay_st, id(auto_enable) ? 1 : 0,
+            id(ladesperre_enable) ? 1 : 0,
+            (unsigned long)(millis() / 1000), (unsigned long)ESP.getFreeHeap());
+          id(mqtt_client).publish("sofar/waveshare/status", json);
+
+mqtt:
+  id: mqtt_client
+  broker: ${mqtt_broker}
+  port: 1883
+  client_id: sofar_waveshare
+  keepalive: 60s
+  reboot_timeout: 15min
+  discovery: false
+  on_connect:
+    then:
+      - script.execute: pub_status
+  on_message:
+    # ── Wechselrichter: PCC / Bat1 / SOC1 ──────────────────────────────────
+    - topic: inverter/power_grid_exchange/json
+      then:
+        - lambda: |-
+            auto num = [](const char* s, const char* k, float d) -> float {
+              const char* p = strstr(s, k); if (!p) return d;
+              p = strchr(p, ':'); if (!p) return d; return atof(p + 1);
+            };
+            id(in_pcc)  = num(x.c_str(), "ActivePower_PCC_Total", 0) * 1000.0f;
+            id(in_bat1) = num(x.c_str(), "Power_Bat1", 0) * 1000.0f;
+            id(in_soc1) = num(x.c_str(), "SOC_Bat1", 0);
+            id(last_inv_ms) = (int) millis();
+
+    # ── EBox: SOC2 + Leistung (vom Pi publiziert) ──────────────────────────
+    - topic: ebox/status
+      then:
+        - lambda: |-
+            auto num = [](const char* s, const char* k, float d) -> float {
+              const char* p = strstr(s, k); if (!p) return d;
+              p = strchr(p, ':'); if (!p) return d; return atof(p + 1);
+            };
+            id(in_soc2) = num(x.c_str(), "soc", -1);
+            id(in_ebox) = num(x.c_str(), "power", 0);
+
+    # ── Auto-Regelung scharf/aus ───────────────────────────────────────────
+    - topic: sofar/auto
+      then:
+        - lambda: |-
+            const char* p = strstr(x.c_str(), "ENABLE"); if (!p) p = strchr(x.c_str(), ':');
+            if (!p) return; p = strchr(p, ':'); if (!p) return;
+            id(auto_enable) = atoi(p + 1) != 0;
+
+    - topic: sofar/ladesperre
+      then:
+        - lambda: |-
+            const char* p = strstr(x.c_str(), "ENABLE"); if (!p) p = strchr(x.c_str(), ':');
+            if (!p) return; p = strchr(p, ':'); if (!p) return;
+            id(ladesperre_enable) = atoi(p + 1) != 0;
+
+    # ── Soyo-Sollwert (W) ──────────────────────────────────────────────────
+    #   akzeptiert {"W":350} oder nackte Zahl "350"
+    - topic: soyo/set
+      then:
+        - lambda: |-
+            const char* s = x.c_str();
+            const char* p = strstr(s, "W");
+            if (p) p = strchr(p, ':');
+            int w = atoi(p ? p + 1 : s);
+            if (w < 0) w = 0; if (w > 900) w = 900;
+            id(soyo_w) = w; id(soyo_ms) = (int) millis();
+
+    # ── Hand-Test Einzelrelais ─────────────────────────────────────────────
+    - topic: waveshare/relay/1
+      then: { lambda: 'const char* p=strchr(x.c_str(),'':''); if(p){ atoi(p+1)?id(relay_ch1).turn_on():id(relay_ch1).turn_off(); }' }
+    - topic: waveshare/relay/2
+      then: { lambda: 'const char* p=strchr(x.c_str(),'':''); if(p){ atoi(p+1)?id(relay_ch2).turn_on():id(relay_ch2).turn_off(); }' }
+    - topic: waveshare/relay/3
+      then: { lambda: 'const char* p=strchr(x.c_str(),'':''); if(p){ atoi(p+1)?id(relay_ch3).turn_on():id(relay_ch3).turn_off(); }' }
+    - topic: waveshare/relay/4
+      then: { lambda: 'const char* p=strchr(x.c_str(),'':''); if(p){ atoi(p+1)?id(relay_ch4).turn_on():id(relay_ch4).turn_off(); }' }
+    - topic: waveshare/relay/5
+      then: { lambda: 'const char* p=strchr(x.c_str(),'':''); if(p){ atoi(p+1)?id(relay_ch5).turn_on():id(relay_ch5).turn_off(); }' }
+    - topic: waveshare/relay/6
+      then: { lambda: 'const char* p=strchr(x.c_str(),'':''); if(p){ atoi(p+1)?id(relay_ch6).turn_on():id(relay_ch6).turn_off(); }' }
+    - topic: waveshare/relay/all
+      then:
+        - lambda: |-
+            const char* p = strchr(x.c_str(), ':'); if (!p) return;
+            bool on = atoi(p + 1) != 0;
+            (on ? id(relay_ch1).turn_on() : id(relay_ch1).turn_off());
+            (on ? id(relay_ch2).turn_on() : id(relay_ch2).turn_off());
+            (on ? id(relay_ch3).turn_on() : id(relay_ch3).turn_off());
+            (on ? id(relay_ch4).turn_on() : id(relay_ch4).turn_off());
+            (on ? id(relay_ch5).turn_on() : id(relay_ch5).turn_off());
+            (on ? id(relay_ch6).turn_on() : id(relay_ch6).turn_off());
+
+interval:
+  # ── Entscheidungs-Zyklus (wie Cron, 60s) ─────────────────────────────────
+  - interval: 60s
+    then:
+      - lambda: |-
+          id(do4_req) = false;
+          auto t = id(sntp_time).now();
+          if (!t.is_valid()) return;
+
+          // Frische-Check: keine WR-Daten > 3min -> Sicher auf State 0
+          if ((uint32_t) millis() - (uint32_t) id(last_inv_ms) > 180000UL) {
+            id(relay_ch1).turn_off(); id(relay_ch2).turn_off(); id(relay_ch3).turn_off();
+            fox::g_state.relay_st = 0;
+            char sj[120];
+            snprintf(sj, sizeof(sj),
+              "{\"ip\":\"%s\",\"state\":0,\"trace\":\"MQTT_STALE_SAFE\",\"auto\":0}",
+              id(dev_ip).c_str());
+            id(mqtt_client).publish("sofar/state", sj);
+            return;
+          }
+
+          if (!id(auto_enable)) return;   // Hand-Modus
+
+          fox::Inputs in;
+          in.pcc = id(in_pcc); in.bat1 = id(in_bat1); in.soc1 = id(in_soc1);
+          in.soc2 = id(in_soc2); in.ebox_w = id(in_ebox);
+
+          int local_sec = t.hour * 3600 + t.minute * 60 + t.second;
+          fox::Result r = fox::step(in, fox::g_state, (time_t) t.timestamp, local_sec,
+                                    t.month, t.hour, t.day_of_year, id(ladesperre_enable));
+
+          int s = fox::g_state.relay_st;
+          (s & 1)      ? id(relay_ch1).turn_on() : id(relay_ch1).turn_off();
+          ((s >> 1) & 1) ? id(relay_ch2).turn_on() : id(relay_ch2).turn_off();
+          ((s >> 2) & 1) ? id(relay_ch3).turn_on() : id(relay_ch3).turn_off();
+
+          id(do4_req) = r.do4_pulse;
+
+          char js[380];
+          snprintf(js, sizeof(js),
+            "{\"ip\":\"%s\",\"state\":%d,\"changed\":%d,\"pcc\":%.0f,\"bat1\":%.0f,"
+            "\"soc2\":%.1f,\"soc1\":%.1f,\"ebox\":%.0f,\"excess\":%.0f,"
+            "\"dc_expected\":%.0f,\"dc_delta\":%.0f,\"ladesperre\":%d,\"do4\":%d,\"trace\":\"%s\"}",
+            id(dev_ip).c_str(), r.final_state, r.changed ? 1 : 0, in.pcc, in.bat1,
+            in.soc2, in.soc1, in.ebox_w, r.excess, r.dc_expected, r.dc_delta,
+            r.ladesperre ? 1 : 0, r.do4_pulse ? 1 : 0, r.trace);
+          id(mqtt_client).publish("sofar/state", js);
+      - if:
+          condition:
+            lambda: 'return id(do4_req);'
+          then:
+            - script.execute: do4_script
+
+  # ── Soyo-RS485: Frame dauernd resenden (Watchdog) ────────────────────────
+  - interval: ${soyo_resend}
+    then:
+      - lambda: |-
+          int w = id(soyo_w);
+          // Stale-Safety: kein frischer Sollwert > 30s -> 0 senden (kein Blind-Einspeisen)
+          if ((uint32_t) millis() - (uint32_t) id(soyo_ms) > 30000UL) w = 0;
+          uint8_t ph = (w >> 8) & 0xFF, pl = w & 0xFF;
+          uint8_t crc = (264 - ph - pl) & 0xFF;
+          uint8_t f[8] = {0x24, 0x56, 0x00, 0x21, ph, pl, 0x80, crc};
+          id(rs485).write_array(f, 8);
+          id(rs485).flush();
+          // Beobachtbarkeit (Soyo gibt kein Feedback): gesendeten Frame publizieren
+          char hex[20];
+          snprintf(hex, sizeof(hex), "%02X%02X%02X%02X%02X%02X%02X%02X",
+                   f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
+          char js[80];
+          snprintf(js, sizeof(js), "{\"w\":%d,\"hex\":\"%s\"}", w, hex);
+          id(mqtt_client).publish("soyo/sent", js);
+
+  # ── Board-Telemetrie ─────────────────────────────────────────────────────
+  - interval: 30s
+    then:
+      - script.execute: pub_status

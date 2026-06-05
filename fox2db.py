@@ -394,6 +394,21 @@ def pulse_do4(duration=3):  # Relais 4 (r4) → schaltet WR2 (Wechselrichter 2) 
         _log(f"DO4 fork fehlgeschlagen: {e}")
 
 
+def publish_ebox(soc, ebox_w):
+    # SOC2 + EBox-Leistung fuer Shadow-Dev (Waveshare-ESP) bereitstellen
+    client = mqtt.Client(client_id="fox2db_ebox", clean_session=True)
+    try:
+        client.connect(MQTT_CFG['broker'], MQTT_CFG['port'], keepalive=10)
+        payload = json.dumps({"soc": round(soc, 1), "power": round(ebox_w)}, separators=(',', ':'))
+        r = client.publish("ebox/status", payload, qos=0, retain=True)
+        r.wait_for_publish(timeout=4)
+    except Exception as e:
+        _log(f"ebox/status publish error: {e}")
+    finally:
+        try: client.disconnect()
+        except Exception: pass
+
+
 def publish_mqtt(payload: dict):
     json_str = json.dumps(payload, separators=(',', ':'))
     client = mqtt.Client(client_id="fox2db_pub", clean_session=True)
@@ -507,6 +522,7 @@ def main():
         return
 
     bat_cur, soc, ebox_w = read_ebox()
+    publish_ebox(soc, ebox_w)
     wirkleist     = fetch_z2()
     raw_pcc       = mqtt_data['pcc']
     relay_st      = _read(PATHS['relay_state'])
