@@ -30,7 +30,7 @@ SORTED_STATES  = sorted(STATE_TO_POWER, key=lambda s: STATE_TO_POWER[s])
 CONFIG = {
     'min_excess':                  1010,
     'max_grid_draw':               1500,
-    'max_soc':                       99,
+    'max_soc':                      100,
     'hysteresis':                   505,
     'stabilization_cycles':           2,
     'emergency_import':            1020,
@@ -125,18 +125,21 @@ DC = _DcForecast()
 # Format: (bedingung_fn, erzwungener_state, name)
 # Werden NACH decide() angewendet — kein Code kann sie umgehen
 
-def _ladesperre_active() -> bool:
-    """True solange heute kein DO4-Trigger oder Schlechtwetter-Release in pv_relay_events."""
+def _ladesperre_events_today():
+    """(do4_peak, schlechtwetter_release, gutwetter_reblock) fuer heute; None bei DB-Fehler."""
     try:
         conn = _db_connect()
         cur  = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM pv_relay_events "
+        cur.execute("SELECT action, relay FROM pv_relay_events "
                     "WHERE relay IN ('do4','ladesperre') AND DATE(ts) = CURDATE()")
-        count = cur.fetchone()[0]
+        rows = cur.fetchall()
         conn.close()
-        return count == 0
+        do4     = any(r[1] == 'do4'                                     for r in rows)
+        weather = any(r[1] == 'ladesperre' and r[0] == 'schlechtwetter' for r in rows)
+        reblock = any(r[1] == 'ladesperre' and r[0] == 'gutwetter'      for r in rows)
+        return do4, weather, reblock
     except Exception:
-        return False
+        return None
 
 def _ladesperre_release_db(reason: str):
     _db_relay_event("schlechtwetter", "ladesperre", 0, reason)
@@ -326,7 +329,7 @@ def fetch_z2() -> float:  # Ersatzwert für PCC bei Modbus-Lesefehler (NaN)
     return received[0] if received else 0.0
 
 
-def read_ebox() -> Tuple[float, float]:
+def read_ebox() -> Tuple[float, float, float]:
     try:
         subprocess.run(f"{PATHS['ebox_script']} pwr 1 > {PATHS['ebox_data']}",
                        shell=True, timeout=10)
@@ -334,15 +337,20 @@ def read_ebox() -> Tuple[float, float]:
         _log(f"EBox update error: {e}")
     try:
         lines   = Path(PATHS['ebox_data']).read_text().splitlines()
-        socs, current = [], 0.0
+        socs, current, power = [], 0.0, 0.0
         for line in lines:
-            line = line.strip().lstrip("b'").rstrip("'")
+            line = line.strip()
+            if line.startswith("b'") and line.endswith("'"):
+                line = line[2:-1]
             if not line or line.startswith("Power") or line[0] not in "123":
                 continue
             parts = line.split()
             if len(parts) > 2:
                 try:
-                    current += float(parts[2])
+                    curr_ma = float(parts[2])
+                    current += curr_ma
+                    volt_mv = float(parts[1])
+                    power += volt_mv * curr_ma / 1_000_000
                 except ValueError:
                     pass
             for p in parts:
@@ -351,12 +359,13 @@ def read_ebox() -> Tuple[float, float]:
                         socs.append(float(p.replace("%", "")))
                     except ValueError:
                         pass
-        if not socs or 0.0 in socs:
-            return current / 1000.0, -1.0
-        return current / 1000.0, sum(socs) / len(socs)
+        valid_socs = [s for s in socs if s > 0]
+        if not valid_socs:
+            return current / 1000.0, -1.0, power
+        return current / 1000.0, sum(valid_socs) / len(valid_socs), power
     except Exception as e:
         _log(f"EBox read error: {e}")
-        return 0.0, -1.0
+        return 0.0, -1.0, 0.0
 
 
 def set_relay(state: int, reason: str = "") -> bool:
@@ -402,24 +411,24 @@ def publish_mqtt(payload: dict):
 #                         DECISION LAYER
 # ═══════════════════════════════════════════════════════════════════════════
 
-def decide(soc, pcc, bat_cur, bat1, relay_st, prot) -> Tuple[int, str, float]:
+def decide(soc, pcc, ebox_w, bat1, relay_st, prot) -> Tuple[int, str, float]:
     """
     Hauptpfad: POWER_MATCHING wählt besten Lade-State (läuft ~95% aller Zyklen).
     PCC_OVER_20KW greift nur ein wenn PCC>20kW — erhöht State um 1 (mehr Laden = Peak weg).
     Schutz-Regeln davor verhindern Datenfehler oder Tiefentladung.
     """
-    ebox_eff = max(bat_cur * 2 * 53 + 1, STATE_TO_POWER.get(relay_st, 0)) if relay_st > 0 else 0
+    ebox_eff = max(ebox_w, STATE_TO_POWER.get(relay_st, 0)) if relay_st > 0 else 0
     excess   = pcc + ebox_eff + bat1
 
     # SOC unbekannt → aktuellen State halten (strukturelle Sicherheit vor prio-Check)
     if soc < 0:
-        ebox_actual = (bat_cur * 2 * 53 + 1) if relay_st > 0 else 0
+        ebox_actual = ebox_w if relay_st > 0 else 0
         excess = pcc + ebox_actual + bat1
         return relay_st, "EBOX_SOC_UNKNOWN_HOLD", excess
 
     # PCC_OVER_20KW: Einspeisung >20kW → State+1 (mehr laden = Peak dämpfen)
     # DO4-Puls wenn kein State-Erhöhung möglich (SOC=100 oder State=7)
-    if pcc > CONFIG['pcc_peak_threshold'] and soc < 100:
+    if pcc > CONFIG['pcc_peak_threshold'] and soc < CONFIG['max_soc']:
         next_st = min(relay_st + 1, 7)
         if next_st > relay_st:
             return next_st, f"PCC_OVER_20KW (SOC={soc:.0f}% State{relay_st}→{next_st})", excess
@@ -496,7 +505,7 @@ def main():
         set_relay(0, "MQTT failed")
         return
 
-    bat_cur, soc  = read_ebox()
+    bat_cur, soc, ebox_w = read_ebox()
     wirkleist     = fetch_z2()
     raw_pcc       = mqtt_data['pcc']
     relay_st      = _read(PATHS['relay_state'])
@@ -517,27 +526,50 @@ def main():
 
     bat1     = mqtt_data['bat1']
     soc_bat1 = mqtt_data['soc_bat1']
-    ebox_w   = bat_cur * 2 * 53
     dc_delta = dc_expected - (pcc + ebox_w + bat1)
     pcc_avg  = _pcc_avg_10min()
 
-    ladesperre = _ladesperre_active()
-    if ladesperre:
+    # ── LADESPERRE-Zustandsmaschine (pro Tag) ───────────────────────────────
+    # blocked → [Schlechtwetter] released → [Gutwetter] reblock → [DO4/window_end] released
+    events = _ladesperre_events_today()
+    if events is None:
+        ladesperre = False  # DB-Fehler → fail-safe: normal laden
+    else:
+        do4_today, weather_rel, goodweather_rebl = events
+        ratio = None
         if pcc_avg is not None and dc_expected > 5000:
-            dc_delta_avg = dc_expected - (pcc_avg + ebox_w + bat1)
-            ratio = dc_delta_avg / dc_expected
-            if ratio > 0.8:
-                reason = f"Schlechtwetter PCC-avg={pcc_avg:.0f}W ratio={ratio:.0%}"
-                _ladesperre_release_db(reason)
-                _log(f"LADESPERRE aufgehoben — {reason} > 80%")
-                ladesperre = False
-            else:
-                _log(f"LADESPERRE aktiv — warte auf DO4-Peak (PCC-avg={pcc_avg:.0f}W ratio={ratio:.0%})")
+            ratio = (dc_expected - (pcc_avg + ebox_w + bat1)) / dc_expected
+        now_dt     = dt.datetime.now(DC._TZ)
+        peak_ahead = _has_peak and _win_end is not None and now_dt < _win_end
+
+        if do4_today:
+            ladesperre = False  # Peak heute schon ausgelöst → laden ist das Ziel
+        elif goodweather_rebl:
+            ladesperre = peak_ahead  # Reblock hält State 0 bis DO4-Peak oder window_end
+            if not peak_ahead:
+                _log("GUTWETTER-REBLOCK beendet — Peak-Fenster vorbei, Restladung frei")
+        elif weather_rel:
+            ladesperre = False  # durch Schlechtwetter freigegeben — lädt
+            if peak_ahead and dc_expected > 10000 and ratio is not None and ratio < 0.4:
+                reason = f"Gutwetter zurueck PCC-avg={pcc_avg:.0f}W ratio={ratio:.0%}"
+                _db_relay_event("gutwetter", "ladesperre", 1, reason)
+                _log(f"GUTWETTER-REBLOCK — {reason} — Headroom fuer Peak")
+                ladesperre = True
         else:
-            _log("LADESPERRE aktiv — warte auf DO4-Peak (PCC-Avg noch aufbauend)")
+            ladesperre = True  # morgendlicher Initial-Block
+            if ratio is not None:
+                if ratio > 0.8:
+                    reason = f"Schlechtwetter PCC-avg={pcc_avg:.0f}W ratio={ratio:.0%}"
+                    _ladesperre_release_db(reason)
+                    _log(f"LADESPERRE aufgehoben — {reason} > 80%")
+                    ladesperre = False
+                else:
+                    _log(f"LADESPERRE aktiv — warte auf DO4-Peak (PCC-avg={pcc_avg:.0f}W ratio={ratio:.0%})")
+            else:
+                _log("LADESPERRE aktiv — warte auf DO4-Peak (PCC-Avg noch aufbauend)")
 
     # ── DECIDE ─────────────────────────────────────────────────────────────
-    best, trace, excess = decide(soc, pcc, bat_cur, bat1, relay_st, prot)
+    best, trace, excess = decide(soc, pcc, ebox_w, bat1, relay_st, prot)
 
     # HARD_GUARDS — physikalisch unüberwindbar
     best, trace = apply_guards(best, soc, trace, ladesperre)
