@@ -31,6 +31,8 @@ substitutions:
   wifi_password: "9876543210"
   ota_password: waveshare2026
   soyo_resend: 2s          # Soyo-Watchdog: dauernd resenden (2s erprobt, 3s ok)
+  fw_version: "3.2.1"      # auto_enable=true ab Boot, kein flow_control_pin
+  fw_date: "2026-06-07"
 
 esphome:
   name: ${device_name}
@@ -73,15 +75,17 @@ time:
     id: sntp_time
     timezone: "CET-1CEST,M3.5.0,M10.5.0/3"
 
-# RS485 zum Soyosource-Inverter (one-way, nur senden, 4800 8N1)
+# RS485 bidirektional: GPIO17=TX→SP3485 DI, GPIO18=RX←SP3485 RO
+# Richtungssteuerung: TX-Pin → 74HC04D Inverter → TXDEN → SP3485 DE+RE (automatisch)
 uart:
   id: rs485
-  tx_pin: GPIO17     # Waveshare RS485 TXD  ← im Wiki bestätigen
-  rx_pin: GPIO18     # RX ungenutzt (Soyo gibt nie Feedback)
+  tx_pin: GPIO17
+  rx_pin: GPIO18
   baud_rate: 4800
   data_bits: 8
   parity: NONE
   stop_bits: 1
+  rx_buffer_size: 256
 
 globals:
   # Eingänge (aus MQTT)
@@ -92,12 +96,22 @@ globals:
   - { id: in_ebox,  type: float, restore_value: false, initial_value: '0' }
   - { id: last_inv_ms, type: int, restore_value: false, initial_value: '0' }
   # Schalter (per MQTT)
-  - { id: auto_enable,       type: bool, restore_value: false, initial_value: 'false' }
+  - { id: auto_enable,       type: bool, restore_value: false, initial_value: 'true' }
   - { id: ladesperre_enable, type: bool, restore_value: false, initial_value: 'false' }
   - { id: do4_req,           type: bool, restore_value: false, initial_value: 'false' }
   # Soyo-Sollwert (W) via MQTT, wird alle ${soyo_resend} per RS485 gesendet
   - { id: soyo_w,  type: int, restore_value: false, initial_value: '0' }
   - { id: soyo_ms, type: int, restore_value: false, initial_value: '0' }
+  # GPIO-Scan (nicht-blockierend): Flankenzähler für alle Pins
+  - { id: scan_active,   type: bool, restore_value: false, initial_value: 'false' }
+  - { id: scan_start_ms, type: int,  restore_value: false, initial_value: '0' }
+  - { id: scan_last_lo,  type: int,  restore_value: false, initial_value: '0' }
+  - { id: scan_last_hi,  type: int,  restore_value: false, initial_value: '0' }
+  - { id: scan_e17,      type: int,  restore_value: false, initial_value: '0' }
+  - { id: scan_e18,      type: int,  restore_value: false, initial_value: '0' }
+  - { id: scan_e3,       type: int,  restore_value: false, initial_value: '0' }
+  - { id: scan_eall_lo,  type: int,  restore_value: false, initial_value: '0' }
+  - { id: scan_eall_hi,  type: int,  restore_value: false, initial_value: '0' }
   # Geräte-IP (wird von pub_status aktuell gehalten, in jedes JSON gemeldet)
   - { id: dev_ip,  type: std::string, restore_value: false, initial_value: '"0.0.0.0"' }
   - { id: dev_ip6, type: std::string, restore_value: false, initial_value: '""' }
@@ -132,6 +146,45 @@ script:
       - delay: 3s
       - switch.turn_off: relay_ch4
 
+  # GPIO18-Physik-Test: UART deaktivieren, GPIO18 als plain input, CH1=A→GND
+  - id: relay_test_script
+    mode: single
+    then:
+      - lambda: |-
+          #include "driver/uart.h"
+          #include "driver/gpio.h"
+          #include "soc/gpio_reg.h"
+          // UART1 driver deinstallieren → GPIO18 frei
+          uart_driver_delete(UART_NUM_1);
+          // GPIO18 als plain input mit Pullup
+          gpio_reset_pin(GPIO_NUM_18);
+          gpio_set_direction(GPIO_NUM_18, GPIO_MODE_INPUT);
+          gpio_pullup_en(GPIO_NUM_18);
+          int v0 = gpio_get_level(GPIO_NUM_18);
+          char msg[128];
+          snprintf(msg, sizeof(msg), "GPIO18 freed: level=%d (expect 1=idle)", v0);
+          id(mqtt_client).publish("rs485/relay_test_result", msg);
+      - delay: 300ms
+      - switch.turn_on: relay_ch1
+      - delay: 300ms
+      - lambda: |-
+          // CH1 geschlossen: A=GND → MAX485 RO=LOW → GPIO18 soll LOW sein
+          int v1 = gpio_get_level(GPIO_NUM_18);
+          uint32_t reg = (REG_READ(0x3FF44004) >> 18) & 1;  // GPIO_IN_REG bit18
+          char msg[128];
+          snprintf(msg, sizeof(msg),
+            "{\"ch1\":1,\"gpio18_level\":%d,\"gpio18_reg\":%lu,\"verdict\":\"%s\"}",
+            v1, reg, v1 == 0 ? "PATH OK: RO->GPIO18 works!" : "PATH BROKEN: GPIO18 stuck HIGH");
+          id(mqtt_client).publish("rs485/relay_test_result", msg);
+      - delay: 300ms
+      - switch.turn_off: relay_ch1
+      - delay: 200ms
+      - lambda: |-
+          int v2 = gpio_get_level(GPIO_NUM_18);
+          char msg[64];
+          snprintf(msg, sizeof(msg), "{\"ch1\":0,\"gpio18_level\":%d}", v2);
+          id(mqtt_client).publish("rs485/relay_test_result", msg);
+
   # Schlanke Board-Telemetrie
   - id: pub_status
     mode: restart
@@ -147,13 +200,14 @@ script:
             else if (s.find(':') != std::string::npos && !got6) { strncpy(ip6, s.c_str(), 40); got6 = true; }
           }
           id(dev_ip) = ip4; id(dev_ip6) = ip6;
-          char json[320];
+          char json[384];
           snprintf(json, sizeof(json),
             "{\"ip\":\"%s\",\"ip6\":\"%s\",\"state\":%d,\"auto\":%d,\"ladesperre_en\":%d,"
-            "\"uptime\":%lu,\"mem_free\":%lu}",
+            "\"uptime\":%lu,\"mem_free\":%lu,\"fw\":\"%s\",\"fw_date\":\"%s\"}",
             ip4, ip6, fox::g_state.relay_st, id(auto_enable) ? 1 : 0,
             id(ladesperre_enable) ? 1 : 0,
-            (unsigned long)(millis() / 1000), (unsigned long)ESP.getFreeHeap());
+            (unsigned long)(millis() / 1000), (unsigned long)ESP.getFreeHeap(),
+            "${fw_version}", "${fw_date}");
           id(mqtt_client).publish("sofar/waveshare/status", json);
 
 mqtt:
@@ -168,6 +222,33 @@ mqtt:
     then:
       - script.execute: pub_status
   on_message:
+    # ── GPIO-Scan: Aktiviert nicht-blockierend, Ergebnis nach 3s ────────────
+    - topic: rs485/scan
+      then:
+        - lambda: |-
+            #include "soc/gpio_reg.h"
+            gpio_input_enable(GPIO_NUM_17);
+            gpio_input_enable(GPIO_NUM_18);
+            gpio_input_enable(GPIO_NUM_3);
+            id(scan_e17) = 0; id(scan_e18) = 0; id(scan_e3) = 0;
+            id(scan_eall_lo) = 0; id(scan_eall_hi) = 0;
+            uint32_t init_lo = REG_READ(GPIO_IN_REG);
+            id(scan_last_lo)  = (int)init_lo;
+            id(scan_last_hi)  = (int)REG_READ(GPIO_IN1_REG);
+            id(scan_start_ms) = (int)millis();
+            id(scan_active)   = true;
+            // Ruhepegel sofort melden: GPIO3=HIGH → DE/RE=TX → Receiver disabled!
+            char init[128];
+            snprintf(init, sizeof(init),
+              "init: GPIO3=%d GPIO17=%d GPIO18=%d (3=HIGH→ReceiverOFF!)",
+              (int)((init_lo >> 3) & 1), (int)((init_lo >> 17) & 1), (int)((init_lo >> 18) & 1));
+            id(mqtt_client).publish("rs485/scan_result", init);
+
+    # ── Relay-Test: CH1 schaltet A→GND während Scan ──────────────────────
+    - topic: rs485/relay_test
+      then:
+        - script.execute: relay_test_script
+
     # ── Wechselrichter: PCC / Bat1 / SOC1 ──────────────────────────────────
     - topic: inverter/power_grid_exchange/json
       then:
@@ -309,13 +390,67 @@ interval:
           uint8_t f[8] = {0x24, 0x56, 0x00, 0x21, ph, pl, 0x80, crc};
           id(rs485).write_array(f, 8);
           id(rs485).flush();
-          // Beobachtbarkeit (Soyo gibt kein Feedback): gesendeten Frame publizieren
+          // Diagnose: wie viele Bytes liegen nach TX im RX-Puffer?
+          int avail = id(rs485).available();
+          // Beobachtbarkeit: gesendeten Frame publizieren
           char hex[20];
           snprintf(hex, sizeof(hex), "%02X%02X%02X%02X%02X%02X%02X%02X",
                    f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
-          char js[80];
-          snprintf(js, sizeof(js), "{\"w\":%d,\"hex\":\"%s\"}", w, hex);
+          char js[120];
+          snprintf(js, sizeof(js), "{\"w\":%d,\"hex\":\"%s\",\"rx_avail\":%d}", w, hex, avail);
           id(mqtt_client).publish("soyo/sent", js);
+
+  # ── GPIO-Scan Sampler (1ms, nicht-blockierend) ───────────────────────────
+  - interval: 1ms
+    then:
+      - lambda: |-
+          if (!id(scan_active)) return;
+          #include "soc/gpio_reg.h"
+          uint32_t lo = REG_READ(GPIO_IN_REG);
+          uint32_t hi = REG_READ(GPIO_IN1_REG);
+          uint32_t dlo = lo ^ (uint32_t)id(scan_last_lo);
+          uint32_t dhi = hi ^ (uint32_t)id(scan_last_hi);
+          if (dlo & (1u<<17)) id(scan_e17) = id(scan_e17) + 1;
+          if (dlo & (1u<<18)) id(scan_e18) = id(scan_e18) + 1;
+          if (dlo & (1u<< 3)) id(scan_e3)  = id(scan_e3)  + 1;
+          if (dlo) id(scan_eall_lo) = id(scan_eall_lo) + __builtin_popcount(dlo);
+          if (dhi) id(scan_eall_hi) = id(scan_eall_hi) + __builtin_popcount(dhi);
+          id(scan_last_lo) = (int)lo;
+          id(scan_last_hi) = (int)hi;
+          if ((uint32_t)millis() - (uint32_t)id(scan_start_ms) >= 3000) {
+            id(scan_active) = false;
+            char out[256];
+            snprintf(out, sizeof(out),
+              "{\"GPIO17\":%d,\"GPIO18\":%d,\"GPIO3\":%d,\"all_lo\":%d,\"all_hi\":%d}",
+              id(scan_e17), id(scan_e18), id(scan_e3), id(scan_eall_lo), id(scan_eall_hi));
+            id(mqtt_client).publish("rs485/scan_result", out);
+          }
+
+  # ── RS485 RX: Frame-Empfang (50ms Polling, 25ms Gap) ────────────────────
+  - interval: 50ms
+    then:
+      - lambda: |-
+          static uint8_t buf[64];
+          static int buf_len = 0;
+          static uint32_t last_ms = 0;
+          uint32_t now = millis();
+
+          while (id(rs485).available() && buf_len < (int)sizeof(buf)) {
+            uint8_t b;
+            id(rs485).read_byte(&b);
+            buf[buf_len++] = b;
+            last_ms = now;
+          }
+          if (buf_len > 0 && (now - last_ms) >= 25) {
+            char hex[buf_len * 2 + 1];
+            for (int i = 0; i < buf_len; i++)
+              sprintf(hex + i * 2, "%02X", buf[i]);
+            hex[buf_len * 2] = 0;
+            char js[160];
+            snprintf(js, sizeof(js), "{\"len\":%d,\"hex\":\"%s\"}", buf_len, hex);
+            id(mqtt_client).publish("rs485/rx", js);
+            buf_len = 0;
+          }
 
   # ── Board-Telemetrie ─────────────────────────────────────────────────────
   - interval: 30s

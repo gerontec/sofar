@@ -1,0 +1,82 @@
+substitutions:
+  device_name: sofar-waveshare
+  fw: "rs485-test-2.0"
+
+esphome:
+  name: ${device_name}
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG
+  baud_rate: 115200
+
+ota:
+  - platform: esphome
+    password: waveshare2026
+
+wifi:
+  ssid: f24
+  password: "9876543210"
+
+mqtt:
+  id: mqtt_client
+  broker: 192.168.178.218
+  port: 1883
+  client_id: sofar_waveshare
+  discovery: false
+
+# UART wie Schaltplan: GPIO17=TX, GPIO18=RX, KEIN flow_control_pin
+# 74HC04D invertiert TX automatisch → TXDEN → SP3485 DE+RE
+uart:
+  id: rs485
+  tx_pin: GPIO17
+  rx_pin: GPIO18
+  baud_rate: 9600
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+  rx_buffer_size: 256
+
+interval:
+  # Alle 2s: Frame senden + rx_avail reporten
+  - interval: 2s
+    then:
+      - lambda: |-
+          uint8_t f[] = {0x24,0x56,0x00,0x21,0x00,0x64,0x80,0xA4};
+          id(rs485).write_array(f, 8);
+          id(rs485).flush();
+          int avail = id(rs485).available();
+          ESP_LOGI("rs485", "TX gesendet, rx_avail=%d", avail);
+          char js[80];
+          snprintf(js, sizeof(js),
+            "{\"tx\":\"24560021006480A4\",\"rx_avail\":%d,\"fw\":\"%s\"}",
+            avail, "${fw}");
+          id(mqtt_client).publish("rs485/test", js);
+
+  # 50ms: empfangene Bytes sammeln und publishen
+  - interval: 50ms
+    then:
+      - lambda: |-
+          static uint8_t buf[64];
+          static int n = 0;
+          static uint32_t last = 0;
+          uint32_t now = millis();
+          while (id(rs485).available() && n < 64) {
+            id(rs485).read_byte(&buf[n++]);
+            last = now;
+          }
+          if (n > 0 && (now - last) >= 25) {
+            char hex[n*3+1];
+            for (int i = 0; i < n; i++) snprintf(hex+i*3, 4, "%02X ", buf[i]);
+            hex[n*3] = 0;
+            ESP_LOGI("rs485", "RX %d Bytes: %s", n, hex);
+            char js[160];
+            snprintf(js, sizeof(js), "{\"len\":%d,\"hex\":\"%s\"}", n, hex);
+            id(mqtt_client).publish("rs485/rx", js);
+            n = 0;
+          }
