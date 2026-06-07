@@ -20,7 +20,6 @@ from typing import Tuple, Dict, Optional
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
-from paho.mqtt.enums import CallbackAPIVersion
 import pymysql
 from astral import LocationInfo as _LocationInfo
 from astral.sun import elevation as _astral_elevation, azimuth as _astral_azimuth
@@ -61,7 +60,7 @@ PATHS = {
 }
 
 MQTT_CFG = {
-    'broker':       'kellertreppe.fritz.box',
+    'broker':       '192.168.178.218',
     'port':          1883,
     'topic':        'inverter/power_grid_exchange/json',
     'zaehl_topic':  'pv_zaehl2/#',
@@ -277,7 +276,7 @@ def fetch_mqtt() -> Optional[Dict]:
         except Exception as e:
             _log(f"MQTT parse error: {e}")
 
-    client = mqtt.Client(CallbackAPIVersion.VERSION2)
+    client = mqtt.Client(client_id="fox2db_z1", clean_session=True)
     client.on_message = on_message
     try:
         client.connect(MQTT_CFG['broker'], MQTT_CFG['port'], 60)
