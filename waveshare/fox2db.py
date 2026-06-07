@@ -335,20 +335,26 @@ def read_ebox() -> Tuple[float, float, float]:
     try:
         conn = _db_connect()
         cur  = conn.cursor()
-        cur.execute("SELECT Coulomb, Volt, Curr FROM pv_ebox2 "
-                    "WHERE ts >= NOW() - INTERVAL 3 MINUTE "
-                    "ORDER BY ts DESC LIMIT 1")
+        # Letzten Messzyklus: alle Packs innerhalb ±2s des neuesten Timestamps
+        cur.execute("""
+            SELECT AVG(Coulomb),
+                   SUM(Volt * Curr / 1000000.0),
+                   SUM(Curr) / 1000.0
+            FROM pv_ebox2
+            WHERE ts >= (SELECT MAX(ts) FROM pv_ebox2 WHERE ts >= NOW() - INTERVAL 3 MINUTE)
+                        - INTERVAL 2 SECOND
+              AND ts >= NOW() - INTERVAL 3 MINUTE
+              AND Power IN (1, 2, 3)
+        """)
         row = cur.fetchone()
         conn.close()
-        if row is None:
+        if row is None or row[0] is None:
             _log("EBox DB: kein aktueller Datensatz (<3min)")
             return 0.0, -1.0, 0.0
-        soc_pct  = float(row[0])             # Coulomb = SOC %
-        volt_mv  = float(row[1])             # mV
-        curr_ma  = float(row[2])             # mA
-        power_w  = volt_mv * curr_ma / 1_000_000.0
-        current_a = curr_ma / 1000.0
-        _log(f"EBox DB: SOC2={soc_pct:.1f}%  P={power_w:.0f}W  I={current_a:.2f}A")
+        soc_pct   = float(row[0])        # AVG Coulomb = SOC %
+        power_w   = float(row[1]) * 2.0  # ×2: zweite identische EBox unsichtbar
+        current_a = float(row[2]) * 2.0
+        _log(f"EBox DB: SOC2={soc_pct:.1f}%  P={power_w:.0f}W  I={current_a:.2f}A (×2)")
         return current_a, soc_pct, power_w
     except Exception as e:
         _log(f"EBox DB error: {e}")
