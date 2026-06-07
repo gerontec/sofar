@@ -31,7 +31,7 @@ substitutions:
   wifi_password: "9876543210"
   ota_password: waveshare2026
   soyo_resend: 2s          # Soyo-Watchdog: dauernd resenden (2s erprobt, 3s ok)
-  fw_version: "3.2.1"      # auto_enable=true ab Boot, kein flow_control_pin
+  fw_version: "3.3.0"      # soyo intern berechnet (kein externer soyo1min)
   fw_date: "2026-06-07"
 
 esphome:
@@ -99,9 +99,12 @@ globals:
   - { id: auto_enable,       type: bool, restore_value: false, initial_value: 'true' }
   - { id: ladesperre_enable, type: bool, restore_value: false, initial_value: 'false' }
   - { id: do4_req,           type: bool, restore_value: false, initial_value: 'false' }
-  # Soyo-Sollwert (W) via MQTT, wird alle ${soyo_resend} per RS485 gesendet
+  # Soyo-Sollwert (W) intern berechnet, wird alle ${soyo_resend} per RS485 gesendet
   - { id: soyo_w,  type: int, restore_value: false, initial_value: '0' }
   - { id: soyo_ms, type: int, restore_value: false, initial_value: '0' }
+  # fox2db/state (relay state + soc_bat2 für soyo-Kalkulation)
+  - { id: fox_relay_state, type: int,  restore_value: false, initial_value: '0' }
+  - { id: fox_state_ms,    type: int,  restore_value: false, initial_value: '0' }
   # GPIO-Scan (nicht-blockierend): Flankenzähler für alle Pins
   - { id: scan_active,   type: bool, restore_value: false, initial_value: 'false' }
   - { id: scan_start_ms, type: int,  restore_value: false, initial_value: '0' }
@@ -273,6 +276,18 @@ mqtt:
             id(in_soc2) = num(x.c_str(), "soc", -1);
             id(in_ebox) = num(x.c_str(), "power", 0);
 
+    # ── fox2db/state: relay state + soc_bat2 für soyo-Kalkulation ────────
+    - topic: fox2db/state
+      then:
+        - lambda: |-
+            auto num = [](const char* s, const char* k, float d) -> float {
+              const char* p = strstr(s, k); if (!p) return d;
+              p = strchr(p, ':'); if (!p) return d; return atof(p + 1);
+            };
+            id(fox_relay_state) = (int) num(x.c_str(), "\"state\"", 0);
+            id(in_soc2)         = num(x.c_str(), "soc_bat2", id(in_soc2));
+            id(fox_state_ms)    = (int) millis();
+
     # ── Auto-Regelung scharf/aus ───────────────────────────────────────────
     - topic: sofar/auto
       then:
@@ -377,6 +392,40 @@ interval:
             lambda: 'return id(do4_req);'
           then:
             - script.execute: do4_script
+
+  # ── Soyo-Kalkulation (25s, ersetzt soyo1min.c) ───────────────────────────
+  - interval: 25s
+    then:
+      - lambda: |-
+          int w = 0;
+          auto t = id(sntp_time).now();
+          // Stale: fox2db/state älter als 90s → 0W
+          bool stale = (uint32_t)millis() - (uint32_t)id(fox_state_ms) > 90000UL
+                       || id(fox_state_ms) == 0;
+          if (!stale) {
+            int   st   = id(fox_relay_state);
+            float soc2 = id(in_soc2);
+            float pcc  = id(in_pcc);
+            if (st != 0) {
+              w = 0;  // EBox aktiv
+            } else if (soc2 >= 0 && soc2 < 9.0f) {
+              w = 0;  // Entladeschutz
+            } else if (pcc > 100.0f) {
+              w = (int)(pcc * 1.01f);
+              if (w > 600) w = 600;
+            } else if (pcc < -200.0f) {
+              w = 0;  // PV-Überschuss
+            } else {
+              // Nacht: vor 6h oder ab 20h
+              int h = t.is_valid() ? t.hour : 12;
+              w = (h < 6 || h >= 20) ? 390 : 10;
+            }
+          }
+          id(soyo_w)  = w;
+          id(soyo_ms) = (int) millis();
+          char js[48];
+          snprintf(js, sizeof(js), "{\"W\":%d,\"stale\":%d}", w, stale ? 1 : 0);
+          id(mqtt_client).publish("soyo/calc", js);
 
   # ── Soyo-RS485: Frame dauernd resenden (Watchdog) ────────────────────────
   - interval: ${soyo_resend}
