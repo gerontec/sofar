@@ -330,42 +330,26 @@ def fetch_z2() -> float:  # Ersatzwert für PCC bei Modbus-Lesefehler (NaN)
 
 
 def read_ebox() -> Tuple[float, float, float]:
+    # Liest EBox2-Leistung + SOC direkt aus pv_ebox2 (BMS-Daten, letzte 2 Minuten)
     try:
-        subprocess.run(f"{PATHS['ebox_script']} pwr 1 > {PATHS['ebox_data']}",
-                       shell=True, timeout=10)
+        conn = pymysql.connect(host=DB_CFG['host'], user=DB_CFG['user'],
+                               password=DB_CFG['pw'], database=DB_CFG['db'],
+                               connect_timeout=5)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT SUM(Curr) AS curr_sum, AVG(Volt) AS volt_avg, AVG(Coulomb) AS soc
+                FROM pv_ebox2
+                WHERE ts >= NOW() - INTERVAL 2 MINUTE
+            """)
+            row = cur.fetchone()
+        conn.close()
+        if row and row[0] is not None:
+            curr_sum, volt_avg, soc = row
+            power_w = abs(curr_sum * volt_avg / 1_000_000)
+            return curr_sum / 1000.0, float(soc), power_w
     except Exception as e:
-        _log(f"EBox update error: {e}")
-    try:
-        lines   = Path(PATHS['ebox_data']).read_text().splitlines()
-        socs, current, power = [], 0.0, 0.0
-        for line in lines:
-            line = line.strip()
-            if line.startswith("b'") and line.endswith("'"):
-                line = line[2:-1]
-            if not line or line.startswith("Power") or line[0] not in "123":
-                continue
-            parts = line.split()
-            if len(parts) > 2:
-                try:
-                    curr_ma = float(parts[2])
-                    current += curr_ma
-                    volt_mv = float(parts[1])
-                    power += volt_mv * curr_ma / 1_000_000
-                except ValueError:
-                    pass
-            for p in parts:
-                if "%" in p:
-                    try:
-                        socs.append(float(p.replace("%", "")))
-                    except ValueError:
-                        pass
-        valid_socs = [s for s in socs if s > 0]
-        if not valid_socs:
-            return current / 1000.0, -1.0, power
-        return current / 1000.0, sum(valid_socs) / len(valid_socs), power
-    except Exception as e:
-        _log(f"EBox read error: {e}")
-        return 0.0, -1.0, 0.0
+        _log(f"EBox read error (pv_ebox2): {e}")
+    return 0.0, -1.0, 0.0
 
 
 def set_relay(state: int, reason: str = "") -> bool:
