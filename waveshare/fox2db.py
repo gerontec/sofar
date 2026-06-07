@@ -174,7 +174,8 @@ def _blocking_rules(pcc, bat1, stable, drop_rate, pwr_diff):
          lambda: abs(pcc) < CONFIG['sweet_spot_pcc'] and bat1 > CONFIG['sweet_spot_bat'],
          'up'),
         ('TREND_BLOCK',
-         lambda: drop_rate < CONFIG['max_drop_rate'] and drop_rate != 0,
+         lambda: drop_rate < CONFIG['max_drop_rate'] and drop_rate != 0
+                 and pcc < CONFIG['pcc_peak_threshold'] * 1.15,
          'up'),
         ('BAT_GUARD_BLOCK',
          lambda: bat1 < CONFIG['bat_discharge_threshold'],
@@ -640,9 +641,7 @@ def main():
 
     if changed:
         _db_relay_event("state_change", "ebox", final, trace)
-        set_relay(final, trace)
-    else:
-        _write(PATHS['relay_state'], final)
+    set_relay(final, trace)   # immer senden — stellt Relais nach ESP32-Reboot wieder her
 
     need_downward_regulation = pcc > CONFIG['pcc_peak_threshold'] and (
         not trace.startswith("PCC_OVER_20KW") or ladesperre
