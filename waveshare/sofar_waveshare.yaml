@@ -207,7 +207,7 @@ script:
           snprintf(json, sizeof(json),
             "{\"ip\":\"%s\",\"ip6\":\"%s\",\"state\":%d,\"auto\":%d,\"ladesperre_en\":%d,"
             "\"soyo_w\":%d,\"uptime\":%lu,\"mem_free\":%lu,\"fw\":\"%s\",\"fw_date\":\"%s\"}",
-            ip4, ip6, fox::g_state.relay_st, id(auto_enable) ? 1 : 0,
+            ip4, ip6, id(fox_relay_state), id(auto_enable) ? 1 : 0,
             id(ladesperre_enable) ? 1 : 0, id(soyo_w),
             (unsigned long)(millis() / 1000), (unsigned long)ESP.getFreeHeap(),
             "${fw_version}", "${fw_date}");
