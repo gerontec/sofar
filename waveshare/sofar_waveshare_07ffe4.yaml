@@ -96,6 +96,8 @@ globals:
   - { id: in_soc2,  type: float, restore_value: false, initial_value: '-1' }   # -1 = unbekannt -> HOLD
   - { id: in_ebox,  type: float, restore_value: false, initial_value: '0' }
   - { id: last_inv_ms, type: int, restore_value: false, initial_value: '0' }
+  - { id: in_z2,      type: float, restore_value: false, initial_value: '0' }   # Z2 Zähler wirkleist (W)
+  - { id: in_pcc_null, type: bool, restore_value: false, initial_value: 'false' } # PCC war null (Lesefehler)
   # Schalter (per MQTT)
   - { id: auto_enable,       type: bool, restore_value: false, initial_value: 'true' }
   - { id: ladesperre_enable, type: bool, restore_value: false, initial_value: 'false' }
@@ -264,13 +266,26 @@ mqtt:
               const char* p = strstr(s, k); if (!p) return d;
               p = strchr(p, ':'); if (!p) return d; return atof(p + 1);
             };
-            id(in_pcc)  = num(x.c_str(), "ActivePower_PCC_Total", 0) * 1000.0f;
-            id(in_bat1) = num(x.c_str(), "Power_Bat1", 0) * 1000.0f;
-            id(in_soc1) = num(x.c_str(), "SOC_Bat1", 0);
+            const char* raw = x.c_str();
+            id(in_pcc_null) = strstr(raw, "\"ActivePower_PCC_Total\":null") != nullptr
+                           || strstr(raw, "\"ActivePower_PCC_Total\": null") != nullptr;
+            id(in_pcc)  = num(raw, "ActivePower_PCC_Total", 0) * 1000.0f;
+            id(in_bat1) = num(raw, "Power_Bat1", 0) * 1000.0f;
+            id(in_soc1) = num(raw, "SOC_Bat1", 0);
             id(last_inv_ms) = (int) millis();
 
-    # ── EBox: SOC2 + Leistung (vom Pi publiziert) ──────────────────────────
-    - topic: ebox/status
+    # ── Z2-Zähler: Wirkleistung als PCC-Fallback bei NaN ─────────────────
+    - topic: pv_zaehl2
+      then:
+        - lambda: |-
+            auto num = [](const char* s, const char* k, float d) -> float {
+              const char* p = strstr(s, k); if (!p) return d;
+              p = strchr(p, ':'); if (!p) return d; return atof(p + 1);
+            };
+            id(in_z2) = num(x.c_str(), "wirkleist", 0);
+
+    # ── EBox: SOC2 + Leistung (ebox_mqtt.py → ebox/pwr retained) ─────────
+    - topic: ebox/pwr
       then:
         - lambda: |-
             auto num = [](const char* s, const char* k, float d) -> float {
@@ -278,7 +293,7 @@ mqtt:
               p = strchr(p, ':'); if (!p) return d; return atof(p + 1);
             };
             id(in_soc2) = num(x.c_str(), "soc", -1);
-            id(in_ebox) = num(x.c_str(), "power", 0);
+            id(in_ebox) = num(x.c_str(), "power_w", 0);
 
     # ── fox2db/state: relay state + soc_bat2 für soyo-Kalkulation ────────
     - topic: fox2db/state
@@ -368,8 +383,16 @@ interval:
           if (!id(auto_enable)) return;   // Hand-Modus
 
           fox::Inputs in;
-          in.pcc = id(in_pcc); in.bat1 = id(in_bat1); in.soc1 = id(in_soc1);
-          in.soc2 = id(in_soc2); in.ebox_w = id(in_ebox);
+          // Z2-Fallback: nur bei PCC=null (Lesefehler), nicht bei echtem 0W
+          float pcc_raw = id(in_pcc);
+          if (id(in_pcc_null) && id(in_z2) != 0.0f)
+            pcc_raw = id(in_z2) < 0.0f ? -id(in_z2) : 0.0f;
+          // EBox-Leistung theoretisch aus aktuellem Relay-State (wie fox2dbEasy.py)
+          static const int SPOWER[] = {0, 3000, 3650, 6650, 3900, 7100, 7800, 11400};
+          int est_st = fox::g_state.relay_st;
+          float ebox_est = (est_st >= 0 && est_st < 8) ? (float)SPOWER[est_st] : 0.0f;
+          in.pcc = pcc_raw; in.bat1 = id(in_bat1); in.soc1 = id(in_soc1);
+          in.soc2 = id(in_soc2); in.ebox_w = ebox_est;
 
           int local_sec = t.hour * 3600 + t.minute * 60 + t.second;
           fox::Result r = fox::step(in, fox::g_state, (time_t) t.timestamp, local_sec,
@@ -403,11 +426,11 @@ interval:
       - lambda: |-
           int w = 0;
           auto t = id(sntp_time).now();
-          // Stale: fox2db/state älter als 90s → 0W
-          bool stale = (uint32_t)millis() - (uint32_t)id(fox_state_ms) > 90000UL
-                       || id(fox_state_ms) == 0;
+          // Stale: Inverter-Daten älter als 3min → 0W
+          bool stale = (uint32_t)millis() - (uint32_t)id(last_inv_ms) > 180000UL
+                       || id(last_inv_ms) == 0;
           if (!stale) {
-            int   st   = id(fox_relay_state);
+            int   st   = fox::g_state.relay_st;   // lokal, kein Pi nötig
             float soc2 = id(in_soc2);
             float pcc  = id(in_pcc);
             if (st != 0) {
@@ -429,8 +452,9 @@ interval:
           }
           id(soyo_w)  = w;
           id(soyo_ms) = (int) millis();
-          char js[48];
-          snprintf(js, sizeof(js), "{\"W\":%d,\"stale\":%d}", w, stale ? 1 : 0);
+          char js[80];
+          snprintf(js, sizeof(js), "{\"W\":%d,\"soc2\":%.1f,\"stale\":%d}",
+                   w, id(in_soc2), stale ? 1 : 0);
           id(mqtt_client).publish("soyo-${mac_suffix}/calc", js);
 
   # ── Soyo-RS485: Frame dauernd resenden (Watchdog) ────────────────────────

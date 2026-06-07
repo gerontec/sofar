@@ -107,6 +107,10 @@ def publish_to_mqtt(data_row):
         if power_pv2 is not None:
             power_pv2 = round(float(power_pv2), 2)
 
+        load_sys = sanitize_value(data_row.get('ActivePower_Load_Sys'))
+        if load_sys is not None:
+            load_sys = round(float(load_sys), 2)
+
         # MQTT Payload erstellen - FLOAT WERTE (2 NKST)
         payload = {
             'ActivePower_PCC_Total': active_power_pcc,
@@ -114,6 +118,7 @@ def publish_to_mqtt(data_row):
             'SOC_Bat1': soc_bat1,
             'Power_PV1': power_pv1,
             'Power_PV2': power_pv2,
+            'ActivePower_Load_Sys': load_sys,
             'timestamp': datetime.now().isoformat()
         }
         
@@ -131,11 +136,12 @@ def publish_to_mqtt(data_row):
         json_payload = json.dumps(payload, ensure_ascii=False)
         
         # Publish
-        result = client.publish(MQTT_CONFIG['topic'], json_payload, qos=1)
+        result = client.publish(MQTT_CONFIG['topic'], json_payload, qos=1, retain=True)
         
         if result.rc == mqtt.MQTT_ERR_SUCCESS:
             logger.info(f"MQTT Published: PCC={payload['ActivePower_PCC_Total']}W, "
-                       f"Bat1={payload['Power_Bat1']}W, SOC={payload['SOC_Bat1']}%")
+                       f"Bat1={payload['Power_Bat1']}W, SOC={payload['SOC_Bat1']}%, "
+                       f"Load={payload['ActivePower_Load_Sys']}kW")
         else:
             logger.error(f"MQTT Publish failed: {result.rc}")
         

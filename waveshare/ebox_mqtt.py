@@ -3,7 +3,7 @@
 ebox_mqtt.py — liest alle 3 EBox-Packs via C-Binary, publiziert JSON an MQTT,
 schreibt weiterhin in pv_ebox2 DB.
 
-Cron: alle 30s
+Cron: alle 30s (MQTT), DB-Write intern auf 1×/min gedrosselt
   * * * * * /usr/bin/python3 /home/pi/python/ebox_mqtt.py >/tmp/ebox_mqtt.log 2>&1
   * * * * * sleep 30 && /usr/bin/python3 /home/pi/python/ebox_mqtt.py >>/tmp/ebox_mqtt.log 2>&1
 
@@ -17,11 +17,11 @@ import sys
 import time
 from datetime import datetime
 
-EBOX_BIN   = "/home/pi/sofar/ebox"
-DB_SCRIPT  = "/home/pi/python/pv_ebox2.py"
-MQTT_HOST  = "192.168.178.218"
-MQTT_TOPIC = "ebox/pwr"
-EBOX_MULT  = 2.0   # zweite unsichtbare 15kWh EBox
+EBOX_BIN        = "/home/pi/sofar/ebox"
+DB_SCRIPT       = "/home/pi/python/pv_ebox2.py"
+MQTT_HOST       = "192.168.178.218"
+MQTT_TOPIC      = "ebox/pwr"
+EBOX_MULT = 2.0   # zweite unsichtbare 15kWh EBox (parallel, kein Datenausgang)
 
 def run_ebox() -> list[str]:
     """Ruft C-Binary auf, gibt alle Ausgabezeilen zurück."""
@@ -96,9 +96,13 @@ def main():
         print("Keine Pack-Daten parsebar")
         sys.exit(1)
 
-    # DB schreiben (alle Packs wie bisher)
-    for pack in packs:
-        write_db(pack['fields'])
+    # DB-Write nur beim ersten Halbminuten-Lauf (:00s)
+    if datetime.now().second < 30:
+        for pack in packs:
+            write_db(pack['fields'])
+        print("DB: geschrieben")
+    else:
+        print("DB: übersprungen (30s-Lauf)")
 
     # Aggregieren: Summe Leistung + Strom, Durchschnitt SOC
     total_w  = sum(p['volt_mv'] * p['curr_ma'] / 1_000_000.0 for p in packs) * EBOX_MULT
