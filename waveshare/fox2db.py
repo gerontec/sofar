@@ -330,12 +330,53 @@ def fetch_z2() -> float:
 
 
 def read_ebox() -> Tuple[float, float, float]:
-    """Liest Bat2 (EBox) direkt aus MariaDB pv_ebox2.
-    Gibt (current_a, soc_pct, power_w) zurück; soc=-1.0 bei DB-Fehler."""
+    """Liest Bat2 (EBox) primär aus MQTT ebox/pwr (retained, alle 30s frisch).
+    Fallback: MariaDB pv_ebox2 (alle 60s, max 89s Lag).
+    Gibt (current_a, soc_pct, power_w) zurück; soc=-1.0 bei Fehler."""
+    # — MQTT-Pfad (retained → sofort verfügbar) —
+    received = {}
+
+    def _on_msg(_c, _u, msg):
+        try:
+            received.update(json.loads(msg.payload.decode()))
+        except Exception:
+            pass
+
+    client = mqtt.Client(client_id="fox2db_ebox_r", clean_session=True)
+    client.on_message = _on_msg
+    try:
+        client.connect(MQTT_CFG['broker'], MQTT_CFG['port'], keepalive=10)
+        client.subscribe('ebox/pwr', qos=0)
+        client.loop_start()
+        deadline = time.monotonic() + 3.0
+        while not received and time.monotonic() < deadline:
+            time.sleep(0.05)
+        client.loop_stop()
+        client.disconnect()
+    except Exception as e:
+        _log(f"EBox MQTT error: {e}")
+
+    if received and 'soc' in received and 'power_w' in received:
+        # Frischheitsprüfung: ts darf nicht älter als 3 Minuten sein
+        try:
+            ts_str = received.get('ts', '')
+            ts = dt.datetime.fromisoformat(ts_str)
+            age_s = (dt.datetime.now() - ts).total_seconds()
+        except Exception:
+            age_s = 0
+        if age_s < 180:
+            soc_pct   = float(received['soc'])
+            power_w   = float(received['power_w'])
+            current_a = float(received.get('current_a', 0))
+            _log(f"EBox MQTT: SOC2={soc_pct:.1f}%  P={power_w:.0f}W  I={current_a:.2f}A  age={age_s:.0f}s")
+            return current_a, soc_pct, power_w
+        else:
+            _log(f"EBox MQTT: Wert zu alt ({age_s:.0f}s) → DB-Fallback")
+
+    # — DB-Fallback —
     try:
         conn = _db_connect()
         cur  = conn.cursor()
-        # Letzten Messzyklus: alle Packs innerhalb ±2s des neuesten Timestamps
         cur.execute("""
             SELECT AVG(Coulomb),
                    SUM(Volt * Curr / 1000000.0),
@@ -351,10 +392,10 @@ def read_ebox() -> Tuple[float, float, float]:
         if row is None or row[0] is None:
             _log("EBox DB: kein aktueller Datensatz (<3min)")
             return 0.0, -1.0, 0.0
-        soc_pct   = float(row[0])        # AVG Coulomb = SOC %
-        power_w   = float(row[1]) * 2.0  # ×2: zweite identische EBox unsichtbar
+        soc_pct   = float(row[0])
+        power_w   = float(row[1]) * 2.0
         current_a = float(row[2]) * 2.0
-        _log(f"EBox DB: SOC2={soc_pct:.1f}%  P={power_w:.0f}W  I={current_a:.2f}A (×2)")
+        _log(f"EBox DB-Fallback: SOC2={soc_pct:.1f}%  P={power_w:.0f}W  I={current_a:.2f}A (×2)")
         return current_a, soc_pct, power_w
     except Exception as e:
         _log(f"EBox DB error: {e}")
