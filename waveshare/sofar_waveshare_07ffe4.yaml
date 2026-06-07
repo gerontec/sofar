@@ -25,7 +25,8 @@
 # ════════════════════════════════════════════════════════════════════════════
 
 substitutions:
-  device_name: sofar-waveshare
+  device_name: sofar-waveshare-07ffe4
+  mac_suffix: "07ffe4"
   mqtt_broker: 192.168.178.218
   wifi_ssid: f24
   wifi_password: "9876543210"
@@ -36,7 +37,7 @@ substitutions:
 
 esphome:
   name: ${device_name}
-  friendly_name: Sofar fox2db Relay
+  friendly_name: Sofar fox2db Relay 07ffe4
   includes:
     - fox2db_logic.h
     - open_wifi_scan.h
@@ -166,7 +167,7 @@ script:
           int v0 = gpio_get_level(GPIO_NUM_18);
           char msg[128];
           snprintf(msg, sizeof(msg), "GPIO18 freed: level=%d (expect 1=idle)", v0);
-          id(mqtt_client).publish("rs485/relay_test_result", msg);
+          id(mqtt_client).publish("rs485-${mac_suffix}/relay_test_result", msg);
       - delay: 300ms
       - switch.turn_on: relay_ch1
       - delay: 300ms
@@ -178,7 +179,7 @@ script:
           snprintf(msg, sizeof(msg),
             "{\"ch1\":1,\"gpio18_level\":%d,\"gpio18_reg\":%lu,\"verdict\":\"%s\"}",
             v1, reg, v1 == 0 ? "PATH OK: RO->GPIO18 works!" : "PATH BROKEN: GPIO18 stuck HIGH");
-          id(mqtt_client).publish("rs485/relay_test_result", msg);
+          id(mqtt_client).publish("rs485-${mac_suffix}/relay_test_result", msg);
       - delay: 300ms
       - switch.turn_off: relay_ch1
       - delay: 200ms
@@ -186,7 +187,7 @@ script:
           int v2 = gpio_get_level(GPIO_NUM_18);
           char msg[64];
           snprintf(msg, sizeof(msg), "{\"ch1\":0,\"gpio18_level\":%d}", v2);
-          id(mqtt_client).publish("rs485/relay_test_result", msg);
+          id(mqtt_client).publish("rs485-${mac_suffix}/relay_test_result", msg);
 
   # Schlanke Board-Telemetrie
   - id: pub_status
@@ -214,13 +215,13 @@ script:
             id(ladesperre_enable) ? 1 : 0, id(soyo_w),
             (unsigned long)(millis() / 1000), (unsigned long)ESP.getFreeHeap(),
             "${fw_version}", "${fw_date}");
-          id(mqtt_client).publish("sofar/waveshare/status", json);
+          id(mqtt_client).publish("sofar/waveshare-${mac_suffix}/status", json);
 
 mqtt:
   id: mqtt_client
   broker: ${mqtt_broker}
   port: 1883
-  client_id: sofar_waveshare
+  client_id: sofar_waveshare_${mac_suffix}
   keepalive: 60s
   reboot_timeout: 15min
   discovery: false
@@ -229,7 +230,7 @@ mqtt:
       - script.execute: pub_status
   on_message:
     # ── GPIO-Scan: Aktiviert nicht-blockierend, Ergebnis nach 3s ────────────
-    - topic: rs485/scan
+    - topic: rs485-${mac_suffix}/scan
       then:
         - lambda: |-
             #include "soc/gpio_reg.h"
@@ -248,10 +249,10 @@ mqtt:
             snprintf(init, sizeof(init),
               "init: GPIO3=%d GPIO17=%d GPIO18=%d (3=HIGH→ReceiverOFF!)",
               (int)((init_lo >> 3) & 1), (int)((init_lo >> 17) & 1), (int)((init_lo >> 18) & 1));
-            id(mqtt_client).publish("rs485/scan_result", init);
+            id(mqtt_client).publish("rs485-${mac_suffix}/scan_result", init);
 
     # ── Relay-Test: CH1 schaltet A→GND während Scan ──────────────────────
-    - topic: rs485/relay_test
+    - topic: rs485-${mac_suffix}/relay_test
       then:
         - script.execute: relay_test_script
 
@@ -292,14 +293,14 @@ mqtt:
             id(fox_state_ms)    = (int) millis();
 
     # ── Auto-Regelung scharf/aus ───────────────────────────────────────────
-    - topic: sofar/auto
+    - topic: sofar-${mac_suffix}/auto
       then:
         - lambda: |-
             const char* p = strstr(x.c_str(), "ENABLE"); if (!p) p = strchr(x.c_str(), ':');
             if (!p) return; p = strchr(p, ':'); if (!p) return;
             id(auto_enable) = atoi(p + 1) != 0;
 
-    - topic: sofar/ladesperre
+    - topic: sofar-${mac_suffix}/ladesperre
       then:
         - lambda: |-
             const char* p = strstr(x.c_str(), "ENABLE"); if (!p) p = strchr(x.c_str(), ':');
@@ -308,7 +309,7 @@ mqtt:
 
     # ── Soyo-Sollwert (W) ──────────────────────────────────────────────────
     #   akzeptiert {"W":350} oder nackte Zahl "350"
-    - topic: soyo/set
+    - topic: soyo-${mac_suffix}/set
       then:
         - lambda: |-
             const char* s = x.c_str();
@@ -319,19 +320,19 @@ mqtt:
             id(soyo_w) = w; id(soyo_ms) = (int) millis();
 
     # ── Hand-Test Einzelrelais ─────────────────────────────────────────────
-    - topic: waveshare/relay/1
+    - topic: waveshare-${mac_suffix}/relay/1
       then: { lambda: 'const char* p=strchr(x.c_str(),'':''); if(p){ atoi(p+1)?id(relay_ch1).turn_on():id(relay_ch1).turn_off(); }' }
-    - topic: waveshare/relay/2
+    - topic: waveshare-${mac_suffix}/relay/2
       then: { lambda: 'const char* p=strchr(x.c_str(),'':''); if(p){ atoi(p+1)?id(relay_ch2).turn_on():id(relay_ch2).turn_off(); }' }
-    - topic: waveshare/relay/3
+    - topic: waveshare-${mac_suffix}/relay/3
       then: { lambda: 'const char* p=strchr(x.c_str(),'':''); if(p){ atoi(p+1)?id(relay_ch3).turn_on():id(relay_ch3).turn_off(); }' }
-    - topic: waveshare/relay/4
+    - topic: waveshare-${mac_suffix}/relay/4
       then: { lambda: 'const char* p=strchr(x.c_str(),'':''); if(p){ atoi(p+1)?id(relay_ch4).turn_on():id(relay_ch4).turn_off(); }' }
-    - topic: waveshare/relay/5
+    - topic: waveshare-${mac_suffix}/relay/5
       then: { lambda: 'const char* p=strchr(x.c_str(),'':''); if(p){ atoi(p+1)?id(relay_ch5).turn_on():id(relay_ch5).turn_off(); }' }
-    - topic: waveshare/relay/6
+    - topic: waveshare-${mac_suffix}/relay/6
       then: { lambda: 'const char* p=strchr(x.c_str(),'':''); if(p){ atoi(p+1)?id(relay_ch6).turn_on():id(relay_ch6).turn_off(); }' }
-    - topic: waveshare/relay/all
+    - topic: waveshare-${mac_suffix}/relay/all
       then:
         - lambda: |-
             const char* p = strchr(x.c_str(), ':'); if (!p) return;
@@ -360,7 +361,7 @@ interval:
             snprintf(sj, sizeof(sj),
               "{\"ip\":\"%s\",\"state\":0,\"trace\":\"MQTT_STALE_SAFE\",\"auto\":0}",
               id(dev_ip).c_str());
-            id(mqtt_client).publish("sofar/state", sj);
+            id(mqtt_client).publish("sofar/state-${mac_suffix}",sj);
             return;
           }
 
@@ -389,7 +390,7 @@ interval:
             id(dev_ip).c_str(), r.final_state, r.changed ? 1 : 0, in.pcc, in.bat1,
             in.soc2, in.soc1, in.ebox_w, r.excess, r.dc_expected, r.dc_delta,
             r.ladesperre ? 1 : 0, r.do4_pulse ? 1 : 0, r.trace);
-          id(mqtt_client).publish("sofar/state", js);
+          id(mqtt_client).publish("sofar/state-${mac_suffix}",js);
       - if:
           condition:
             lambda: 'return id(do4_req);'
@@ -430,7 +431,7 @@ interval:
           id(soyo_ms) = (int) millis();
           char js[48];
           snprintf(js, sizeof(js), "{\"W\":%d,\"stale\":%d}", w, stale ? 1 : 0);
-          id(mqtt_client).publish("soyo/calc", js);
+          id(mqtt_client).publish("soyo-${mac_suffix}/calc", js);
 
   # ── Soyo-RS485: Frame dauernd resenden (Watchdog) ────────────────────────
   - interval: ${soyo_resend}
@@ -452,7 +453,7 @@ interval:
                    f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
           char js[120];
           snprintf(js, sizeof(js), "{\"w\":%d,\"hex\":\"%s\",\"rx_avail\":%d}", w, hex, avail);
-          id(mqtt_client).publish("soyo/sent", js);
+          id(mqtt_client).publish("soyo-${mac_suffix}/sent", js);
 
   # ── GPIO-Scan Sampler (1ms, nicht-blockierend) ───────────────────────────
   - interval: 1ms
@@ -477,7 +478,7 @@ interval:
             snprintf(out, sizeof(out),
               "{\"GPIO17\":%d,\"GPIO18\":%d,\"GPIO3\":%d,\"all_lo\":%d,\"all_hi\":%d}",
               id(scan_e17), id(scan_e18), id(scan_e3), id(scan_eall_lo), id(scan_eall_hi));
-            id(mqtt_client).publish("rs485/scan_result", out);
+            id(mqtt_client).publish("rs485-${mac_suffix}/scan_result", out);
           }
 
   # ── RS485 RX: Frame-Empfang (50ms Polling, 25ms Gap) ────────────────────
@@ -502,7 +503,7 @@ interval:
             hex[buf_len * 2] = 0;
             char js[160];
             snprintf(js, sizeof(js), "{\"len\":%d,\"hex\":\"%s\"}", buf_len, hex);
-            id(mqtt_client).publish("rs485/rx", js);
+            id(mqtt_client).publish("rs485-${mac_suffix}/rx", js);
             buf_len = 0;
           }
 
