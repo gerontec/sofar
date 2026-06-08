@@ -30,9 +30,8 @@ substitutions:
   wifi_ssid: f24
   wifi_password: "9876543210"
   ota_password: waveshare2026
-  soyo_resend: 2s          # Soyo-Watchdog: dauernd resenden (2s erprobt, 3s ok)
-  fw_version: "3.3.2"      # soyo intern berechnet (kein externer soyo1min)
-  fw_date: "2026-06-07T21:00"
+  fw_version: "3.3.11"     # LADESPERRE: Initial-Release erst ab pcc_n>=5 + dc>10kW (kein Frühstart nach Reboot)
+  fw_date: "2026-06-08T11:00"
 
 esphome:
   name: ${device_name}
@@ -102,7 +101,7 @@ globals:
   - { id: ladesperre_enable, type: bool, restore_value: false, initial_value: 'false' }
   - { id: do4_req,           type: bool, restore_value: false, initial_value: 'false' }
   # Soyo-Sollwert (W) intern berechnet, wird alle ${soyo_resend} per RS485 gesendet
-  - { id: soyo_w,  type: int, restore_value: false, initial_value: '0' }
+  - { id: soyo_w,  type: int, restore_value: false, initial_value: '468' }
   - { id: soyo_ms, type: int, restore_value: false, initial_value: '0' }
   # fox2db/state (relay state + soc_bat2 für soyo-Kalkulation)
   - { id: fox_relay_state, type: int,  restore_value: false, initial_value: '0' }
@@ -382,10 +381,10 @@ interval:
           if (!id(auto_enable)) return;   // Hand-Modus
 
           fox::Inputs in;
-          // Z2-Fallback: nur bei PCC=null (Lesefehler), nicht bei echtem 0W
+          // PCC: Inverter-Wert, Z2 nur als Fallback bei null-Lesefehler
           float pcc_raw = id(in_pcc);
           if (id(in_pcc_null) && id(in_z2) != 0.0f)
-            pcc_raw = id(in_z2) < 0.0f ? -id(in_z2) : 0.0f;
+            pcc_raw = -id(in_z2);
           // EBox-Leistung theoretisch aus aktuellem Relay-State (wie fox2dbEasy.py)
           static const int SPOWER[] = {0, 3000, 3650, 6650, 3900, 7100, 7800, 11400};
           int est_st = fox::g_state.relay_st;
@@ -419,8 +418,8 @@ interval:
           then:
             - script.execute: do4_script
 
-  # ── Soyo-Kalkulation (25s, ersetzt soyo1min.c) ───────────────────────────
-  - interval: 25s
+  # ── Soyo-Kalkulation (60s = Daten-Update-Zyklus pivot2db.py) ────────────
+  - interval: 60s
     then:
       - lambda: |-
           int w = 0;
@@ -441,12 +440,14 @@ interval:
             } else if (pcc > 200.0f) {
               w = 0;  // PV-Überschuss → bat2 schonen
             } else if (pcc < -100.0f) {
-              w = (int)(-pcc * 1.01f);  // Netzbezug → bat2 deckt Bedarf
-              if (w > 600) w = 600;
+              int h = t.is_valid() ? t.hour : 12;
+              bool is_night = (h < 6 || h >= 20);
+              w = (int)(-pcc * 1.01f) + (is_night ? 468 : 0);  // wie soyo1min.c: error*kp + night_standard
+              if (w > 900) w = 900;
             } else {
               // Ausgeglichen / Nacht
               int h = t.is_valid() ? t.hour : 12;
-              w = (h < 6 || h >= 20) ? 390 : 10;
+              w = (h < 6 || h >= 20) ? 468 : 10;
             }
           }
           id(soyo_w)  = w;
@@ -455,28 +456,6 @@ interval:
           snprintf(js, sizeof(js), "{\"W\":%d,\"soc2\":%.1f,\"stale\":%d}",
                    w, id(in_soc2), stale ? 1 : 0);
           id(mqtt_client).publish("soyo/calc", js);
-
-  # ── Soyo-RS485: Frame dauernd resenden (Watchdog) ────────────────────────
-  - interval: ${soyo_resend}
-    then:
-      - lambda: |-
-          int w = id(soyo_w);
-          // Stale-Safety: kein frischer Sollwert > 30s -> 0 senden (kein Blind-Einspeisen)
-          if ((uint32_t) millis() - (uint32_t) id(soyo_ms) > 30000UL) w = 0;
-          uint8_t ph = (w >> 8) & 0xFF, pl = w & 0xFF;
-          uint8_t crc = (264 - ph - pl) & 0xFF;
-          uint8_t f[8] = {0x24, 0x56, 0x00, 0x21, ph, pl, 0x80, crc};
-          id(rs485).write_array(f, 8);
-          id(rs485).flush();
-          // Diagnose: wie viele Bytes liegen nach TX im RX-Puffer?
-          int avail = id(rs485).available();
-          // Beobachtbarkeit: gesendeten Frame publizieren
-          char hex[20];
-          snprintf(hex, sizeof(hex), "%02X%02X%02X%02X%02X%02X%02X%02X",
-                   f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
-          char js[120];
-          snprintf(js, sizeof(js), "{\"w\":%d,\"hex\":\"%s\",\"rx_avail\":%d}", w, hex, avail);
-          id(mqtt_client).publish("soyo/sent", js);
 
   # ── GPIO-Scan Sampler (1ms, nicht-blockierend) ───────────────────────────
   - interval: 1ms
@@ -504,22 +483,51 @@ interval:
             id(mqtt_client).publish("rs485/scan_result", out);
           }
 
-  # ── RS485 RX: Frame-Empfang (50ms Polling, 25ms Gap) ────────────────────
+  # ── RS485 TX+RX: Soyo-Send alle 3s (safe: geprüft alle 50ms) + Frame-Empfang
   - interval: 50ms
     then:
       - lambda: |-
+          static uint32_t send_count = 0;
+          static uint32_t change_count = 0;
+          static char prev_hex[20] = "";
+          static uint32_t last_soyo_tx = 0;
           static uint8_t buf[64];
           static int buf_len = 0;
-          static uint32_t last_ms = 0;
+          static uint32_t last_rx_ms = 0;
           uint32_t now = millis();
+
+          // Soyo TX: alle 3s — geprüft alle 50ms → max. 50ms Verzögerung (Soyo-Timeout=4s)
+          if (now - last_soyo_tx >= 3000UL) {
+            last_soyo_tx = now;
+            int w = id(soyo_w);
+            if (now - (uint32_t)id(soyo_ms) > 90000UL) w = 0;
+            uint8_t ph = (w >> 8) & 0xFF, pl = w & 0xFF;
+            uint8_t crc = (264 - ph - pl) & 0xFF;
+            uint8_t f[8] = {0x24, 0x56, 0x00, 0x21, ph, pl, 0x80, crc};
+            id(rs485).write_array(f, 8);
+            id(rs485).flush();
+            char hex[20];
+            snprintf(hex, sizeof(hex), "%02X%02X%02X%02X%02X%02X%02X%02X",
+                     f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
+            send_count++;
+            bool changed = (strcmp(hex, prev_hex) != 0);
+            if (changed) { change_count++; strncpy(prev_hex, hex, sizeof(prev_hex)); }
+            char js[160];
+            snprintf(js, sizeof(js),
+              "{\"w\":%d,\"hex\":\"%s\",\"sends\":%lu,\"changes\":%lu,\"changed\":%d}",
+              w, hex, send_count, change_count, changed ? 1 : 0);
+            id(mqtt_client).publish("soyo/sent", js);
+          }
+
+          // RX: Frame-Empfang (25ms Gap-Erkennung)
 
           while (id(rs485).available() && buf_len < (int)sizeof(buf)) {
             uint8_t b;
             id(rs485).read_byte(&b);
             buf[buf_len++] = b;
-            last_ms = now;
+            last_rx_ms = now;
           }
-          if (buf_len > 0 && (now - last_ms) >= 25) {
+          if (buf_len > 0 && (now - last_rx_ms) >= 25) {
             char hex[buf_len * 2 + 1];
             for (int i = 0; i < buf_len; i++)
               sprintf(hex + i * 2, "%02X", buf[i]);
