@@ -30,8 +30,8 @@ substitutions:
   wifi_ssid: f24
   wifi_password: "9876543210"
   ota_password: waveshare2026
-  fw_version: "3.3.14"     # Shadow-Modus: step() läuft immer, conflict-Flag bei Abweichung ext_st
-  fw_date: "2026-06-08T12:30"
+  fw_version: "3.3.15"     # ebox_w: echte Leistung aus ebox/pwr (in_ebox) statt theoretisch
+  fw_date: "2026-06-08T13:00"
 
 esphome:
   name: ${device_name}
@@ -383,12 +383,8 @@ interval:
           float pcc_raw = id(in_pcc);
           if (id(in_pcc_null) && id(in_z2) != 0.0f)
             pcc_raw = -id(in_z2);
-          // EBox-Leistung theoretisch aus aktuellem Relay-State (wie fox2dbEasy.py)
-          static const int SPOWER[] = {0, 3000, 3650, 6650, 3900, 7100, 7800, 11400};
-          int est_st = fox::g_state.relay_st;
-          float ebox_est = (est_st >= 0 && est_st < 8) ? (float)SPOWER[est_st] : 0.0f;
           in.pcc = pcc_raw; in.bat1 = id(in_bat1); in.soc1 = id(in_soc1);
-          in.soc2 = id(in_soc2); in.ebox_w = ebox_est;
+          in.soc2 = id(in_soc2); in.ebox_w = id(in_ebox);
 
           int local_sec = t.hour * 3600 + t.minute * 60 + t.second;
           fox::Result r = fox::step(in, fox::g_state, (time_t) t.timestamp, local_sec,
