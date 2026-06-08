@@ -30,8 +30,8 @@ substitutions:
   wifi_ssid: f24
   wifi_password: "9876543210"
   ota_password: waveshare2026
-  fw_version: "3.3.13"     # sofar/state: peak_h + win_end_h im JSON; Peak-Berechnung immer aktiv
-  fw_date: "2026-06-08T12:00"
+  fw_version: "3.3.14"     # Shadow-Modus: step() läuft immer, conflict-Flag bei Abweichung ext_st
+  fw_date: "2026-06-08T12:30"
 
 esphome:
   name: ${device_name}
@@ -378,8 +378,6 @@ interval:
             return;
           }
 
-          if (!id(auto_enable)) return;   // Hand-Modus
-
           fox::Inputs in;
           // PCC: Inverter-Wert, Z2 nur als Fallback bei null-Lesefehler
           float pcc_raw = id(in_pcc);
@@ -396,23 +394,32 @@ interval:
           fox::Result r = fox::step(in, fox::g_state, (time_t) t.timestamp, local_sec,
                                     t.month, t.hour, t.day_of_year, id(ladesperre_enable));
 
-          int s = fox::g_state.relay_st;
-          (s & 1)      ? id(relay_ch1).turn_on() : id(relay_ch1).turn_off();
-          ((s >> 1) & 1) ? id(relay_ch2).turn_on() : id(relay_ch2).turn_off();
-          ((s >> 2) & 1) ? id(relay_ch3).turn_on() : id(relay_ch3).turn_off();
+          bool auto_on = id(auto_enable);
+          if (auto_on) {
+            int s = fox::g_state.relay_st;
+            (s & 1)        ? id(relay_ch1).turn_on() : id(relay_ch1).turn_off();
+            ((s >> 1) & 1) ? id(relay_ch2).turn_on() : id(relay_ch2).turn_off();
+            ((s >> 2) & 1) ? id(relay_ch3).turn_on() : id(relay_ch3).turn_off();
+            id(do4_req) = r.do4_pulse;
+          }
 
-          id(do4_req) = r.do4_pulse;
+          // Aktueller externer Relay-State (aus letztem MQTT-Befehl)
+          int ext_st = (id(relay_ch1).state ? 1 : 0)
+                     | (id(relay_ch2).state ? 2 : 0)
+                     | (id(relay_ch3).state ? 4 : 0);
+          int conflict = (!auto_on && r.final_state != ext_st) ? 1 : 0;
 
-          char js[420];
+          char js[460];
           snprintf(js, sizeof(js),
             "{\"ip\":\"%s\",\"state\":%d,\"changed\":%d,\"pcc\":%.0f,\"bat1\":%.0f,"
             "\"soc2\":%.1f,\"soc1\":%.1f,\"ebox\":%.0f,\"excess\":%.0f,"
             "\"dc_expected\":%.0f,\"dc_delta\":%.0f,\"ladesperre\":%d,\"do4\":%d,"
-            "\"peak_h\":%d,\"win_end_h\":%d,\"trace\":\"%s\"}",
+            "\"peak_h\":%d,\"win_end_h\":%d,\"auto\":%d,\"ext_st\":%d,\"conflict\":%d,"
+            "\"trace\":\"%s\"}",
             id(dev_ip).c_str(), r.final_state, r.changed ? 1 : 0, in.pcc, in.bat1,
             in.soc2, in.soc1, in.ebox_w, r.excess, r.dc_expected, r.dc_delta,
             r.ladesperre ? 1 : 0, r.do4_pulse ? 1 : 0,
-            r.peak_h, r.win_end_h, r.trace);
+            r.peak_h, r.win_end_h, auto_on ? 1 : 0, ext_st, conflict, r.trace);
           id(mqtt_client).publish("sofar/state", js);
       - if:
           condition:
