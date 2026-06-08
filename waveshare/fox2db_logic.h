@@ -211,10 +211,8 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
   float pcc_avg = 0;
   if (pcc_avg_valid) { for (int i = 0; i < st.pcc_n; i++) pcc_avg += st.pcc_buf[i]; pcc_avg /= st.pcc_n; }
 
-  // Geglätteter PCC: Durchschnitt der letzten 3-10 Werte schützt vor Einzelspikes.
-  // Roher PCC nur bei Start (n<3) oder wenn kein Avg verfügbar.
-  Inputs smooth_in = in;
-  if (pcc_avg_valid) smooth_in.pcc = pcc_avg;
+  // pcc_avg nur für LADESPERRE-Ratio (historischer Hausverbrauch).
+  // decide() und apply_blocking() nutzen rohen in.pcc (gleiche Quelle, gleicher Zeitpunkt).
 
   // Peak-Fenster immer berechnen (auch ohne ladesperre_enable) → für JSON-Reporting
   time_t midnight = now_utc - local_sec_day;
@@ -255,7 +253,7 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
   r.ladesperre = ladesperre;
 
   char trace[160]; float excess;
-  int best = decide(smooth_in, st.relay_st, st.prot, trace, &excess);
+  int best = decide(in, st.relay_st, st.prot, trace, &excess);
   bool guard_fired = false;
   best = apply_guards(best, in.soc2, ladesperre, trace, &guard_fired);
 
@@ -264,7 +262,7 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
 
   int final_state; bool changed;
   if (guard_fired) { final_state = best; changed = (best != st.relay_st); }   // Schutz unbypassbar
-  else final_state = apply_blocking(best, st.relay_st, smooth_in.pcc, in.bat1, st.stable, drop_rate, trace, &changed);
+  else final_state = apply_blocking(best, st.relay_st, in.pcc, in.bat1, st.stable, drop_rate, trace, &changed);
 
   st.stable = changed ? 0 : st.stable + 1;
 

@@ -30,8 +30,8 @@ substitutions:
   wifi_ssid: f24
   wifi_password: "9876543210"
   ota_password: waveshare2026
-  fw_version: "3.3.15"     # ebox_w: echte Leistung aus ebox/pwr (in_ebox) statt theoretisch
-  fw_date: "2026-06-08T13:00"
+  fw_version: "3.3.16"     # decide()+blocking: roher in.pcc; pcc_avg nur für LADESPERRE-Ratio
+  fw_date: "2026-06-08T13:30"
 
 esphome:
   name: ${device_name}
