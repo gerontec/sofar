@@ -30,8 +30,8 @@ substitutions:
   wifi_ssid: f24
   wifi_password: "9876543210"
   ota_password: waveshare2026
-  fw_version: "3.3.17"     # peak_h/win_end_h auch in sofar/waveshare/status; g_peak_h Globals
-  fw_date: "2026-06-08T14:00"
+  fw_version: "3.3.21"     # DO4 bedingungslos ab 22kW; zuerst laden ab 20kW
+  fw_date: "2026-06-08T12:14"
 
 esphome:
   name: ${device_name}
@@ -98,7 +98,7 @@ globals:
   - { id: in_pcc_null, type: bool, restore_value: false, initial_value: 'false' } # PCC war null (Lesefehler)
   # Schalter (per MQTT)
   - { id: auto_enable,       type: bool, restore_value: false, initial_value: 'true' }
-  - { id: ladesperre_enable, type: bool, restore_value: false, initial_value: 'false' }
+  - { id: ladesperre_enable, type: bool, restore_value: false, initial_value: 'true' }
   - { id: do4_req,           type: bool, restore_value: false, initial_value: 'false' }
   - { id: g_peak_h,    type: int, restore_value: false, initial_value: '-1' }
   - { id: g_win_end_h, type: int, restore_value: false, initial_value: '-1' }

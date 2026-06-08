@@ -558,7 +558,12 @@ def main():
                 ladesperre = True
         else:
             ladesperre = True  # morgendlicher Initial-Block
-            if ratio is not None:
+            if pcc > CONFIG['pcc_peak_threshold']:
+                reason = f"Peak>{CONFIG['pcc_peak_threshold']/1000:.0f}kW PCC={pcc:.0f}W — zuerst laden"
+                _ladesperre_release_db(reason)
+                _log(f"LADESPERRE aufgehoben — {reason}")
+                ladesperre = False
+            elif ratio is not None:
                 if ratio > 0.8:
                     reason = f"Schlechtwetter PCC-avg={pcc_avg:.0f}W ratio={ratio:.0%}"
                     _ladesperre_release_db(reason)
@@ -649,9 +654,11 @@ def main():
     else:
         _write(PATHS['relay_state'], final)
 
-    # DO4-Puls: wenn PCC>20kW und kein State-Erhöhung möglich (SOC=100/State=7) ODER Ladesperre aktiv
-    need_downward_regulation = pcc > CONFIG['pcc_peak_threshold'] and (
-        not trace.startswith("PCC_OVER_20KW") or ladesperre
+    # DO4-Puls: >22kW bedingungslos; >20kW wenn Batterie voll/Ladesperre
+    need_downward_regulation = (pcc > 22000) or (
+        pcc > CONFIG['pcc_peak_threshold'] and (
+            not trace.startswith("PCC_OVER_20KW") or ladesperre
+        )
     )
     if need_downward_regulation:
         if ladesperre:

@@ -33,6 +33,7 @@ constexpr int   DD_LOWER         = 6;
 constexpr int   DD_UPPER         = 8;
 constexpr int   DD_CHARGE_TARGET = 7;
 constexpr float PCC_PEAK_TH      = 20000.0f;
+constexpr float PCC_HARD_TH      = 22000.0f;  // bedingungsloser DO4-Trigger
 
 // STATE_TO_POWER {0:0,1:3000,2:3650,3:6650,4:3900,5:7100,6:7800,7:11400}
 inline int state_power(int s) {
@@ -103,11 +104,9 @@ struct State {
   int   stable = 0;
   float last_excess = 0;
   bool  prot = false;               // Tiefentladeschutz (Hysterese)
-  bool  do4_today = false;          // Ladesperre-Tages-Flags
-  bool  weather_rel = false;
-  bool  goodweather_rebl = false;
+  bool  peak_today = false;         // pcc hat heute PCC_PEAK_TH überschritten → Laden vor DO4
   int   last_yday = -1;
-  float pcc_buf[10] = {0};          // 10-Min-Ring für PCC-Avg (60s-Takt)
+  float pcc_buf[10] = {0};
   int   pcc_n = 0, pcc_i = 0;
 };
 
@@ -200,7 +199,8 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
                    int month, int local_hour, int local_yday, bool ladesperre_enable) {
   Result r;
   if (local_yday != st.last_yday) {            // Mitternachts-Reset
-    st.do4_today = st.weather_rel = st.goodweather_rebl = false;
+    st.pcc_n = 0; st.pcc_i = 0;
+    st.peak_today = false;
     st.last_yday = local_yday;
   }
   r.dc_expected = dc_now(now_utc, month);
@@ -225,29 +225,17 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
   r.peak_h    = (best_w > PCC_PEAK_TH) ? peak_h_loc : -1;
   r.win_end_h = win_end_loc;
 
+  // LADESPERRE: zeitbasiert bis win_end_h.
+  // Freigabe: Schlechtwetter (ratio>0.8) ODER pcc>20kW (→ Batterie lädt, DO4 nur wenn nötig).
+  // peak_today verhindert Oszillation nach Freigabe durch pcc-Abfall beim Laden.
+  if (in.pcc > PCC_PEAK_TH) st.peak_today = true;
   bool ladesperre = false;
   if (ladesperre_enable) {
     bool has_peak = best_w > PCC_PEAK_TH;
-    bool peak_ahead = has_peak && win_end_loc >= 0 && local_hour < win_end_loc;
-    bool ratio_valid = false; float ratio = 0;
-    if (pcc_avg_valid && r.dc_expected > 5000) {
-      ratio = (r.dc_expected - (pcc_avg + in.ebox_w + in.bat1)) / r.dc_expected; ratio_valid = true;
-    }
-    if (st.do4_today)            ladesperre = false;                    // Peak schon -> laden
-    else if (st.goodweather_rebl) ladesperre = peak_ahead;              // Reblock hält bis DO4/window_end
-    else if (st.weather_rel) {                                          // freigegeben -> ggf. reblock
-      ladesperre = false;
-      if (peak_ahead && r.dc_expected > 10000 && ratio_valid && ratio < 0.4f) {
-        st.goodweather_rebl = true; ladesperre = true;
-      }
-    } else {                                                           // Initial-Block
-      ladesperre = true;
-      // Sommer (has_peak): Frühfreigabe erst ab pcc_n>=5 + dc>10kW (Reboot-Schutz).
-      // Winter (!has_peak): sofort per ratio>0.8 freigeben (kein Peak erwartet).
-      bool strict = has_peak && (st.pcc_n < 5 || r.dc_expected <= 10000.0f);
-      if (!strict && ratio_valid && ratio > 0.8f) {
-        st.weather_rel = true; ladesperre = false;
-      }
+    ladesperre = has_peak && win_end_loc >= 0 && (local_hour < win_end_loc) && !st.peak_today;
+    if (ladesperre && pcc_avg_valid && r.dc_expected > 5000) {
+      float ratio = (r.dc_expected - (pcc_avg + in.ebox_w + in.bat1)) / r.dc_expected;
+      if (ratio > 0.8f) ladesperre = false;   // Schlechtwetter
     }
   }
   r.ladesperre = ladesperre;
@@ -271,9 +259,9 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
     else if (in.soc2 >= DD_UPPER) st.prot = false;
   }
 
-  bool need_down = (in.pcc > PCC_PEAK_TH) && (strncmp(trace, "PCC_OVER_20KW", 13) != 0 || ladesperre);
+  bool need_down = (in.pcc > PCC_HARD_TH) ||   // >22kW: bedingungslos
+                   ((in.pcc > PCC_PEAK_TH) && (strncmp(trace, "PCC_OVER_20KW", 13) != 0 || ladesperre));
   r.do4_pulse = need_down;
-  if (need_down) st.do4_today = true;
 
   st.relay_st = final_state;
   r.final_state = final_state; r.changed = changed; r.excess = excess;
