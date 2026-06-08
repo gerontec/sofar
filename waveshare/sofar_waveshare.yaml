@@ -30,8 +30,8 @@ substitutions:
   wifi_ssid: f24
   wifi_password: "9876543210"
   ota_password: waveshare2026
-  fw_version: "3.3.11"     # LADESPERRE: Initial-Release erst ab pcc_n>=5 + dc>10kW (kein Frühstart nach Reboot)
-  fw_date: "2026-06-08T11:00"
+  fw_version: "3.3.12"     # LADESPERRE: Sommer-Schutz (pcc_n>=5+dc>10kW) nur bei has_peak, Winter sofort ratio>0.8
+  fw_date: "2026-06-08T11:30"
 
 esphome:
   name: ${device_name}

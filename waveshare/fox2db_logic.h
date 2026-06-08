@@ -238,8 +238,10 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
       }
     } else {                                                           // Initial-Block
       ladesperre = true;
-      // pcc_n>=5 (5min Anlaufzeit) + dc>10kW verhindert Frühfreigabe nach Reboot oder im Morgengrauen.
-      if (ratio_valid && st.pcc_n >= 5 && r.dc_expected > 10000.0f && ratio > 0.8f) {
+      // Sommer (has_peak): Frühfreigabe erst ab pcc_n>=5 + dc>10kW (Reboot-Schutz).
+      // Winter (!has_peak): sofort per ratio>0.8 freigeben (kein Peak erwartet).
+      bool strict = has_peak && (st.pcc_n < 5 || r.dc_expected <= 10000.0f);
+      if (!strict && ratio_valid && ratio > 0.8f) {
         st.weather_rel = true; ladesperre = false;
       }
     }
