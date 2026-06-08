@@ -119,6 +119,8 @@ struct Result {
   bool  do4_pulse = false;
   bool  ladesperre = false;
   float excess = 0, dc_expected = 0, dc_delta = 0;
+  int   peak_h = -1;    // lokale Stunde des DC-Peaks (-1 = kein Peak heute)
+  int   win_end_h = -1; // letzte lokale Stunde mit dc > PCC_PEAK_TH
   char  trace[160] = "";
 };
 
@@ -214,17 +216,21 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
   Inputs smooth_in = in;
   if (pcc_avg_valid) smooth_in.pcc = pcc_avg;
 
+  // Peak-Fenster immer berechnen (auch ohne ladesperre_enable) → für JSON-Reporting
+  time_t midnight = now_utc - local_sec_day;
+  double best_w = 0; int peak_h_loc = -1, win_end_loc = -1;
+  for (int h = 5; h <= 20; h++) {
+    double w = dc_now(midnight + (time_t)h * 3600, month);
+    if (w > best_w) { best_w = w; peak_h_loc = h; }
+    if (w > PCC_PEAK_TH) win_end_loc = h;
+  }
+  r.peak_h    = (best_w > PCC_PEAK_TH) ? peak_h_loc : -1;
+  r.win_end_h = win_end_loc;
+
   bool ladesperre = false;
   if (ladesperre_enable) {
-    time_t midnight = now_utc - local_sec_day;
-    double best_w = 0; int win_end = -1;
-    for (int h = 5; h <= 20; h++) {
-      double w = dc_now(midnight + (time_t)h * 3600, month);
-      if (w > best_w) best_w = w;
-      if (w > PCC_PEAK_TH) win_end = h;
-    }
     bool has_peak = best_w > PCC_PEAK_TH;
-    bool peak_ahead = has_peak && win_end >= 0 && local_hour < win_end;
+    bool peak_ahead = has_peak && win_end_loc >= 0 && local_hour < win_end_loc;
     bool ratio_valid = false; float ratio = 0;
     if (pcc_avg_valid && r.dc_expected > 5000) {
       ratio = (r.dc_expected - (pcc_avg + in.ebox_w + in.bat1)) / r.dc_expected; ratio_valid = true;

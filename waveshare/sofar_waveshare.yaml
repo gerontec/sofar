@@ -30,8 +30,8 @@ substitutions:
   wifi_ssid: f24
   wifi_password: "9876543210"
   ota_password: waveshare2026
-  fw_version: "3.3.12"     # LADESPERRE: Sommer-Schutz (pcc_n>=5+dc>10kW) nur bei has_peak, Winter sofort ratio>0.8
-  fw_date: "2026-06-08T11:30"
+  fw_version: "3.3.13"     # sofar/state: peak_h + win_end_h im JSON; Peak-Berechnung immer aktiv
+  fw_date: "2026-06-08T12:00"
 
 esphome:
   name: ${device_name}
@@ -403,14 +403,16 @@ interval:
 
           id(do4_req) = r.do4_pulse;
 
-          char js[380];
+          char js[420];
           snprintf(js, sizeof(js),
             "{\"ip\":\"%s\",\"state\":%d,\"changed\":%d,\"pcc\":%.0f,\"bat1\":%.0f,"
             "\"soc2\":%.1f,\"soc1\":%.1f,\"ebox\":%.0f,\"excess\":%.0f,"
-            "\"dc_expected\":%.0f,\"dc_delta\":%.0f,\"ladesperre\":%d,\"do4\":%d,\"trace\":\"%s\"}",
+            "\"dc_expected\":%.0f,\"dc_delta\":%.0f,\"ladesperre\":%d,\"do4\":%d,"
+            "\"peak_h\":%d,\"win_end_h\":%d,\"trace\":\"%s\"}",
             id(dev_ip).c_str(), r.final_state, r.changed ? 1 : 0, in.pcc, in.bat1,
             in.soc2, in.soc1, in.ebox_w, r.excess, r.dc_expected, r.dc_delta,
-            r.ladesperre ? 1 : 0, r.do4_pulse ? 1 : 0, r.trace);
+            r.ladesperre ? 1 : 0, r.do4_pulse ? 1 : 0,
+            r.peak_h, r.win_end_h, r.trace);
           id(mqtt_client).publish("sofar/state", js);
       - if:
           condition:
