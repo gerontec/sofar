@@ -574,6 +574,13 @@ def main():
             else:
                 _log("LADESPERRE aktiv — warte auf DO4-Peak (PCC-Avg noch aufbauend)")
 
+        # Nach Peak-Stunde: kein 20kW-Peak mehr möglich → laden freigeben
+        if ladesperre and _has_peak and _peak_t is not None and now_dt.hour > _peak_t.hour:
+            reason = f"Peak-Stunde {_peak_t.hour}:00 überschritten, PCC {pcc:.0f}W < 20kW"
+            _ladesperre_release_db(reason)
+            _log(f"LADESPERRE freigegeben — {reason}")
+            ladesperre = False
+
     # ── DECIDE ─────────────────────────────────────────────────────────────
     best, trace, excess = decide(soc, pcc, ebox_w, bat1, relay_st, prot)
 

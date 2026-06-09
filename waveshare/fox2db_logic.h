@@ -226,13 +226,15 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
   r.win_end_h = win_end_loc;
 
   // LADESPERRE: zeitbasiert bis win_end_h.
-  // Freigabe: Schlechtwetter (ratio>0.8) ODER pcc>20kW (→ Batterie lädt, DO4 nur wenn nötig).
+  // Freigabe: Schlechtwetter (ratio>0.8) ODER pcc>20kW ODER Peak-Stunde überschritten.
   // peak_today verhindert Oszillation nach Freigabe durch pcc-Abfall beim Laden.
   if (in.pcc > PCC_PEAK_TH) st.peak_today = true;
   bool ladesperre = false;
   if (ladesperre_enable) {
     bool has_peak = best_w > PCC_PEAK_TH;
-    ladesperre = has_peak && win_end_loc >= 0 && (local_hour < win_end_loc) && !st.peak_today;
+    // Nach peak_h_loc: Peak-Stunde vorbei, PCC hat 20kW nicht erreicht → laden freigeben
+    ladesperre = has_peak && win_end_loc >= 0 && (local_hour < win_end_loc) && !st.peak_today
+                 && (local_hour <= peak_h_loc);
     if (ladesperre && pcc_avg_valid && r.dc_expected > 5000) {
       float ratio = (r.dc_expected - (pcc_avg + in.ebox_w + in.bat1)) / r.dc_expected;
       if (ratio > 0.8f) ladesperre = false;   // Schlechtwetter
