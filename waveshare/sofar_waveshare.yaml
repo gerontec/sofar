@@ -31,7 +31,6 @@ substitutions:
   wifi_password: "9876543210"
   ota_password: waveshare2026
   fw_version: "3.3.21"     # DO4 bedingungslos ab 22kW; zuerst laden ab 20kW
-  fw_date: "2026-06-08T12:14"
 
 esphome:
   name: ${device_name}
@@ -213,11 +212,11 @@ script:
           snprintf(json, sizeof(json),
             "{\"ip\":\"%s\",\"ip6\":\"%s\",\"state\":%d,\"target_state\":%d,\"auto\":%d,\"ladesperre_en\":%d,"
             "\"peak_h\":%d,\"win_end_h\":%d,"
-            "\"soyo_w\":%d,\"uptime\":%lu,\"mem_free\":%lu,\"fw\":\"%s\",\"fw_date\":\"%s\"}",
+            "\"soyo_w\":%d,\"uptime\":%lu,\"mem_free\":%lu,\"fw\":\"%s\",\"fw_date\":\"" __DATE__ "T" __TIME__ "\"}",
             ip4, ip6, phys_state, id(fox_relay_state), id(auto_enable) ? 1 : 0,
             id(ladesperre_enable) ? 1 : 0, id(g_peak_h), id(g_win_end_h), id(soyo_w),
             (unsigned long)(millis() / 1000), (unsigned long)ESP.getFreeHeap(),
-            "${fw_version}", "${fw_date}");
+            "${fw_version}");
           id(mqtt_client).publish("sofar/waveshare/status", json);
 
 mqtt:
@@ -523,11 +522,13 @@ interval:
             send_count++;
             bool changed = (strcmp(hex, prev_hex) != 0);
             if (changed) { change_count++; strncpy(prev_hex, hex, sizeof(prev_hex)); }
-            char js[160];
-            snprintf(js, sizeof(js),
-              "{\"w\":%d,\"hex\":\"%s\",\"sends\":%lu,\"changes\":%lu,\"changed\":%d}",
-              w, hex, send_count, change_count, changed ? 1 : 0);
-            id(mqtt_client).publish("soyo/sent", js);
+            if (changed) {
+              char js[160];
+              snprintf(js, sizeof(js),
+                "{\"w\":%d,\"hex\":\"%s\",\"sends\":%lu,\"changes\":%lu}",
+                w, hex, send_count, change_count);
+              id(mqtt_client).publish("soyo/sent", js);
+            }
           }
 
           // RX: Frame-Empfang (25ms Gap-Erkennung)
