@@ -101,12 +101,14 @@ elif pcc < −100W:    w = |pcc| × 1.01 + (Nacht: +468W)
 else:                w = 468W (Nacht) oder 10W (Tag, Standby)
 ```
 
-### RS485-Frame (alle 3s, nur bei Wertänderung publiziert)
+### RS485-Frame
 
 ```
 [0x24, 0x56, 0x00, 0x21, PH, PL, 0x80, CRC]
 CRC = (264 − PH − PL) & 0xFF
 ```
+
+Der Frame wird **immer alle 3s** über RS485 gesendet — der Soyo-Inverter benötigt einen Keepalive (Timeout=4s). Das MQTT-Topic `soyo/sent` wird **nur bei Wertänderung** publiziert.
 
 MQTT `soyo/sent`: `{"w":900,"hex":"245600210384800F","sends":120,"changes":3}`  
 MQTT `soyo/calc`: `{"W":468,"soc2":63.1,"stale":0}`
@@ -281,13 +283,13 @@ MQTT `soyo/calc`: `{"W":468,"soc2":63.1,"stale":0}`
 
 ---
 
-#### `soyo/sent` — RS485-Frame (nur bei Wertänderung)
+#### `soyo/sent` — RS485-Frame (MQTT nur bei Wertänderung; RS485-TX läuft immer alle 3s)
 
 ```json
 {"w": 468, "hex": "2456002101D4800F", "sends": 1840, "changes": 7}
 ```
 
-`sends` = Gesamtzahl gesendeter Frames seit Boot, `changes` = Anzahl Wertänderungen.
+`sends` = Gesamtzahl über RS485 gesendeter Frames seit Boot, `changes` = Anzahl Wertänderungen.
 
 ---
 
