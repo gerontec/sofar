@@ -113,30 +113,253 @@ MQTT `soyo/calc`: `{"W":468,"soc2":63.1,"stale":0}`
 
 ---
 
-## MQTT-Topics
+## MQTT-API
 
-### Eingänge (→ ESP32)
+### Status-Topics (← ESP32, lesend)
 
-| Topic | Inhalt |
+---
+
+#### `sofar/state` — Entscheidungslog (alle 60s)
+
+```json
+{
+  "ip":          "192.168.178.187",
+  "state":       1,
+  "changed":     1,
+  "pcc":         3410,
+  "bat1":        2500,
+  "soc2":        68.4,
+  "soc1":        37.0,
+  "ebox":        2982,
+  "excess":      5910,
+  "dc_expected": 29548,
+  "dc_delta":    27108,
+  "ladesperre":  0,
+  "do4":         0,
+  "peak_h":      13,
+  "win_end_h":   16,
+  "auto":        1,
+  "ext_st":      0,
+  "conflict":    0,
+  "trace":       "POWER_MATCHING (Excess: 5910W, Budget: 7410W) | RAMP_LIMITED (5->1)"
+}
+```
+
+| Feld | Einheit | Bedeutung |
+|---|---|---|
+| `state` | 0–7 | Entschiedener Lade-State (Bitmask CH1–CH3) |
+| `changed` | 0/1 | Relais wurde in diesem Zyklus geschaltet |
+| `pcc` | W | PCC-Leistung (+ = Einspeisung, − = Bezug) |
+| `bat1` | W | Sofar-Batterie (+ = Entladung, − = Ladung) |
+| `soc2` | % | EBox2-Ladestand |
+| `soc1` | % | Sofar-Batterie-Ladestand |
+| `ebox` | W | EBox2-Leistung (aus MQTT `ebox/pwr`) |
+| `excess` | W | Berechneter Überschuss = pcc + ebox_eff + bat1 |
+| `dc_expected` | W | Klarhimmel-Modell Ertrag jetzt |
+| `dc_delta` | W | dc_expected − (pcc + ebox + bat1) |
+| `ladesperre` | 0/1 | LADESPERRE aktiv |
+| `do4` | 0/1 | DO4-Puls ausgelöst |
+| `peak_h` | h | Stunde des heutigen DC-Peaks (−1 = kein Peak >20kW) |
+| `win_end_h` | h | Letzte Stunde mit dc_expected >20kW |
+| `auto` | 0/1 | Auto-Modus aktiv |
+| `ext_st` | 0–7 | Physischer Relay-State (aus CH1–CH3 Zustand) |
+| `conflict` | 0/1 | ext_st weicht von final_state ab (nur bei auto=0 relevant) |
+| `trace` | string | Entscheidungspfad (alle gefeuerten Regeln) |
+
+**Mögliche trace-Werte:**
+
+| trace | Bedeutung |
 |---|---|
-| `inverter/power_grid_exchange/json` | PCC, Bat1, SOC1 (Sofar-Wechselrichter) |
-| `ebox/pwr` | `{"soc":63.1,"power_w":1200}` — EBox2 BMS |
-| `pv_zaehl2` | `{"wirkleist":-900}` — Z2-Zähler PCC-Fallback |
-| `fox2db/state` | Pi-Entscheidung (state, soc_bat2) → fox_relay_state |
-| `sofar/auto` | `{"ENABLE":1}` — Auto-Modus ein/aus |
-| `sofar/ladesperre` | `{"ENABLE":1}` — LADESPERRE ein/aus |
-| `soyo/set` | `{"W":350}` — Soyo-Sollwert manuell |
-| `waveshare/relay/1..6` | `{"v":1}` — Einzelrelais Hand-Test |
+| `POWER_MATCHING (Excess: Xw, Budget: Yw)` | Normalbetrieb, bester State gewählt |
+| `INSUFFICIENT_EXCESS (XW)` | Überschuss < 1010W → State 0 |
+| `PCC_OVER_20KW (SOC=X% StateA→B)` | PCC >20kW, State erhöht |
+| `RAMP_LIMITED (A->B)` | Hochschalten auf max. nächsten State begrenzt |
+| `SWEET_SPOT_HOLD` | PCC nahe 0, kein Hochschalten |
+| `TREND_BLOCK` | Überschuss-Trend negativ, kein Hochschalten |
+| `BAT_GUARD_BLOCK` | Sofar-Batterie entlädt >220W, kein Hochschalten |
+| `STABILIZING` | Zu wenige stabile Zyklen, kein Runterschalten |
+| `HYSTERESIS` | Leistungsdiff <505W, kein Runterschalten |
+| `EMERGENCY_FORCE` | Netzbezug >1020W, sofortiges Runterschalten |
+| `GUARD:LADESPERRE_BIS_PCC_20KW` | LADESPERRE blockiert Laden |
+| `GUARD:BATTERY_FULL_STOP` | SOC2=100%, Laden gestoppt |
+| `GUARD:CRITICAL_SOC_PROTECTION_ACTIVATE` | SOC2 <6%, Notladen State 1 |
+| `MQTT_STALE_SAFE` | WR-Daten >3min alt, Zwangs-State 0 |
 
-### Ausgänge (← ESP32)
+---
 
-| Topic | Inhalt |
+#### `sofar/waveshare/status` — Board-Telemetrie (alle 30s, retained)
+
+```json
+{
+  "ip":           "192.168.178.187",
+  "ip6":          "fe80::32ed:a0ff:fed8:fd44",
+  "state":        1,
+  "target_state": 1,
+  "auto":         1,
+  "ladesperre_en":1,
+  "peak_h":       13,
+  "win_end_h":    16,
+  "soyo_w":       0,
+  "uptime":       7530,
+  "mem_free":     247252,
+  "fw":           "3.3.21",
+  "fw_date":      "Jun  9 2026T10:13:39"
+}
+```
+
+| Feld | Bedeutung |
 |---|---|
-| `sofar/state` | Entscheidung: state, pcc, bat1, soc2, excess, trace, ladesperre, do4, conflict |
-| `sofar/waveshare/status` | Telemetrie 30s: state, target_state, auto, fw, fw_date, uptime, mem_free |
-| `soyo/sent` | RS485-Frame bei Änderung: w, hex, sends, changes |
-| `soyo/calc` | Sollwert-Kalkulation: W, soc2, stale |
-| `rs485/rx` | Empfangene RS485-Frames |
+| `state` | Physischer Relay-State (CH1–CH3 Bitmask) |
+| `target_state` | Letzter von fox2db/state empfangener Wunsch-State |
+| `auto` | Auto-Modus aktiv (1 = ESP32 ist Master) |
+| `ladesperre_en` | LADESPERRE-Funktion aktiviert |
+| `peak_h` | Stunde des Tages-DC-Peaks |
+| `win_end_h` | Ende des Peak-Fensters |
+| `soyo_w` | Aktueller Soyo-Sollwert (W) |
+| `uptime` | Sekunden seit Boot |
+| `mem_free` | Freier Heap (Bytes); Produktion: ~247 KB |
+| `fw` / `fw_date` | Firmware-Version und Build-Zeitstempel |
+
+---
+
+#### `fox2db/state` — Pi-Entscheidung (alle 60s, retained)
+
+```json
+{
+  "ts":           "2026-06-09T12:19:02",
+  "version":      "v2.9-Py",
+  "soc_bat2":     68.4,
+  "soc_bat1":     37.0,
+  "pcc":          3410,
+  "bat1":         2500,
+  "ebox":         2982,
+  "state":        1,
+  "state_before": 0,
+  "stable":       0,
+  "excess":       5910,
+  "drop_rate":    147.0,
+  "trace":        "POWER_MATCHING (Excess: 5910W, Budget: 7410W) | RAMP_LIMITED (5->1)",
+  "deep_discharge_active": false,
+  "need_downward_regulation": false,
+  "ladesperre":   false,
+  "dc_peak_time": "13:00",
+  "dc_window_end":"16:00"
+}
+```
+
+| Feld | Bedeutung |
+|---|---|
+| `state` | Entschiedener State (Pi-Logik, ohne Relais-Wirkung bei auto=1) |
+| `state_before` | State des letzten Zyklus |
+| `stable` | Anzahl stabiler Zyklen seit letzter Änderung |
+| `drop_rate` | W/s Änderung des Überschusses seit letztem Zyklus |
+| `need_downward_regulation` | true wenn DO4-Puls nötig |
+
+---
+
+#### `ebox/pwr` — EBox2 BMS-Daten (alle 60s, retained)
+
+```json
+{
+  "soc":       68.3,
+  "power_w":  -80.6,
+  "current_a": -1.52,
+  "packs":     3,
+  "ts":        "2026-06-09T12:19:31"
+}
+```
+
+---
+
+#### `soyo/calc` — Soyo-Sollwert-Kalkulation (alle 60s)
+
+```json
+{"W": 0, "soc2": 68.3, "stale": 0}
+```
+
+`stale=1` wenn WR-Daten >3min alt → Soyo auf 0W gesetzt.
+
+---
+
+#### `soyo/sent` — RS485-Frame (nur bei Wertänderung)
+
+```json
+{"w": 468, "hex": "2456002101D4800F", "sends": 1840, "changes": 7}
+```
+
+`sends` = Gesamtzahl gesendeter Frames seit Boot, `changes` = Anzahl Wertänderungen.
+
+---
+
+#### `rs485/rx` — Empfangene RS485-Frames
+
+```json
+{"len": 8, "hex": "245600210384800F"}
+```
+
+---
+
+### Control-Topics (→ ESP32, schreibend)
+
+#### Auto-Modus umschalten
+
+```bash
+# ESP32 übernimmt Steuerung (Produktion)
+mosquitto_pub -h 192.168.178.218 -t sofar/auto -m '{"ENABLE":1}'
+
+# Pi übernimmt Steuerung (fox2dbEasy.py-Modus)
+mosquitto_pub -h 192.168.178.218 -t sofar/auto -m '{"ENABLE":0}'
+```
+
+#### LADESPERRE ein/aus
+
+```bash
+mosquitto_pub -h 192.168.178.218 -t sofar/ladesperre -m '{"ENABLE":1}'
+mosquitto_pub -h 192.168.178.218 -t sofar/ladesperre -m '{"ENABLE":0}'
+```
+
+#### Soyo-Sollwert manuell setzen
+
+```bash
+# JSON-Form
+mosquitto_pub -h 192.168.178.218 -t soyo/set -m '{"W":350}'
+# Nackte Zahl ebenfalls gültig
+mosquitto_pub -h 192.168.178.218 -t soyo/set -m '350'
+```
+
+#### Einzelrelais Hand-Test (nur für Diagnose, überschreibt auto!)
+
+```bash
+# CH1 ein, CH2 aus, CH3 ein  → State 5 (7100W) manuell
+mosquitto_pub -h 192.168.178.218 -t waveshare/relay/1 -m '{"v":1}'
+mosquitto_pub -h 192.168.178.218 -t waveshare/relay/2 -m '{"v":0}'
+mosquitto_pub -h 192.168.178.218 -t waveshare/relay/3 -m '{"v":1}'
+
+# Alle Relais aus
+mosquitto_pub -h 192.168.178.218 -t waveshare/relay/all -m '{"v":0}'
+```
+
+#### RS485-Diagnose
+
+```bash
+# GPIO Edge-Scan (3s, Ergebnis auf rs485/scan_result)
+mosquitto_pub -h 192.168.178.218 -t rs485/scan -m 'go'
+
+# Relay-Physik-Test CH1→GPIO18 (Ergebnis auf rs485/relay_test_result)
+mosquitto_pub -h 192.168.178.218 -t rs485/relay_test -m 'go'
+```
+
+#### Status sofort abrufen
+
+```bash
+# Letzten retained Status lesen (kein Warten nötig)
+mosquitto_sub -h 192.168.178.218 -t sofar/waveshare/status -C 1
+mosquitto_sub -h 192.168.178.218 -t fox2db/state -C 1
+mosquitto_sub -h 192.168.178.218 -t ebox/pwr -C 1
+
+# Live-Monitor aller fox2db-Topics
+mosquitto_sub -h 192.168.178.218 -t 'sofar/#' -t 'fox2db/#' -t 'soyo/#' -v
+```
 
 ---
 
