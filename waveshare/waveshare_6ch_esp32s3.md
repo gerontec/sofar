@@ -1,6 +1,6 @@
 # Waveshare ESP32-S3-Relay-6CH — Produktionsdokumentation
 
-**Firmware:** fox2db v3.3.27  
+**Firmware:** fox2db v3.3.28  
 **Gerät:** 192.168.178.187  
 **MQTT-Broker:** 192.168.178.218:1883
 
@@ -50,8 +50,8 @@ apply_blocking() → SWEET_SPOT_HOLD / TREND_BLOCK / BAT_GUARD_BLOCK (hoch)
 ```
 
 **Key-Parameter:**
-- `MIN_EXCESS = 1010 W` — Mindestüberschuss für Laden
-- `MAX_GRID_DRAW = 1500 W` — max. erlaubter Netzbezug beim Schalten
+- `MIN_EXCESS = 1200 W` — Mindestüberschuss für Laden
+- `MAX_GRID_DRAW = 1200 W` — max. erlaubter Netzbezug beim Schalten
 - `HYSTERESIS = 505 W` — Mindest-Leistungsdiff für Runterschalten
 - `STABILIZATION = 2` — Zyklen stabil vor Runterschalten
 - `PCC_PEAK_TH = 20000 W` — Schwelle für DO4-Trigger / LADESPERRE-Freigabe
@@ -208,7 +208,7 @@ MQTT `soyo/calc`: `{"W":468,"soc2":63.1,"stale":0}`
 | trace | Bedeutung |
 |---|---|
 | `POWER_MATCHING (Excess: Xw, Budget: Yw)` | Normalbetrieb, bester State gewählt |
-| `INSUFFICIENT_EXCESS (XW)` | Überschuss < 1010W → State 0 |
+| `INSUFFICIENT_EXCESS (XW)` | Überschuss < 1200W → State 0 |
 | `PCC_OVER_20KW (SOC=X% StateA→B)` | PCC >20kW, State erhöht |
 | `RAMP_LIMITED (A->B)` | Hochschalten auf max. nächsten State begrenzt |
 | `SWEET_SPOT_HOLD` | PCC nahe 0, kein Hochschalten |
@@ -241,7 +241,7 @@ MQTT `soyo/calc`: `{"W":468,"soc2":63.1,"stale":0}`
   "soyo_w":       0,
   "uptime":       7530,
   "mem_free":     247252,
-  "fw":           "3.3.27",
+  "fw":           "3.3.28",
   "fw_date":      "Jun 10 2026T08:37:33"
 }
 ```

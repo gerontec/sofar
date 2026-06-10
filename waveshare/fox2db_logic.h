@@ -19,8 +19,8 @@
 namespace fox {
 
 // ── CONFIG (1:1 aus fox2db.py) ───────────────────────────────────────────────
-constexpr float MIN_EXCESS       = 1010.0f;
-constexpr float MAX_GRID_DRAW    = 1500.0f;
+constexpr float MIN_EXCESS       = 1200.0f;
+constexpr float MAX_GRID_DRAW    = 1200.0f;
 constexpr float MAX_SOC          = 100.0f;
 constexpr float HYSTERESIS       = 505.0f;
 constexpr int   STABILIZATION    = 2;

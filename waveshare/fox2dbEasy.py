@@ -27,8 +27,8 @@ STATE_TO_POWER = {0: 0, 1: 3000, 2: 3650, 3: 6650, 4: 3900, 5: 7100, 6: 7800, 7:
 SORTED_STATES  = sorted(STATE_TO_POWER, key=lambda s: STATE_TO_POWER[s])
 
 CONFIG = {
-    'min_excess':          1010,
-    'max_grid_draw':       1500,
+    'min_excess':          1200,
+    'max_grid_draw':       1200,
     'stabilization_cycles':   2,
     'emergency_import':    1020,
     'pcc_peak_threshold': 20000,
