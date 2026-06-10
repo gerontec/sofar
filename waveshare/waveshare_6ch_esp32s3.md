@@ -1,6 +1,6 @@
 # Waveshare ESP32-S3-Relay-6CH — Produktionsdokumentation
 
-**Firmware:** fox2db v3.3.21  
+**Firmware:** fox2db v3.3.27  
 **Gerät:** 192.168.178.187  
 **MQTT-Broker:** 192.168.178.218:1883
 
@@ -59,20 +59,40 @@ apply_blocking() → SWEET_SPOT_HOLD / TREND_BLOCK / BAT_GUARD_BLOCK (hoch)
 
 ### LADESPERRE
 
-Hält den Ladestart zurück bis der Tages-PCC-Peak gesehen wurde:
+An klaren Tagen mit vorhergesagtem >20 kW-Peak wird der Akku morgens **leer gehalten**,
+damit er den Mittagspeak schluckt statt DO4-Abregelung auszulösen.
+
+**Grundprinzip (seit v3.3.27): Sperre nur bei BELEGTEM Gutwetter — sonst OFF.**
 
 ```
-ladesperre = has_peak && local_hour < win_end_h && !peak_today
+in_window  = has_peak && win_end_h >= 0 && !peak_today && local_hour <= peak_h
+ladesperre = in_window && ratio_ist >= 0 && ratio_ist <= ratio_th
 ```
 
-Freigabe durch:
-- `pcc > 20 kW` → peak_today=true, ab jetzt laden
-- Schlechtwetter: `ratio = (dc_expected − (pcc_avg + ebox + bat1)) / dc_expected > 0.8`
-- `local_hour >= win_end_h` (Peak-Fenster abgelaufen)
+`ratio_ist = (dc_expected − (pcc_avg + ebox + bat1)) / dc_expected` — Anteil der
+gegenüber dem Klarhimmel-Modell fehlenden Leistung. Wird jede Minute neu berechnet
+(zustandslos, **kein DB-Event**). `-1` solange nicht beurteilbar.
+
+**Sperre AKTIV** nur wenn:
+- Modell sagt heute >20 kW-Peak (`has_peak`) **und**
+- aktuelle Stunde ≤ Peak-Stunde (`local_hour <= peak_h`) **und**
+- PCC hat 20 kW heute noch nicht erreicht (`!peak_today`) **und**
+- **gültige** Ist-Ratio ≤ Schwelle (`ratio_th`, default 0.5) → belegtes Gutwetter
+
+**Sperre OFF** (Laden frei) sobald:
+- `ratio_ist > ratio_th` → Schlechtwetter (Klarhimmel bleibt aus)
+- `ratio_ist < 0` → **Wetter unbeurteilbar** (Boot, Nacht, DC<5 kW) → Default OFF
+- `pcc > 20 kW` → `peak_today=true`, Peak gesehen, ab jetzt laden
+- `local_hour > peak_h` → Peak-Stunde überschritten, kein 20 kW-Peak mehr möglich
+
+Die Schwelle `ratio_th` ist zur Laufzeit per MQTT änderbar (`sofar/ratio`, default 0.5).
+`peak_today` verhindert Oszillation nach Freigabe durch PCC-Abfall beim Laden.
 
 ### DC-Klarhimmel-Modell (Meinel)
 
-Berechnet stündlichen Ertrag für Ladesperre-Ratio und DO4-Fenster:
+Berechnet stündlichen Ertrag für LADESPERRE-Ratio und DO4-Fenster.
+EBox-Leistung kommt **vorzeichenbehaftet** aus `ebox/pwr` (`power_w`, + = Laden /
+− = Entladen via Soyo) — kein `abs()`, damit die Ratio bei EBox-Entladung korrekt bleibt:
 - **Süd-Arrays:** Tilt 25°/Azimut +80°, 27,854 Wp; Tilt 60°/Azimut −5°, 11,138 Wp  
 - **Ost-Arrays:** 3 Flächen, gesamt ~24,308 Wp  
 - **Standort:** 47.6811° N, 11.5732° E  
@@ -110,6 +130,17 @@ CRC = (264 − PH − PL) & 0xFF
 
 Der Frame wird **immer alle 3s** über RS485 gesendet — der Soyo-Inverter benötigt einen Keepalive (Timeout=4s). Das MQTT-Topic `soyo/sent` wird **nur bei Wertänderung** publiziert.
 
+**Keep-Alive unterbrechungssicher (seit v3.3.x):** Die TX-Sequenz läuft auf einem
+unabhängigen `millis()`-Timer, der alle 50 ms geprüft wird (max. 50 ms Jitter), und ist
+vom MQTT-Publish **entkoppelt** — der RS485-Frame geht auch dann raus, wenn MQTT gerade
+reconnectet, OTA läuft oder ein RS485-Scan aktiv ist. Damit kann der 4s-Timeout des Soyo
+nicht mehr durch andere Tasks gerissen werden.
+
+> ⚠️ In **früheren Versionen** war an dieser Stelle ein Bug: die Keep-Alive-Sequence
+> konnte durch konkurrierende Tasks/Publishes unterbrochen werden, wodurch der Soyo nach
+> 4s in Timeout lief und die Entladung abschaltete. Behoben durch den entkoppelten
+> 50ms-Timer (`last_soyo_tx`), unabhängig vom `soyo/sent`-Publish.
+
 MQTT `soyo/sent`: `{"w":900,"hex":"245600210384800F","sends":120,"changes":3}`  
 MQTT `soyo/calc`: `{"W":468,"soc2":63.1,"stale":0}`
 
@@ -136,6 +167,8 @@ MQTT `soyo/calc`: `{"W":468,"soc2":63.1,"stale":0}`
   "excess":      5910,
   "dc_expected": 29548,
   "dc_delta":    27108,
+  "ratio_ist":   0.92,
+  "ratio_th":    0.50,
   "ladesperre":  0,
   "do4":         0,
   "peak_h":      13,
@@ -159,6 +192,8 @@ MQTT `soyo/calc`: `{"W":468,"soc2":63.1,"stale":0}`
 | `excess` | W | Berechneter Überschuss = pcc + ebox_eff + bat1 |
 | `dc_expected` | W | Klarhimmel-Modell Ertrag jetzt |
 | `dc_delta` | W | dc_expected − (pcc + ebox + bat1) |
+| `ratio_ist` | 0–1+ | Ist-Wetter-Ratio (Anteil fehlender Klarhimmel-Leistung); `-1` = unbeurteilbar |
+| `ratio_th` | 0–1 | Schwelle: ab `ratio_ist ≤ ratio_th` greift LADESPERRE (MQTT `sofar/ratio`, default 0.5) |
 | `ladesperre` | 0/1 | LADESPERRE aktiv |
 | `do4` | 0/1 | DO4-Puls ausgelöst |
 | `peak_h` | h | Stunde des heutigen DC-Peaks (−1 = kein Peak >20kW) |
@@ -182,7 +217,7 @@ MQTT `soyo/calc`: `{"W":468,"soc2":63.1,"stale":0}`
 | `STABILIZING` | Zu wenige stabile Zyklen, kein Runterschalten |
 | `HYSTERESIS` | Leistungsdiff <505W, kein Runterschalten |
 | `EMERGENCY_FORCE` | Netzbezug >1020W, sofortiges Runterschalten |
-| `GUARD:LADESPERRE_BIS_PCC_20KW` | LADESPERRE blockiert Laden |
+| `GUARD:LADESPERRE_BIS_PCC_20KW` | LADESPERRE blockiert Laden (Gutwetter belegt, ratio_ist ≤ ratio_th) |
 | `GUARD:BATTERY_FULL_STOP` | SOC2=100%, Laden gestoppt |
 | `GUARD:CRITICAL_SOC_PROTECTION_ACTIVATE` | SOC2 <6%, Notladen State 1 |
 | `MQTT_STALE_SAFE` | WR-Daten >3min alt, Zwangs-State 0 |
@@ -199,13 +234,15 @@ MQTT `soyo/calc`: `{"W":468,"soc2":63.1,"stale":0}`
   "target_state": 1,
   "auto":         1,
   "ladesperre_en":1,
+  "ratio_th":     0.50,
+  "ratio_ist":    0.92,
   "peak_h":       13,
   "win_end_h":    16,
   "soyo_w":       0,
   "uptime":       7530,
   "mem_free":     247252,
-  "fw":           "3.3.21",
-  "fw_date":      "Jun  9 2026T10:13:39"
+  "fw":           "3.3.27",
+  "fw_date":      "Jun 10 2026T08:37:33"
 }
 ```
 
@@ -215,6 +252,8 @@ MQTT `soyo/calc`: `{"W":468,"soc2":63.1,"stale":0}`
 | `target_state` | Letzter von fox2db/state empfangener Wunsch-State |
 | `auto` | Auto-Modus aktiv (1 = ESP32 ist Master) |
 | `ladesperre_en` | LADESPERRE-Funktion aktiviert |
+| `ratio_th` | Schwelle ab der LADESPERRE greift (MQTT `sofar/ratio`, default 0.5) |
+| `ratio_ist` | Zuletzt berechnete Ist-Wetter-Ratio (`-1` = unbeurteilbar) |
 | `peak_h` | Stunde des Tages-DC-Peaks |
 | `win_end_h` | Ende des Peak-Fensters |
 | `soyo_w` | Aktueller Soyo-Sollwert (W) |
@@ -320,6 +359,18 @@ mosquitto_pub -h 192.168.178.218 -t sofar/ladesperre -m '{"ENABLE":1}'
 mosquitto_pub -h 192.168.178.218 -t sofar/ladesperre -m '{"ENABLE":0}'
 ```
 
+#### LADESPERRE-Schwelle (ratio_th) setzen
+
+Schwelle ab der bei Schlechtwetter freigegeben wird (gültiger Bereich 0–1, default 0.5).
+Nicht-retained → bei Reboot zurück auf 0.5.
+
+```bash
+# JSON-Form
+mosquitto_pub -h 192.168.178.218 -t sofar/ratio -m '{"RATIO":0.6}'
+# Nackte Zahl ebenfalls gültig
+mosquitto_pub -h 192.168.178.218 -t sofar/ratio -m '0.6'
+```
+
 #### Soyo-Sollwert manuell setzen
 
 ```bash
@@ -369,10 +420,15 @@ mosquitto_sub -h 192.168.178.218 -t 'sofar/#' -t 'fox2db/#' -t 'soyo/#' -v
 
 | `auto` | Master | Beschreibung |
 |:-:|---|---|
-| 1 | ESP32 | fox2db_logic.h entscheidet autonom, setzt CH1–CH3 direkt |
-| 0 | fox2dbEasy.py (Pi) | Pi sendet `waveshare/relay/1..3` + `sofar/auto:ENABLE=0` |
+| 1 | ESP32 | fox2db_logic.h entscheidet autonom, setzt CH1–CH3 direkt (**Produktion**) |
+| 0 | extern | ESP32 gibt CH1–CH3 frei für `waveshare/relay/1..3` (Hand/Diagnose) |
 
-Im `auto=1`-Modus bleibt `fox2db/state` (Pi) als Schatten aktiv:  
+**Schatten-Vergleich:** `fox2dbEasy.py` (Pi) läuft als zustandsloser Zwilling der
+ESP32-Logik und publiziert auf `fox2db/easy/state` — **steuert aber keine Relais**
+(reiner Soll-Ist-Vergleich). Identische Inputs: PCC, `ebox/pwr` (signiert), `ratio_th=0.5`.
+`waveshare_compare.py` meldet Abweichungen `fox2db/easy/state` ↔ `sofar/waveshare/status`.
+
+Im `auto=1`-Modus bleibt zusätzlich `fox2db/state` (fox2db.py) aktiv:  
 `target_state` im Status-JSON zeigt den letzten Pi-Wunsch, `conflict=1` wenn Abweichung.
 
 ---
