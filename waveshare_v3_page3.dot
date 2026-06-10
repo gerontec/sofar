@@ -1,0 +1,96 @@
+
+digraph WaveshareDecision {
+    graph [
+        label="fox2db v3.3.27 — decide() / apply_guards() / apply_blocking() im Detail"
+        labelloc=t fontsize=14 fontname="Helvetica-Bold"
+        rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
+        bgcolor="#f8f9fa" size="11,17" ratio=fill
+    ]
+    node [fontname="Helvetica" fontsize=10 margin="0.18,0.08" style="filled,rounded"]
+    edge [fontname="Helvetica" fontsize=10 penwidth=1.2]
+
+    Start [shape=oval fillcolor="#e2d9f3" label="decide()"]
+    End [shape=oval fillcolor="#e2d9f3" label="-> (best, trace, excess)"]
+
+    excess_calc [shape=box fillcolor="#c9b8f0" label="ebox_eff = relay_st>0 ? max(ebox_w, state_power(relay_st)) : 0\nexcess = pcc + ebox_eff + bat1"]
+    d_unk [shape=diamond fillcolor="#fce8e8" label="soc2 < 0?\n(unbekannt)"]
+    r_unk [shape=box fillcolor="#fce8e8" label="return relay_st\nEBOX_SOC_UNKNOWN_HOLD"]
+    d_pcc [shape=diamond fillcolor="#f8d7da" label="pcc>20kW &&\nsoc2<100?"]
+    r_pcc [shape=box fillcolor="#f8d7da" label="return min(relay_st+1,7)\nPCC_OVER_20KW"]
+    d_prot [shape=diamond fillcolor="#fce8e8" label="prot aktiv?"]
+    d_prot2 [shape=diamond fillcolor="#fce8e8" label="soc2 < 7%?"]
+    r_emerg [shape=box fillcolor="#fce8e8" label="return 1\nEMERGENCY_CHARGE_TO_7%"]
+    r_target [shape=box fillcolor="#fce8e8" label="return 0\nCHARGE_TARGET_REACHED"]
+    d_excess [shape=diamond fillcolor="#fce8e8" label="excess < 1010W?"]
+    r_insuf [shape=box fillcolor="#fce8e8" label="return 0\nINSUFFICIENT_EXCESS"]
+    pm [shape=box fillcolor="#c9b8f0" label="POWER_MATCHING\nbudget = excess + 1500W\nbest = höchste state_power <= budget"]
+    d_ramp [shape=diamond fillcolor="#fff3cd" label="best > relay_st &&\nbest > next_up\n(SORTED_STATES)?"]
+    r_ramp [shape=box fillcolor="#fff3cd" label="best = next_state_up\nRAMP_LIMITED"]
+
+    StartG [shape=oval fillcolor="#f8d7da" label="apply_guards(best, soc2, ladesperre)"]
+    GEnd [shape=oval fillcolor="#f8d7da" label="-> best, guard_fired\nfired=true -> Blocking skip"]
+    g0 [shape=diamond fillcolor="#fce8e8" label="ladesperre?"]
+    g0r [shape=box fillcolor="#f8d7da" label="best=0\nGUARD:LADESPERRE_BIS_PCC_20KW"]
+    g1 [shape=diamond fillcolor="#fce8e8" label="soc2 >= 100?"]
+    g1r [shape=box fillcolor="#f8d7da" label="best=0\nGUARD:BATTERY_FULL_STOP"]
+    g2 [shape=diamond fillcolor="#fce8e8" label="0 <= soc2 < 6?"]
+    g2r [shape=box fillcolor="#f8d7da" label="best=1\nGUARD:CRITICAL_SOC_PROTECTION"]
+
+    StartB [shape=oval fillcolor="#d4c5f0" label="apply_blocking()\n(nur wenn !guard_fired)"]
+    BEnd [shape=oval fillcolor="#d4c5f0" label="-> final, changed"]
+    b_same [shape=diamond fillcolor="#d4c5f0" label="best == relay_st?"]
+    b_same_r [shape=box fillcolor="#d4c5f0" label="return relay_st\nchanged=false"]
+    b_dir [shape=box fillcolor="#d4c5f0" label="up = power(best) > power(relay_st)\npwr_diff = |power(best)-power(relay_st)|"]
+    b_emf [shape=diamond fillcolor="#fce8e8" label="pcc<-1020W && !up?"]
+    b_emf_r [shape=box fillcolor="#f8d7da" label="EMERGENCY_FORCE\nreturn best, changed=true"]
+    b_rules [shape=box fillcolor="#d4c5f0" label="UP:   SWEET_SPOT_HOLD (|pcc|<160 && bat1>-310)\n      TREND_BLOCK (drop_rate<-20)\n      BAT_GUARD_BLOCK (bat1<-220)\nDOWN: STABILIZING (stable<2)\n      HYSTERESIS (pwr_diff<505)"]
+    b_blk [shape=diamond fillcolor="#d4c5f0" label="Regel greift?"]
+    b_yes [shape=box fillcolor="#d4c5f0" label="return relay_st\nchanged=false"]
+    b_no [shape=box fillcolor="#d4c5f0" label="return best\nchanged=true"]
+
+    Start -> excess_calc -> d_unk
+    d_unk -> r_unk [label="JA" color="red"]
+    d_unk -> d_pcc [label="NEIN" color="green"]
+    r_unk -> End
+    d_pcc -> r_pcc [label="JA" color="red"]
+    d_pcc -> d_prot [label="NEIN" color="green"]
+    r_pcc -> End
+    d_prot -> d_prot2 [label="JA" color="orange"]
+    d_prot -> d_excess [label="NEIN" color="green"]
+    d_prot2 -> r_emerg [label="JA" color="red"]
+    d_prot2 -> r_target [label="NEIN" color="green"]
+    r_emerg -> End
+    r_target -> End
+    d_excess -> r_insuf [label="JA" color="red"]
+    d_excess -> pm [label="NEIN" color="green"]
+    r_insuf -> End
+    pm -> d_ramp
+    d_ramp -> r_ramp [label="JA" color="orange"]
+    d_ramp -> End [label="NEIN" color="green"]
+    r_ramp -> End
+
+    StartG -> g0
+    g0 -> g0r [label="JA" color="red"]
+    g0 -> g1 [label="NEIN" color="green"]
+    g0r -> GEnd
+    g1 -> g1r [label="JA" color="red"]
+    g1 -> g2 [label="NEIN" color="green"]
+    g1r -> GEnd
+    g2 -> g2r [label="JA" color="red"]
+    g2 -> GEnd [label="NEIN" color="green"]
+    g2r -> GEnd
+
+    StartB -> b_same
+    b_same -> b_same_r [label="JA" color="#888888"]
+    b_same -> b_dir [label="NEIN" color="green"]
+    b_same_r -> BEnd
+    b_dir -> b_emf
+    b_emf -> b_emf_r [label="JA" color="red"]
+    b_emf -> b_rules [label="NEIN" color="green"]
+    b_emf_r -> BEnd
+    b_rules -> b_blk
+    b_blk -> b_yes [label="JA" color="orange"]
+    b_blk -> b_no [label="NEIN" color="green"]
+    b_yes -> BEnd
+    b_no -> BEnd
+}

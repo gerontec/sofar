@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
+# ════════════════════════════════════════════════════════════════════════════
+#  Diagramm-Generator — NUR Waveshare-Version (fox2db v3.3.27, ESP32-S3 6CH)
+#  Quelle: waveshare/fox2db_logic.h + waveshare/waveshare_6ch_esp32s3.md
+#  Mehrseitiges PDF, Mindest-Schriftgröße 10.
+# ════════════════════════════════════════════════════════════════════════════
 import subprocess
 from pathlib import Path
 
 OUT = Path(__file__).parent
 
+# ── Seite 1: Architektur / Schichten ─────────────────────────────────────────
 PAGE1 = """
-digraph Architecture {
+digraph WaveshareArch {
     graph [
-        label="fox2db.py v2.9-Py — Schichten-Architektur (prozedural, 665 Zeilen)"
+        label="fox2db v3.3.27 — Waveshare ESP32-S3 6CH — Architektur (fox2db_logic.h, autonom auf dem ESP)"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=ortho nodesep=0.6 ranksep=0.8
         bgcolor="#f8f9fa" size="11,17" ratio=fill
@@ -16,88 +22,87 @@ digraph Architecture {
     edge [fontname="Helvetica" fontsize=10 penwidth=1.2]
 
     subgraph cluster_extern {
-        label="Externe Systeme" style="dashed,filled" fillcolor="#eeeeee"
+        label="Externe Systeme (MQTT 192.168.178.218:1883)" style="dashed,filled" fillcolor="#eeeeee"
         fontname="Helvetica-Bold" fontsize=10 color="#aaaaaa"
 
-        MQTT_IN  [shape=cylinder fillcolor="#dddddd" label="MQTT-Broker\nkellertreppe:1883\ninverter/power_grid_exchange/json"]
-        MQTT_Z2  [shape=cylinder fillcolor="#dddddd" label="MQTT-Broker\npv_zaehl2/#\n(Z2-Zähler, retained)"]
-        MQTT_PUB [shape=cylinder fillcolor="#dddddd" label="MQTT-Broker\nfox2db/state\n(retain=True)"]
-        MariaDB  [shape=cylinder fillcolor="#dddddd" label="MariaDB wagodb\npv_decision_log (version, dc_delta_w)\npv_relay_events"]
-        Relay    [shape=component fillcolor="#dddddd" label="ebyte_ctrl.py\nRelais-Hardware\nState 0..7"]
-        WR2      [shape=component fillcolor="#fce8e8" label="WR2\n(Wechselrichter 2)\nDO4 → Abregelung"]
-        EBox     [shape=component fillcolor="#dddddd" label="ebox1arg.py\n/tmp/ebox15k.txt\nSOC (Ø-Module), Strom, echte Leistung (V×I)"]
+        MQTT_PCC [shape=cylinder fillcolor="#dddddd" label="WR-Daten (MQTT)\\npcc, bat1, soc1"]
+        MQTT_EBOX [shape=cylinder fillcolor="#dddddd" label="ebox/pwr\\nsoc2, power_w (signiert!),\\ncurrent_a, packs"]
+        MQTT_RATIO [shape=cylinder fillcolor="#dddddd" label="sofar/ratio\\nratio_th (default 0.5)\\nsofar/ladesperre, sofar/auto"]
+        MQTT_OUT [shape=cylinder fillcolor="#dddddd" label="sofar/state · sofar/waveshare/status\\nsoyo/calc · soyo/sent (retain)"]
+        Relays123 [shape=component fillcolor="#dddddd" label="CH1-CH3 (GPIO1/2/41)\\nEBox-State 0..7 binär"]
+        Relay4 [shape=component fillcolor="#fce8e8" label="CH4 (GPIO42)\\nDO4 -> WR2 abregeln\\n3s-Puls"]
+        Soyo [shape=component fillcolor="#dddddd" label="Soyo-Inverter (max 900W)\\nRS485 GPIO17 TX / GPIO18 RX\\nKeepalive alle 3s"]
     }
 
     subgraph cluster_input {
-        label="INPUT LAYER" style="filled" fillcolor="#d4edda"
+        label="INPUT (Inputs-Struct)" style="filled" fillcolor="#d4edda"
         fontname="Helvetica-Bold" fontsize=10 color="#28a745"
 
-        fetch_mqtt [shape=box fillcolor="#b8dfc4" label="fetch_mqtt()\nMQTT empfangen\nNone-Felder → 0"]
-        fetch_z2   [shape=box fillcolor="#b8dfc4" label="fetch_z2()\nZ2-Zähler lesen\n(Ersatz bei PCC=NaN)"]
-        read_ebox  [shape=box fillcolor="#b8dfc4" label="read_ebox()\nSOC = Ø(Module >0%)\nbat_cur, soc, ebox_w (V×I)\n-1 nur wenn ALLE Module 0%/unbekannt"]
-        z2_fb      [shape=diamond fillcolor="#fff3cd" label="PCC = NaN?"]
-        pcc_node   [shape=box fillcolor="#b8dfc4" label="pcc = abs(min(0, wirkleist))\n(Z2-Fallback)"]
-        ladesperre_chk [shape=box fillcolor="#fce8e8" label="_ladesperre_events_today()\nDB: (do4, schlechtwetter, gutwetter) heute?\nZustandsmaschine: block→release→reblock"]
+        in_struct [shape=box fillcolor="#b8dfc4" label="Inputs{pcc, bat1, soc1, soc2, ebox_w}\\nsoc2 < 0 = unbekannt"]
+        state_ram [shape=box fillcolor="#b8dfc4" label="State (RAM, Cron-übergreifend)\\nrelay_st, stable, last_excess, prot,\\npeak_today, pcc_buf[10]\\n(Reset um Mitternacht, weg bei Reboot)"]
+    }
+
+    subgraph cluster_forecast {
+        label="DC-FORECAST (Meinel-Klarhimmel)" style="filled" fillcolor="#fff3cd"
+        fontname="Helvetica-Bold" fontsize=10 color="#b8860b"
+
+        dc_now [shape=box fillcolor="#ffe69c" label="dc_now()  Süd+Ost-Arrays\\nNOAA-Sonnenstand, kt_month\\n47.6811N 11.5732E\\n-> dc_expected"]
+        peakwin [shape=box fillcolor="#ffe69c" label="Peak-Fenster (Stunde 5..20)\\nbest_w, peak_h, win_end_h\\nratio_ist via pcc_buf-Mittel"]
     }
 
     subgraph cluster_decision {
-        label="DECISION LAYER" style="filled" fillcolor="#e2d9f3"
+        label="DECISION-PIPELINE (step())" style="filled" fillcolor="#e2d9f3"
         fontname="Helvetica-Bold" fontsize=10 color="#6f42c1"
 
-        decide_fn [shape=box fillcolor="#c9b8f0"
-                   label="decide()  — Dominanzgeordnet (erste Regel gewinnt) —\n\nprio 1  EBOX_SOC_UNKNOWN_HOLD  (soc<0)\nprio 2  PCC_OVER_20KW          (pcc>20kW, soc<100 → State+1)\nprio 3  EMERGENCY_CHARGE_TO_7% (prot + soc<7)\nprio 4  CHARGE_TARGET_REACHED  (prot + soc≥7)\nprio 5  INSUFFICIENT_EXCESS    (excess<1010W)\nprio 6  POWER_MATCHING         (Default)\n         └─ RAMP_LIMITED       (max +1 State/Zyklus)"]
-
-        hard_guards [shape=box fillcolor="#f8d7da"
-                     label="apply_guards()  — HARD GUARDS (nach decide, unüberwindbar) —\n(Guard feuert → Blocking wird übersprungen, Schutz hat Vorrang)\n\nprio 0  LADESPERRE_BIS_PCC_20KW  (block ODER GUTWETTER_REBLOCK → State 0)\nprio 7  BATTERY_FULL_STOP        (SOC2 ≥ 100 → State 0)\nprio 6  CRITICAL_SOC_PROTECTION  (SOC2 <  6 → State 1)"]
-
-        blocking [shape=box fillcolor="#d4c5f0"
-                  label="apply_blocking()  — Verhindert zu schnelle Zustandswechsel —\n(nur wenn KEIN Hard Guard gefeuert hat)\n\nEMERGENCY_FORCE (Bypass bei Import >1020W, Richtung DOWN)\n\nUP-Sperren:   SWEET_SPOT_HOLD / TREND_BLOCK / BAT_GUARD_BLOCK\nDOWN-Sperren: STABILIZING / HYSTERESIS"]
-
-        dc_calc [shape=box fillcolor="#c9b8f0" label="_DcForecast.now()\nMeinel-Modell WR1+WR2\nKlarhimmel-Prognose\ndc_expected, peak_today, win_end"]
+        ladesperre [shape=box fillcolor="#d4c5f0" label="LADESPERRE-Zustandsmaschine\\nin_window && 0 <= ratio_ist <= ratio_th\\n(nur bei BELEGTEM Gutwetter)"]
+        decide_fn [shape=box fillcolor="#c9b8f0" label="decide()  dominanzgeordnet\\nSOC_UNKNOWN / PCC_OVER_20KW /\\nEMERGENCY / INSUFFICIENT /\\nPOWER_MATCHING + RAMP_LIMITED"]
+        guards [shape=box fillcolor="#f8d7da" label="apply_guards() — HARD\\nLADESPERRE / BATTERY_FULL /\\nCRITICAL_SOC (feuert -> Blocking skip)"]
+        blocking [shape=box fillcolor="#d4c5f0" label="apply_blocking()\\nUP: SWEET_SPOT/TREND/BAT_GUARD\\nDOWN: STABILIZING/HYSTERESIS\\nEMERGENCY_FORCE bypass"]
     }
 
     subgraph cluster_output {
-        label="OUTPUT LAYER" style="filled" fillcolor="#cce5ff"
+        label="OUTPUT (Result-Struct)" style="filled" fillcolor="#cce5ff"
         fontname="Helvetica-Bold" fontsize=10 color="#004085"
 
-        log_fn    [shape=box fillcolor="#a8d0f5" label="_log()\nZeit + Version + Meldung"]
-        publish   [shape=box fillcolor="#a8d0f5" label="publish_mqtt()\nJSON → fox2db/state\n(inkl. need_downward_regulation, ladesperre)"]
-        set_relay [shape=box fillcolor="#a8d0f5" label="set_relay()\nebyte_ctrl.py aufrufen"]
-        db_log    [shape=box fillcolor="#a8d0f5" label="_db_decision_log()\n_db_relay_event()\n→ MariaDB (version, dc_delta_w)"]
-        do4       [shape=box fillcolor="#f8d7da" label="pulse_do4()\nRelais 4 → WR2 abregeln\nNur wenn PCC>20kW\naber kein State+1 möglich\n(SOC=100 oder State=7)"]
+        set_relays [shape=box fillcolor="#a8d0f5" label="CH1-CH3 setzen\\nfinal_state als Bitmask"]
+        do4_out [shape=box fillcolor="#f8d7da" label="DO4-Puls (CH4)\\npcc>22kW unbedingt ODER\\npcc>20kW kein State+ / ladesperre"]
+        soyo_calc [shape=box fillcolor="#a8d0f5" label="Soyo-Kalkulation\\nEntladung wenn State==0\\nRS485-Frame alle 3s"]
+        publish [shape=box fillcolor="#a8d0f5" label="MQTT publish\\nsofar/state, status, soyo/*"]
     }
 
-    MQTT_IN  -> fetch_mqtt [color="#28a745"]
-    MQTT_Z2  -> fetch_z2   [color="#28a745"]
-    EBox     -> read_ebox  [color="#28a745"]
-    fetch_mqtt -> z2_fb
-    fetch_z2   -> z2_fb
-    z2_fb -> pcc_node [label="JA" color="red"]
+    MQTT_PCC -> in_struct [color="#28a745"]
+    MQTT_EBOX -> in_struct [color="#28a745"]
+    MQTT_RATIO -> ladesperre [color="#28a745" label="ratio_th"]
 
-    fetch_mqtt -> decide_fn [color="#6f42c1" label="pcc, bat1"]
-    read_ebox  -> decide_fn [color="#6f42c1" label="bat_cur, soc"]
-    ladesperre_chk -> hard_guards [color="#c0392b" label="ladesperre"]
-    dc_calc    -> log_fn    [color="#6f42c1" label="dc_expected\ndc_delta"]
-    decide_fn  -> hard_guards [color="#6f42c1"]
-    hard_guards -> blocking   [color="#6f42c1" label="kein Guard"]
-    hard_guards -> set_relay  [color="#c0392b" style=dashed label="Guard feuert\n(Blocking übersprungen)"]
+    in_struct -> dc_now [color="#b8860b"]
+    state_ram -> peakwin [color="#b8860b" label="pcc_buf"]
+    dc_now -> peakwin [color="#b8860b"]
 
-    blocking -> set_relay [color="#004085"]
-    blocking -> publish   [color="#004085"]
-    blocking -> db_log    [color="#004085"]
-    blocking -> do4       [color="#c0392b" style=dashed]
+    peakwin -> ladesperre [color="#6f42c1" label="ratio_ist\\npeak_h"]
+    in_struct -> decide_fn [color="#6f42c1"]
+    state_ram -> decide_fn [color="#6f42c1" label="relay_st, prot"]
+    ladesperre -> guards [color="#c0392b" label="ladesperre"]
+    decide_fn -> guards [color="#6f42c1"]
+    guards -> blocking [color="#6f42c1" label="kein Guard"]
+    guards -> set_relays [color="#c0392b" style=dashed label="Guard feuert"]
 
-    set_relay -> Relay    [color="#004085"]
-    do4       -> WR2      [color="#c0392b" label="DO4\nRelais 4\n3s-Puls"]
-    publish   -> MQTT_PUB [color="#004085"]
-    db_log    -> MariaDB  [color="#004085"]
+    blocking -> set_relays [color="#004085"]
+    blocking -> do4_out [color="#c0392b" style=dashed]
+    blocking -> publish [color="#004085"]
+    in_struct -> soyo_calc [color="#004085" style=dotted]
+
+    set_relays -> Relays123 [color="#004085"]
+    do4_out -> Relay4 [color="#c0392b"]
+    soyo_calc -> Soyo [color="#004085" label="3s Keepalive"]
+    publish -> MQTT_OUT [color="#004085"]
 }
 """
 
+# ── Seite 2: step() — Gesamtablauf ───────────────────────────────────────────
 PAGE2 = """
-digraph MainFlow {
+digraph WaveshareStep {
     graph [
-        label="fox2db.py v2.9-Py — main() Ablauf"
+        label="fox2db v3.3.27 — step() Gesamtablauf (alle 60s, fox2db_logic.h)"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
         bgcolor="#f8f9fa" size="11,17" ratio=fill
@@ -105,95 +110,64 @@ digraph MainFlow {
     node [fontname="Helvetica" fontsize=10 margin="0.18,0.08" style="filled,rounded"]
     edge [fontname="Helvetica" fontsize=10 penwidth=1.2]
 
-    Start  [shape=oval fillcolor="#cce5ff" label="main() Start\n(Cron, jede Minute)"]
-    End    [shape=oval fillcolor="#cce5ff" label="Ende"]
-    EndErr [shape=oval fillcolor="#f8d7da" label="Ende Emergency"]
+    Start [shape=oval fillcolor="#cce5ff" label="step(in, st, now_utc, ...)\\nESPHome-Intervall 60s"]
+    End [shape=oval fillcolor="#cce5ff" label="return Result"]
 
-    s1  [shape=box fillcolor="#fff3cd" label="_log('--- Start Cycle ---')"]
-    s2  [shape=box fillcolor="#d4edda" label="fetch_mqtt()\n→ pcc, bat1, soc_bat1"]
-    d1  [shape=diamond fillcolor="#fce8e8" label="mqtt_data\n= None?"]
-    s3  [shape=box fillcolor="#f8d7da" label="set_relay(0)\n_log('EMERGENCY SHUTDOWN')"]
-    s4  [shape=box fillcolor="#d4edda" label="read_ebox()\n→ bat_cur, soc, ebox_w (echte Leistung V×I)\n   soc=Ø valider Module, -1 nur wenn ALLE 0%"]
-    s5  [shape=box fillcolor="#d4edda" label="fetch_z2()\n→ wirkleist (Ersatz bei NaN)"]
-    d2  [shape=diamond fillcolor="#fff3cd" label="isnan(pcc)?"]
-    s5b [shape=box fillcolor="#fff3cd" label="pcc = abs(min(0, wirkleist))\nZ2-Fallback"]
-    s6  [shape=box fillcolor="#d4edda" label="Zustand lesen:\nrelay_st, stable, prot\nlast_excess, dc_expected\ndc_delta = dc_expected−(pcc+ebox+bat1)"]
+    s1 [shape=diamond fillcolor="#fff3cd" label="local_yday != last_yday?\\n(Mitternacht)"]
+    s1r [shape=box fillcolor="#d4edda" label="pcc_buf reset, peak_today=false\\nlast_yday = local_yday"]
+    s2 [shape=box fillcolor="#fff3cd" label="dc_expected = dc_now(now_utc, month)\\nMeinel-Klarhimmel"]
+    s3 [shape=box fillcolor="#d4edda" label="pcc_buf[i]=pcc (Ringpuffer 10)\\npcc_avg wenn n>=3"]
+    s4 [shape=box fillcolor="#fff3cd" label="Peak-Fenster h=5..20\\nbest_w, peak_h_loc, win_end_loc\\npeak_h / win_end_h -> Result"]
+    s5 [shape=box fillcolor="#fce8e8" label="if pcc>20kW: peak_today=true"]
+    s6 [shape=box fillcolor="#fff3cd" label="ratio_ist = (dc_exp - (pcc_avg+ebox+bat1)) / dc_exp\\nnur wenn pcc_avg gültig und dc_exp>5000\\nsonst -1"]
 
-    sp_ls [shape=box fillcolor="#fce8e8"
-           label="_ladesperre_events_today()\n→ (do4, schlechtwetter, gutwetter)\npeak_ahead = _has_peak und jetzt < window_end"]
-    d_do4  [shape=diamond fillcolor="#fce8e8" label="do4 heute?\n(Peak ausgelöst)"]
-    r_do4  [shape=box fillcolor="#d4edda" label="ladesperre=False\n(laden aus Peak)"]
-    d_rebl [shape=diamond fillcolor="#fce8e8" label="gutwetter-\nreblock aktiv?"]
-    r_rebl [shape=box fillcolor="#fce8e8" label="ladesperre = peak_ahead\n(State 0 bis DO4 / window_end)"]
-    d_weath [shape=diamond fillcolor="#fce8e8" label="schlechtwetter-\nrelease heute?"]
-    d_good [shape=diamond fillcolor="#fff3cd" label="Gutwetter zurück?\nratio<0.4 und dc>10kW\nund peak_ahead"]
-    r_good [shape=box fillcolor="#f8d7da" label="_db_relay_event('gutwetter')\nGUTWETTER_REBLOCK\nladesperre=True (Headroom)"]
-    r_wload [shape=box fillcolor="#d4edda" label="ladesperre=False\n(lädt weiter)"]
-    d_sw  [shape=diamond fillcolor="#fce8e8" label="Schlechtwetter?\nratio>0.8\n(PCC-avg<20% von DC)"]
-    r_sw  [shape=box fillcolor="#fce8e8" label="_ladesperre_release_db()\nladesperre=False"]
-    r_log [shape=box fillcolor="#fff3cd" label="ladesperre=True\n_log('warte auf DO4-Peak')"]
+    d_en [shape=diamond fillcolor="#fce8e8" label="ladesperre_enable?"]
+    d_win [shape=diamond fillcolor="#fce8e8" label="in_window?\\nhas_peak && win_end>=0\\n&& !peak_today\\n&& local_hour<=peak_h"]
+    d_rat [shape=diamond fillcolor="#fce8e8" label="0 <= ratio_ist\\n<= ratio_th?\\n(belegtes Gutwetter)"]
+    r_lock [shape=box fillcolor="#f8d7da" label="ladesperre = true"]
+    r_free [shape=box fillcolor="#d4edda" label="ladesperre = false"]
 
-    s7  [shape=box fillcolor="#e2d9f3" label="decide(soc, pcc, ebox_w, bat1, relay_st, prot)\n→ best, trace, excess"]
-    s8  [shape=box fillcolor="#f8d7da" label="apply_guards(best, soc, ladesperre)\n→ LADESPERRE (→0) / BATTERY_FULL_STOP SOC2≥100 (→0)\n→ CRITICAL_SOC (→1)\n→ guard_fired"]
-    s9  [shape=box fillcolor="#e2d9f3" label="drop_rate = (excess − last_excess) / 30\n_write(last_excess)"]
-    d_guard [shape=diamond fillcolor="#fce8e8" label="guard_fired?"]
-    s_byp [shape=box fillcolor="#f8d7da" label="final = best\nchanged = (best ≠ relay_st)\n(Blocking übersprungen)"]
-    s10 [shape=box fillcolor="#e2d9f3" label="apply_blocking(best, relay_st, pcc, bat1,\n               stable, drop_rate)\n→ final, changed, trace"]
-    s11 [shape=box fillcolor="#cce5ff" label="_log(Data: SOC/PCC/Bat/EBox/DC_exp/DC_delta)\n_log(Result: State + TRACE)"]
-    s12 [shape=box fillcolor="#cce5ff" label="publish_mqtt()\n→ fox2db/state\n(need_downward_regulation, ladesperre)"]
-    s13 [shape=box fillcolor="#cce5ff" label="_write(last_change, inverter_csv)"]
-    s14 [shape=box fillcolor="#e2d9f3" label="Deep Discharge Hysterese\nsoc<lower → prot=1\nsoc≥upper → prot=0"]
-    s15 [shape=box fillcolor="#cce5ff" label="_db_decision_log()\n→ pv_decision_log (version, dc_delta_w)"]
-    d3  [shape=diamond fillcolor="#fff3cd" label="changed?"]
-    s16a [shape=box fillcolor="#cce5ff" label="_db_relay_event()\nset_relay(final)"]
-    s16b [shape=box fillcolor="#d4edda" label="_write(relay_state, final)\n(kein Relay-Wechsel)"]
-    d4  [shape=diamond fillcolor="#fce8e8" label="PCC >20kW und\nkein PCC_OVER_20KW\nim trace?"]
-    s17 [shape=box fillcolor="#f8d7da" label="pulse_do4()\nRelais 4 → WR2 abregeln\n(kein PCC_OVER_20KW im trace ODER ladesperre)\n→ 1. DO4 hebt Ladesperre/Reblock auf"]
+    s7 [shape=box fillcolor="#e2d9f3" label="best = decide(in, relay_st, prot, ...)\\n-> best, trace, excess"]
+    s8 [shape=box fillcolor="#f8d7da" label="best = apply_guards(best, soc2, ladesperre)\\n-> guard_fired"]
+    s9 [shape=box fillcolor="#e2d9f3" label="drop_rate = (excess - last_excess)/30\\nlast_excess = excess"]
+    d_g [shape=diamond fillcolor="#fce8e8" label="guard_fired?"]
+    s_byp [shape=box fillcolor="#f8d7da" label="final = best\\nchanged = (best != relay_st)\\n(Blocking übersprungen)"]
+    s10 [shape=box fillcolor="#e2d9f3" label="final = apply_blocking(best, relay_st,\\n  pcc, bat1, stable, drop_rate)\\n-> final, changed"]
+    s11 [shape=box fillcolor="#d4edda" label="stable = changed ? 0 : stable+1"]
+    s12 [shape=box fillcolor="#e2d9f3" label="Deep-Discharge-Hysterese\\nsoc2<6 -> prot=true\\nsoc2>=8 -> prot=false"]
+    d_do4 [shape=diamond fillcolor="#fce8e8" label="need_down?\\npcc>22kW ODER\\n(pcc>20kW &&\\n(kein PCC_OVER_20KW\\nim trace || ladesperre))"]
+    s_do4 [shape=box fillcolor="#f8d7da" label="do4_pulse = true\\n(CH4 3s-Puls)"]
+    s13 [shape=box fillcolor="#cce5ff" label="relay_st = final\\nResult füllen: final_state, changed,\\nexcess, dc_delta, ratio, peak_h, trace"]
 
-    Start -> s1 -> s2 -> d1
-    d1 -> s3  [label="JA" color="red"]
-    d1 -> s4  [label="NEIN" color="green"]
-    s3 -> EndErr
-    s4 -> s5 -> d2
-    d2 -> s5b [label="JA" color="red"]
-    d2 -> s6  [label="NEIN" color="green"]
-    s5b -> s6
-    s6 -> sp_ls -> d_do4
-    d_do4  -> r_do4   [label="JA" color="green"]
-    d_do4  -> d_rebl  [label="NEIN" color="#888888"]
-    r_do4  -> s7
-    d_rebl -> r_rebl  [label="JA" color="orange"]
-    d_rebl -> d_weath [label="NEIN" color="#888888"]
-    r_rebl -> s7
-    d_weath -> d_good [label="JA" color="orange"]
-    d_weath -> d_sw   [label="NEIN\n(initial block)" color="#888888"]
-    d_good -> r_good  [label="JA" color="red"]
-    d_good -> r_wload [label="NEIN" color="green"]
-    r_good -> s7
-    r_wload -> s7
-    d_sw -> r_sw  [label="JA\n(ratio>0.8)" color="orange"]
-    d_sw -> r_log [label="NEIN" color="#888888"]
-    r_sw -> s7
-    r_log -> s7
-    s7 -> s8 -> s9 -> d_guard
-    d_guard -> s_byp [label="JA" color="red"]
-    d_guard -> s10   [label="NEIN" color="green"]
+    Start -> s1
+    s1 -> s1r [label="JA" color="green"]
+    s1 -> s2 [label="NEIN" color="#888888"]
+    s1r -> s2
+    s2 -> s3 -> s4 -> s5 -> s6 -> d_en
+    d_en -> d_win [label="JA" color="green"]
+    d_en -> r_free [label="NEIN" color="#888888"]
+    d_win -> d_rat [label="JA" color="orange"]
+    d_win -> r_free [label="NEIN" color="#888888"]
+    d_rat -> r_lock [label="JA" color="red"]
+    d_rat -> r_free [label="NEIN" color="green"]
+    r_lock -> s7
+    r_free -> s7
+    s7 -> s8 -> s9 -> d_g
+    d_g -> s_byp [label="JA" color="red"]
+    d_g -> s10 [label="NEIN" color="green"]
     s_byp -> s11
-    s10 -> s11 -> s12 -> s13 -> s14 -> s15 -> d3
-    d3 -> s16a [label="JA" color="green"]
-    d3 -> s16b [label="NEIN" color="#888888"]
-    s16a -> d4
-    s16b -> d4
-    d4 -> s17 [label="JA" color="red"]
-    d4 -> End [label="NEIN" color="green"]
-    s17 -> End
+    s10 -> s11 -> s12 -> d_do4
+    d_do4 -> s_do4 [label="JA" color="red"]
+    d_do4 -> s13 [label="NEIN" color="green"]
+    s_do4 -> s13 -> End
 }
 """
 
+# ── Seite 3: decide / apply_guards / apply_blocking im Detail ─────────────────
 PAGE3 = """
-digraph DecisionDetail {
+digraph WaveshareDecision {
     graph [
-        label="fox2db.py v2.9-Py — Decision Layer im Detail"
+        label="fox2db v3.3.27 — decide() / apply_guards() / apply_blocking() im Detail"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
         bgcolor="#f8f9fa" size="11,17" ratio=fill
@@ -201,109 +175,165 @@ digraph DecisionDetail {
     node [fontname="Helvetica" fontsize=10 margin="0.18,0.08" style="filled,rounded"]
     edge [fontname="Helvetica" fontsize=10 penwidth=1.2]
 
-    // ── decide() ────────────────────────────────────────────────────────
     Start [shape=oval fillcolor="#e2d9f3" label="decide()"]
-    End   [shape=oval fillcolor="#e2d9f3" label="→ (best, trace, excess)"]
+    End [shape=oval fillcolor="#e2d9f3" label="-> (best, trace, excess)"]
 
-    excess_calc [shape=box fillcolor="#c9b8f0"
-                 label="excess = pcc + ebox_eff + bat1\nebox_eff = max(ebox_w, STATE_POWER[relay_st])\n(ebox_w = echte Leistung V×I)"]
+    excess_calc [shape=box fillcolor="#c9b8f0" label="ebox_eff = relay_st>0 ? max(ebox_w, state_power(relay_st)) : 0\\nexcess = pcc + ebox_eff + bat1"]
+    d_unk [shape=diamond fillcolor="#fce8e8" label="soc2 < 0?\\n(unbekannt)"]
+    r_unk [shape=box fillcolor="#fce8e8" label="return relay_st\\nEBOX_SOC_UNKNOWN_HOLD"]
+    d_pcc [shape=diamond fillcolor="#f8d7da" label="pcc>20kW &&\\nsoc2<100?"]
+    r_pcc [shape=box fillcolor="#f8d7da" label="return min(relay_st+1,7)\\nPCC_OVER_20KW"]
+    d_prot [shape=diamond fillcolor="#fce8e8" label="prot aktiv?"]
+    d_prot2 [shape=diamond fillcolor="#fce8e8" label="soc2 < 7%?"]
+    r_emerg [shape=box fillcolor="#fce8e8" label="return 1\\nEMERGENCY_CHARGE_TO_7%"]
+    r_target [shape=box fillcolor="#fce8e8" label="return 0\\nCHARGE_TARGET_REACHED"]
+    d_excess [shape=diamond fillcolor="#fce8e8" label="excess < 1010W?"]
+    r_insuf [shape=box fillcolor="#fce8e8" label="return 0\\nINSUFFICIENT_EXCESS"]
+    pm [shape=box fillcolor="#c9b8f0" label="POWER_MATCHING\\nbudget = excess + 1500W\\nbest = höchste state_power <= budget"]
+    d_ramp [shape=diamond fillcolor="#fff3cd" label="best > relay_st &&\\nbest > next_up\\n(SORTED_STATES)?"]
+    r_ramp [shape=box fillcolor="#fff3cd" label="best = next_state_up\\nRAMP_LIMITED"]
 
-    d_soc_unk [shape=diamond fillcolor="#fce8e8" label="soc < 0?\n(unbekannt/0%)\n← prio 1"]
-    r_soc_unk [shape=box fillcolor="#fce8e8" label="return relay_st\nEBOX_SOC_UNKNOWN_HOLD"]
+    StartG [shape=oval fillcolor="#f8d7da" label="apply_guards(best, soc2, ladesperre)"]
+    GEnd [shape=oval fillcolor="#f8d7da" label="-> best, guard_fired\\nfired=true -> Blocking skip"]
+    g0 [shape=diamond fillcolor="#fce8e8" label="ladesperre?"]
+    g0r [shape=box fillcolor="#f8d7da" label="best=0\\nGUARD:LADESPERRE_BIS_PCC_20KW"]
+    g1 [shape=diamond fillcolor="#fce8e8" label="soc2 >= 100?"]
+    g1r [shape=box fillcolor="#f8d7da" label="best=0\\nGUARD:BATTERY_FULL_STOP"]
+    g2 [shape=diamond fillcolor="#fce8e8" label="0 <= soc2 < 6?"]
+    g2r [shape=box fillcolor="#f8d7da" label="best=1\\nGUARD:CRITICAL_SOC_PROTECTION"]
 
-    d_pcc20 [shape=diamond fillcolor="#f8d7da" label="pcc >20000W\nund soc <100?\n← prio 2"]
-    r_pcc20 [shape=box fillcolor="#f8d7da" label="return min(relay_st+1, 7)\nPCC_OVER_20KW"]
+    StartB [shape=oval fillcolor="#d4c5f0" label="apply_blocking()\\n(nur wenn !guard_fired)"]
+    BEnd [shape=oval fillcolor="#d4c5f0" label="-> final, changed"]
+    b_same [shape=diamond fillcolor="#d4c5f0" label="best == relay_st?"]
+    b_same_r [shape=box fillcolor="#d4c5f0" label="return relay_st\\nchanged=false"]
+    b_dir [shape=box fillcolor="#d4c5f0" label="up = power(best) > power(relay_st)\\npwr_diff = |power(best)-power(relay_st)|"]
+    b_emf [shape=diamond fillcolor="#fce8e8" label="pcc<-1020W && !up?"]
+    b_emf_r [shape=box fillcolor="#f8d7da" label="EMERGENCY_FORCE\\nreturn best, changed=true"]
+    b_rules [shape=box fillcolor="#d4c5f0" label="UP:   SWEET_SPOT_HOLD (|pcc|<160 && bat1>-310)\\n      TREND_BLOCK (drop_rate<-20)\\n      BAT_GUARD_BLOCK (bat1<-220)\\nDOWN: STABILIZING (stable<2)\\n      HYSTERESIS (pwr_diff<505)"]
+    b_blk [shape=diamond fillcolor="#d4c5f0" label="Regel greift?"]
+    b_yes [shape=box fillcolor="#d4c5f0" label="return relay_st\\nchanged=false"]
+    b_no [shape=box fillcolor="#d4c5f0" label="return best\\nchanged=true"]
 
-    d_prot  [shape=diamond fillcolor="#fce8e8" label="prot aktiv?\n← prio 3/4"]
-    d_prot2 [shape=diamond fillcolor="#fce8e8" label="soc < 7%?"]
-    r_emerg [shape=box fillcolor="#fce8e8" label="return State 1\nEMERGENCY_CHARGE_TO_7%"]
-    r_target [shape=box fillcolor="#fce8e8" label="return State 0\nCHARGE_TARGET_REACHED"]
+    Start -> excess_calc -> d_unk
+    d_unk -> r_unk [label="JA" color="red"]
+    d_unk -> d_pcc [label="NEIN" color="green"]
+    r_unk -> End
+    d_pcc -> r_pcc [label="JA" color="red"]
+    d_pcc -> d_prot [label="NEIN" color="green"]
+    r_pcc -> End
+    d_prot -> d_prot2 [label="JA" color="orange"]
+    d_prot -> d_excess [label="NEIN" color="green"]
+    d_prot2 -> r_emerg [label="JA" color="red"]
+    d_prot2 -> r_target [label="NEIN" color="green"]
+    r_emerg -> End
+    r_target -> End
+    d_excess -> r_insuf [label="JA" color="red"]
+    d_excess -> pm [label="NEIN" color="green"]
+    r_insuf -> End
+    pm -> d_ramp
+    d_ramp -> r_ramp [label="JA" color="orange"]
+    d_ramp -> End [label="NEIN" color="green"]
+    r_ramp -> End
 
-    d_excess [shape=diamond fillcolor="#fce8e8" label="excess < 1010W?\n← prio 5"]
-    r_insuf  [shape=box fillcolor="#fce8e8" label="return State 0\nINSUFFICIENT_EXCESS"]
-
-    pm     [shape=box fillcolor="#c9b8f0"
-            label="POWER_MATCHING  ← prio 6\nbudget = excess + 1500W\nbest = höchster State mit P ≤ budget"]
-    d_ramp [shape=diamond fillcolor="#fff3cd" label="best > relay_st\nund best > next_up?"]
-    r_ramp [shape=box fillcolor="#fff3cd" label="best = next_state_up(relay_st)\nRAMP_LIMITED"]
-
-    // ── apply_guards() ─────────────────────────────────────────────────
-    StartG [shape=oval fillcolor="#f8d7da" label="apply_guards(best, soc, ladesperre)"]
-    GEnd   [shape=oval fillcolor="#f8d7da" label="→ (best, trace, guard_fired)\nguard_fired=True → Blocking übersprungen"]
-
-    g0  [shape=diamond fillcolor="#fce8e8" label="ladesperre\naktiv?\n← prio 0"]
-    g0r [shape=box fillcolor="#f8d7da" label="best = 0\nGUARD:LADESPERRE_BIS_PCC_20KW"]
-    g1  [shape=diamond fillcolor="#fce8e8" label="SOC2 ≥ 100?\n← prio 7"]
-    g1r [shape=box fillcolor="#f8d7da" label="best = 0\nGUARD:BATTERY_FULL_STOP"]
-    g2  [shape=diamond fillcolor="#fce8e8" label="0 ≤ soc < 6?\n← prio 6"]
-    g2r [shape=box fillcolor="#f8d7da" label="best = 1\nGUARD:CRITICAL_SOC_PROTECTION"]
-
-    // ── apply_blocking() ───────────────────────────────────────────────
-    StartB [shape=oval fillcolor="#d4c5f0" label="apply_blocking()\n(nur wenn guard_fired == False)"]
-    BEnd   [shape=oval fillcolor="#d4c5f0" label="→ (final, changed, trace)"]
-
-    b_same  [shape=diamond fillcolor="#d4c5f0" label="best == relay_st?"]
-    b_same_r [shape=box fillcolor="#d4c5f0" label="return relay_st\nchanged=False"]
-    b_dir   [shape=box fillcolor="#d4c5f0" label="direction = UP / DOWN\npwr_diff = |P[best] − P[relay_st]|"]
-    b_emf   [shape=diamond fillcolor="#fce8e8" label="pcc < -1020W\nund DOWN?"]
-    b_emf_r [shape=box fillcolor="#f8d7da" label="EMERGENCY_FORCE\nreturn best, changed=True"]
-    b_rules [shape=box fillcolor="#d4c5f0"
-             label="Blocking Rules (in Reihenfolge):\nUP:   SWEET_SPOT_HOLD / TREND_BLOCK / BAT_GUARD_BLOCK\nDOWN: STABILIZING / HYSTERESIS"]
-    b_blk   [shape=diamond fillcolor="#d4c5f0" label="Regel greift?"]
-    b_yes   [shape=box fillcolor="#d4c5f0" label="return relay_st\nchanged=False | trace+=RULE"]
-    b_no    [shape=box fillcolor="#d4c5f0" label="return best\nchanged=True"]
-
-    // ── decide() Flow ───────────────────────────────────────────────────
-    Start       -> excess_calc
-    excess_calc -> d_soc_unk
-    d_soc_unk   -> r_soc_unk [label="JA" color="red"]
-    d_soc_unk   -> d_pcc20   [label="NEIN" color="green"]
-    r_soc_unk   -> End
-    d_pcc20     -> r_pcc20   [label="JA" color="red"]
-    d_pcc20     -> d_prot    [label="NEIN" color="green"]
-    r_pcc20     -> End
-    d_prot      -> d_prot2   [label="JA" color="orange"]
-    d_prot      -> d_excess  [label="NEIN" color="green"]
-    d_prot2     -> r_emerg   [label="JA" color="red"]
-    d_prot2     -> r_target  [label="NEIN" color="green"]
-    r_emerg     -> End
-    r_target    -> End
-    d_excess    -> r_insuf   [label="JA" color="red"]
-    d_excess    -> pm        [label="NEIN" color="green"]
-    r_insuf     -> End
-    pm          -> d_ramp
-    d_ramp      -> r_ramp    [label="JA" color="orange"]
-    d_ramp      -> End       [label="NEIN" color="green"]
-    r_ramp      -> End
-
-    // ── apply_guards() Flow ─────────────────────────────────────────────
     StartG -> g0
-    g0  -> g0r  [label="JA" color="red"]
-    g0  -> g1   [label="NEIN" color="green"]
+    g0 -> g0r [label="JA" color="red"]
+    g0 -> g1 [label="NEIN" color="green"]
     g0r -> GEnd
-    g1  -> g1r  [label="JA" color="red"]
-    g1  -> g2   [label="NEIN" color="green"]
+    g1 -> g1r [label="JA" color="red"]
+    g1 -> g2 [label="NEIN" color="green"]
     g1r -> GEnd
-    g2  -> g2r  [label="JA" color="red"]
-    g2  -> GEnd [label="NEIN" color="green"]
+    g2 -> g2r [label="JA" color="red"]
+    g2 -> GEnd [label="NEIN" color="green"]
     g2r -> GEnd
 
-    // ── apply_blocking() Flow ───────────────────────────────────────────
-    StartB   -> b_same
-    b_same   -> b_same_r [label="JA" color="#888888"]
-    b_same   -> b_dir    [label="NEIN" color="green"]
+    StartB -> b_same
+    b_same -> b_same_r [label="JA" color="#888888"]
+    b_same -> b_dir [label="NEIN" color="green"]
     b_same_r -> BEnd
-    b_dir    -> b_emf
-    b_emf    -> b_emf_r  [label="JA" color="red"]
-    b_emf    -> b_rules  [label="NEIN" color="green"]
-    b_emf_r  -> BEnd
-    b_rules  -> b_blk
-    b_blk    -> b_yes    [label="JA" color="orange"]
-    b_blk    -> b_no     [label="NEIN" color="green"]
-    b_yes    -> BEnd
-    b_no     -> BEnd
+    b_dir -> b_emf
+    b_emf -> b_emf_r [label="JA" color="red"]
+    b_emf -> b_rules [label="NEIN" color="green"]
+    b_emf_r -> BEnd
+    b_rules -> b_blk
+    b_blk -> b_yes [label="JA" color="orange"]
+    b_blk -> b_no [label="NEIN" color="green"]
+    b_yes -> BEnd
+    b_no -> BEnd
 }
 """
+
+# ── Seite 4: LADESPERRE-Zustandsmaschine + Soyo-Entladung ─────────────────────
+PAGE4 = """
+digraph WaveshareSoyo {
+    graph [
+        label="fox2db v3.3.27 — LADESPERRE-Logik + Soyo-Entladung (RS485)"
+        labelloc=t fontsize=14 fontname="Helvetica-Bold"
+        rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
+        bgcolor="#f8f9fa" size="11,17" ratio=fill
+    ]
+    node [fontname="Helvetica" fontsize=10 margin="0.18,0.08" style="filled,rounded"]
+    edge [fontname="Helvetica" fontsize=10 penwidth=1.2]
+
+    subgraph cluster_lade {
+        label="LADESPERRE — Akku morgens leer halten für >20kW-Mittagspeak" style="filled" fillcolor="#fff3cd"
+        fontname="Helvetica-Bold" fontsize=10 color="#b8860b"
+
+        L0 [shape=oval fillcolor="#ffe69c" label="step() — pro Zyklus neu bewertet\\n(zustandslos, kein DB-Event)"]
+        L1 [shape=diamond fillcolor="#fce8e8" label="has_peak?\\nbest_w > 20kW heute"]
+        L2 [shape=diamond fillcolor="#fce8e8" label="local_hour <= peak_h?"]
+        L3 [shape=diamond fillcolor="#fce8e8" label="!peak_today?\\n(pcc hat 20kW\\nnoch nicht erreicht)"]
+        L4 [shape=diamond fillcolor="#fff3cd" label="ratio_ist gültig\\n(>= 0)?"]
+        L5 [shape=diamond fillcolor="#fff3cd" label="ratio_ist <= ratio_th?\\n(default 0.5,\\nMQTT sofar/ratio)"]
+        LON [shape=box fillcolor="#f8d7da" label="LADESPERRE AKTIV\\n-> Guard -> State 0\\nbelegtes Gutwetter"]
+        LOFF [shape=box fillcolor="#d4edda" label="LADESPERRE OFF (Default)\\nSchlechtwetter / unbeurteilbar /\\nPeak gesehen / Stunde überschritten"]
+
+        L0 -> L1
+        L1 -> L2 [label="JA" color="green"]
+        L1 -> LOFF [label="NEIN" color="#888888"]
+        L2 -> L3 [label="JA" color="green"]
+        L2 -> LOFF [label="NEIN\\npeak_h überschritten" color="#888888"]
+        L3 -> L4 [label="JA" color="green"]
+        L3 -> LOFF [label="NEIN\\npeak_today" color="#888888"]
+        L4 -> L5 [label="JA" color="green"]
+        L4 -> LOFF [label="NEIN\\nratio<0 unbeurteilbar" color="#888888"]
+        L5 -> LON [label="JA" color="red"]
+        L5 -> LOFF [label="NEIN\\nratio>th Schlechtwetter" color="orange"]
+    }
+
+    subgraph cluster_soyo {
+        label="Soyo-Entladung (max 900W, alle 60s soyo/calc, RS485-TX alle 3s)" style="filled" fillcolor="#d4edda"
+        fontname="Helvetica-Bold" fontsize=10 color="#28a745"
+
+        S0 [shape=oval fillcolor="#b8dfc4" label="soyo/calc"]
+        Sd1 [shape=diamond fillcolor="#fce8e8" label="State != 0?\\n(EBox lädt)"]
+        Sd2 [shape=diamond fillcolor="#fce8e8" label="soc2 < 9%?\\n(Entladeschutz)"]
+        Sd3 [shape=diamond fillcolor="#fce8e8" label="ebox > 200W?\\n(bat2 lädt)"]
+        Sd4 [shape=diamond fillcolor="#fce8e8" label="pcc > 200W?\\n(PV-Überschuss)"]
+        Sd5 [shape=diamond fillcolor="#fff3cd" label="pcc < -100W?\\n(Netzbezug)"]
+        Sw0 [shape=box fillcolor="#dddddd" label="w = 0"]
+        Swc [shape=box fillcolor="#b8dfc4" label="w = |pcc| * 1.01\\n(+ Nacht: +468W)"]
+        Sws [shape=box fillcolor="#b8dfc4" label="w = 468W (Nacht)\\noder 10W (Tag, Standby)"]
+        Stx [shape=box fillcolor="#a8d0f5" label="RS485-Frame\\n[24 56 00 21 PH PL 80 CRC]\\nCRC=(264-PH-PL)&0xFF\\nimmer alle 3s (Keepalive 4s)"]
+
+        S0 -> Sd1
+        Sd1 -> Sw0 [label="JA" color="#888888"]
+        Sd1 -> Sd2 [label="NEIN" color="green"]
+        Sd2 -> Sw0 [label="JA" color="#888888"]
+        Sd2 -> Sd3 [label="NEIN" color="green"]
+        Sd3 -> Sw0 [label="JA" color="#888888"]
+        Sd3 -> Sd4 [label="NEIN" color="green"]
+        Sd4 -> Sw0 [label="JA" color="#888888"]
+        Sd4 -> Sd5 [label="NEIN" color="green"]
+        Sd5 -> Swc [label="JA" color="orange"]
+        Sd5 -> Sws [label="NEIN" color="green"]
+        Sw0 -> Stx
+        Swc -> Stx
+        Sws -> Stx
+    }
+}
+"""
+
+PAGES = [PAGE1, PAGE2, PAGE3, PAGE4]
 
 
 def render(dot_src: str, out_path: Path) -> Path:
@@ -313,29 +343,28 @@ def render(dot_src: str, out_path: Path) -> Path:
         ["dot", "-Tpdf", str(dot_file), "-o", str(out_path)],
         capture_output=True, text=True
     )
-    dot_file.unlink()
+    # .dot bleibt erhalten (wird mit eingecheckt)
     if result.returncode != 0:
         print(f"FEHLER {out_path.name}: {result.stderr[:200]}")
         return None
-    print(f"OK  → {out_path}")
+    print(f"OK  -> {out_path}")
     return out_path
 
 
 def main():
     pages = []
-    for i, src in enumerate([PAGE1, PAGE2, PAGE3], 1):
-        p = render(src, OUT / f"fox2db_v2_page{i}.pdf")
+    for i, src in enumerate(PAGES, 1):
+        p = render(src, OUT / f"waveshare_v3_page{i}.pdf")
         if p:
             pages.append(str(p))
 
-    if len(pages) == 3:
-        out = OUT / "fox2db_v2_flowchart.pdf"
+    if len(pages) == len(PAGES):
+        out = OUT / "waveshare_v3_flowchart.pdf"
         result = subprocess.run(["pdfunite"] + pages + [str(out)],
                                 capture_output=True, text=True)
         if result.returncode == 0:
-            print(f"\nKombiniert → {out}")
-            for p in pages:
-                Path(p).unlink()
+            print(f"\nKombiniert -> {out}")
+            # Einzelseiten bleiben erhalten (werden mit eingecheckt)
         else:
             print(f"pdfunite Fehler: {result.stderr}")
 

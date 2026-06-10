@@ -1,0 +1,68 @@
+
+digraph WaveshareSoyo {
+    graph [
+        label="fox2db v3.3.27 — LADESPERRE-Logik + Soyo-Entladung (RS485)"
+        labelloc=t fontsize=14 fontname="Helvetica-Bold"
+        rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
+        bgcolor="#f8f9fa" size="11,17" ratio=fill
+    ]
+    node [fontname="Helvetica" fontsize=10 margin="0.18,0.08" style="filled,rounded"]
+    edge [fontname="Helvetica" fontsize=10 penwidth=1.2]
+
+    subgraph cluster_lade {
+        label="LADESPERRE — Akku morgens leer halten für >20kW-Mittagspeak" style="filled" fillcolor="#fff3cd"
+        fontname="Helvetica-Bold" fontsize=10 color="#b8860b"
+
+        L0 [shape=oval fillcolor="#ffe69c" label="step() — pro Zyklus neu bewertet\n(zustandslos, kein DB-Event)"]
+        L1 [shape=diamond fillcolor="#fce8e8" label="has_peak?\nbest_w > 20kW heute"]
+        L2 [shape=diamond fillcolor="#fce8e8" label="local_hour <= peak_h?"]
+        L3 [shape=diamond fillcolor="#fce8e8" label="!peak_today?\n(pcc hat 20kW\nnoch nicht erreicht)"]
+        L4 [shape=diamond fillcolor="#fff3cd" label="ratio_ist gültig\n(>= 0)?"]
+        L5 [shape=diamond fillcolor="#fff3cd" label="ratio_ist <= ratio_th?\n(default 0.5,\nMQTT sofar/ratio)"]
+        LON [shape=box fillcolor="#f8d7da" label="LADESPERRE AKTIV\n-> Guard -> State 0\nbelegtes Gutwetter"]
+        LOFF [shape=box fillcolor="#d4edda" label="LADESPERRE OFF (Default)\nSchlechtwetter / unbeurteilbar /\nPeak gesehen / Stunde überschritten"]
+
+        L0 -> L1
+        L1 -> L2 [label="JA" color="green"]
+        L1 -> LOFF [label="NEIN" color="#888888"]
+        L2 -> L3 [label="JA" color="green"]
+        L2 -> LOFF [label="NEIN\npeak_h überschritten" color="#888888"]
+        L3 -> L4 [label="JA" color="green"]
+        L3 -> LOFF [label="NEIN\npeak_today" color="#888888"]
+        L4 -> L5 [label="JA" color="green"]
+        L4 -> LOFF [label="NEIN\nratio<0 unbeurteilbar" color="#888888"]
+        L5 -> LON [label="JA" color="red"]
+        L5 -> LOFF [label="NEIN\nratio>th Schlechtwetter" color="orange"]
+    }
+
+    subgraph cluster_soyo {
+        label="Soyo-Entladung (max 900W, alle 60s soyo/calc, RS485-TX alle 3s)" style="filled" fillcolor="#d4edda"
+        fontname="Helvetica-Bold" fontsize=10 color="#28a745"
+
+        S0 [shape=oval fillcolor="#b8dfc4" label="soyo/calc"]
+        Sd1 [shape=diamond fillcolor="#fce8e8" label="State != 0?\n(EBox lädt)"]
+        Sd2 [shape=diamond fillcolor="#fce8e8" label="soc2 < 9%?\n(Entladeschutz)"]
+        Sd3 [shape=diamond fillcolor="#fce8e8" label="ebox > 200W?\n(bat2 lädt)"]
+        Sd4 [shape=diamond fillcolor="#fce8e8" label="pcc > 200W?\n(PV-Überschuss)"]
+        Sd5 [shape=diamond fillcolor="#fff3cd" label="pcc < -100W?\n(Netzbezug)"]
+        Sw0 [shape=box fillcolor="#dddddd" label="w = 0"]
+        Swc [shape=box fillcolor="#b8dfc4" label="w = |pcc| * 1.01\n(+ Nacht: +468W)"]
+        Sws [shape=box fillcolor="#b8dfc4" label="w = 468W (Nacht)\noder 10W (Tag, Standby)"]
+        Stx [shape=box fillcolor="#a8d0f5" label="RS485-Frame\n[24 56 00 21 PH PL 80 CRC]\nCRC=(264-PH-PL)&0xFF\nimmer alle 3s (Keepalive 4s)"]
+
+        S0 -> Sd1
+        Sd1 -> Sw0 [label="JA" color="#888888"]
+        Sd1 -> Sd2 [label="NEIN" color="green"]
+        Sd2 -> Sw0 [label="JA" color="#888888"]
+        Sd2 -> Sd3 [label="NEIN" color="green"]
+        Sd3 -> Sw0 [label="JA" color="#888888"]
+        Sd3 -> Sd4 [label="NEIN" color="green"]
+        Sd4 -> Sw0 [label="JA" color="#888888"]
+        Sd4 -> Sd5 [label="NEIN" color="green"]
+        Sd5 -> Swc [label="JA" color="orange"]
+        Sd5 -> Sws [label="NEIN" color="green"]
+        Sw0 -> Stx
+        Swc -> Stx
+        Sws -> Stx
+    }
+}
