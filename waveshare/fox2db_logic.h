@@ -233,18 +233,20 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
   if (in.pcc > PCC_PEAK_TH) st.peak_today = true;
 
   // Ist-Wetter-Ratio immer berechnen (für Reporting), -1 wenn pcc_avg/DC ungültig.
-  // ratio > ladesperre_ratio ⇒ Schlechtwetter ⇒ Freigabe.
+  // ratio > ladesperre_ratio ⇒ Schlechtwetter.
   if (pcc_avg_valid && r.dc_expected > 5000)
     r.ratio = (r.dc_expected - (pcc_avg + in.ebox_w + in.bat1)) / r.dc_expected;
 
   bool ladesperre = false;
   if (ladesperre_enable) {
     bool has_peak = best_w > PCC_PEAK_TH;
-    // Nach peak_h_loc: Peak-Stunde vorbei, PCC hat 20kW nicht erreicht → laden freigeben
-    ladesperre = has_peak && win_end_loc >= 0 && !st.peak_today
-                 && (local_hour <= peak_h_loc);
-    if (ladesperre && r.ratio >= 0.0f && r.ratio > ladesperre_ratio)
-      ladesperre = false;   // Schlechtwetter (MQTT: sofar/ratio)
+    // Zeitfenster: Peak vorhergesagt, vor/in Peak-Stunde, PCC hat 20kW noch nicht erreicht.
+    bool in_window = has_peak && win_end_loc >= 0 && !st.peak_today
+                     && (local_hour <= peak_h_loc);
+    // Sperre NUR bei BELEGTEM Gutwetter: gültige Ratio UND <= Schwelle.
+    // Wetter unbeurteilbar (ratio < 0, z.B. nach Boot/Nacht) ⇒ Sperre OFF (default).
+    // Schlechtwetter (ratio > Schwelle) ⇒ Sperre OFF.
+    ladesperre = in_window && r.ratio >= 0.0f && r.ratio <= ladesperre_ratio;
   }
   r.ladesperre = ladesperre;
 

@@ -30,7 +30,7 @@ substitutions:
   wifi_ssid: f24
   wifi_password: "9876543210"
   ota_password: waveshare2026
-  fw_version: "3.3.26"     # ratio_ist (live Wetter-Ratio) + ratio_th im JSON
+  fw_version: "3.3.27"     # LADESPERRE OFF wenn Wetter unbeurteilbar (ratio<0)
 
 esphome:
   name: ${device_name}
