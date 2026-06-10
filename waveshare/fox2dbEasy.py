@@ -1,7 +1,21 @@
 #!/usr/bin/env python3
-# fox2dbEasy.py — vereinfachte Version ohne EBox-Messung.
-# EBox-Leistung wird theoretisch aus STATE_TO_POWER[relay_state] berechnet.
-# --shadow  : Relais werden NICHT geschaltet (nur Entscheidung loggen/publishen)
+# fox2dbEasy.py — Faithful Python-Port von fox2db_logic.h (fox::step).
+# Trifft dieselben Entscheidungen wie der Waveshare ESP32 (sofar_waveshare.yaml),
+# der ebenfalls fox::step() aufruft.
+#
+#   decide() -> apply_guards() -> apply_blocking()
+#   + DC-Klarhimmel-Forecast (NOAA-Sonnenstand) + RAM-Ladesperre-Zustandsmaschine.
+#
+# Inputs (wie ESP):  inverter/power_grid_exchange/json  (PCC, Bat1, SOC1)
+#                    pv_zaehl2/#                        (Z2 wirkleist, PCC-Fallback)
+#                    ebox/pwr  (retained)              (SOC2, EBox-Leistung)
+# Output:            fox2db/easy/state  (state + trace — Gründe als Debug-Feature!)
+#
+# Zustand (fox::State) wird über Cron-Zyklen in /tmp/fox2dbEasy_state.json gehalten
+# und IMMER fortgeschrieben (auch im Shadow) — sonst kann die Zustandsmaschine
+# nicht wie auf dem ESP evolvieren.
+#
+# --shadow : Relais werden NICHT geschaltet (nur Entscheidung loggen/publishen).
 # Takt: Cron jede Minute (via fox2db_wrapper.py).
 import sys
 import math
@@ -13,86 +27,181 @@ from typing import Tuple, Dict, Optional
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
-import pymysql
-from astral import LocationInfo as _LocationInfo
-from astral.sun import elevation as _astral_elevation, azimuth as _astral_azimuth
 
 SHADOW = '--shadow' in sys.argv
 
 # ═══════════════════════════════════════════════════════════════════════════
-VERSION = "v1.0-Easy"
+VERSION = "v2.0-Port"          # fox2db_logic.h v2.9-Port
 MAX_LOG_BYTES = 100 * 1024
 
-STATE_TO_POWER = {0: 0, 1: 3000, 2: 3650, 3: 6650, 4: 3900, 5: 7100, 6: 7800, 7: 11400}
-SORTED_STATES  = sorted(STATE_TO_POWER, key=lambda s: STATE_TO_POWER[s])
+# ── CONFIG (1:1 aus fox2db_logic.h) ─────────────────────────────────────────
+MIN_EXCESS       = 1200.0
+MAX_GRID_DRAW    = 1200.0
+MAX_SOC          = 100.0
+HYSTERESIS       = 505.0
+STABILIZATION    = 2
+EMERGENCY_IMPORT = 1020.0
+BAT_DISCHARGE_TH = -220.0
+SWEET_SPOT_PCC   = 160.0
+SWEET_SPOT_BAT   = -310.0
+MAX_DROP_RATE    = -20.0
+DD_LOWER         = 6
+DD_UPPER         = 8
+DD_CHARGE_TARGET = 7
+PCC_PEAK_TH      = 20000.0
+PCC_HARD_TH      = 22000.0     # bedingungsloser DO4-Trigger
 
-CONFIG = {
-    'min_excess':          1200,
-    'max_grid_draw':       1200,
-    'stabilization_cycles':   2,
-    'emergency_import':    1020,
-    'pcc_peak_threshold': 20000,
-}
+LADESPERRE_ENABLE = True       # YAML default
+LADESPERRE_RATIO  = 0.5        # YAML default (sofar/ratio)
+
+# STATE_TO_POWER {0:0,1:3000,2:3650,3:6650,4:3900,5:7100,6:7800,7:11400}
+_STATE_POWER  = [0, 3000, 3650, 6650, 3900, 7100, 7800, 11400]
+# SORTED_STATES nach Leistung sortiert: [0,1,2,4,3,5,6,7]
+SORTED_STATES = [0, 1, 2, 4, 3, 5, 6, 7]
+
+def state_power(s: int) -> int:
+    return _STATE_POWER[s] if 0 <= s <= 7 else 0
+
+def sorted_index(s: int) -> int:
+    for i in range(8):
+        if SORTED_STATES[i] == s:
+            return i
+    return 0
 
 PATHS = {
     'log':         '/tmp/fox2dbEasy.log',
-    'relay_state': '/tmp/current_relay_state_easy.txt',
-    'last_change': '/tmp/last_relay_change_easy.txt',
+    'state':       '/tmp/fox2dbEasy_state.json',   # fox::State über Cron-Zyklen
+    'relay_state': '/tmp/current_relay_state_easy.txt',  # Kompat (externe Leser)
     'result':      '/tmp/fox2dbEasy_result.txt',   # letzter State für Wrapper
 }
-
-DB_CFG = {'host': '192.168.178.218', 'db': 'wagodb', 'user': 'gh', 'pw': 'a12345'}
 
 MQTT_CFG = {
     'broker':      '192.168.178.218',
     'port':         1883,
     'topic':       'inverter/power_grid_exchange/json',
     'zaehl_topic': 'pv_zaehl2/#',
+    'ebox_topic':  'ebox/pwr',
     'timeout':      43,
     'pub_topic':   'fox2db/easy/state',
 }
 
+TZ = zoneinfo.ZoneInfo("Europe/Berlin")
+
 # ═══════════════════════════════════════════════════════════════════════════
-#                         DC-KLARHIMMEL-PROGNOSE
+#                         DC-KLARHIMMEL-FORECAST (NOAA, 1:1 aus Header)
 # ═══════════════════════════════════════════════════════════════════════════
 
-class _DcForecast:
-    _LAT, _LON = 47.6811, 11.5732
-    _TZ = zoneinfo.ZoneInfo("Europe/Berlin")
-    _ARRAYS = [(25, 80, 27_854), (60, -5, 11_138)]
+LAT, LON = 47.6811, 11.5732
+# (tilt, Azimut-Süd, Nennleistung)
+ARRAYS      = [(25, 80, 27854), (60, -5, 11138)]
+ARRAYS_EAST = [(41, -74, 19852), (60, 90, 2078), (32, 94, 2378)]
+_KT = [0, .331, .402, .563, .838, .909, .880, .840, .820, .760, .600, .350, .134]
 
-    def _calc(self, t: dt.datetime) -> float:
-        loc = _LocationInfo(latitude=self._LAT, longitude=self._LON)
-        el  = _astral_elevation(loc.observer, t)
-        if el <= 0:
-            return 0.0
-        el_r = math.radians(el)
-        total = 0.0
-        for tilt, azim, wp in self._ARRAYS:
-            az_r = math.radians(_astral_azimuth(loc.observer, t) - azim)
-            ti_r = math.radians(tilt)
-            cos_i = (math.sin(el_r) * math.cos(ti_r)
-                     + math.cos(el_r) * math.sin(ti_r) * math.cos(az_r))
-            total += max(0, cos_i) * wp
-        return round(total * 0.78)
+def kt_month(m: int) -> float:
+    return _KT[m] if 1 <= m <= 12 else 0.60
 
-    def now(self) -> float:
-        return self._calc(dt.datetime.now(self._TZ))
+def _d2r(d: float) -> float:
+    return d * math.pi / 180.0
 
-    def peak_today(self, threshold=20_000):
-        today = dt.date.today()
-        best_w, best_t, window_end = 0.0, None, None
-        for hour in range(5, 21):
-            t = dt.datetime(today.year, today.month, today.day, hour, 0,
-                            tzinfo=self._TZ)
-            w = self._calc(t)
-            if w > best_w:
-                best_w, best_t = w, t
-            if w > threshold:
-                window_end = t
-        return best_w, best_t, best_w > threshold, window_end
+# NOAA-Sonnenstand: Elevation + Azimut (von Nord, im Uhrzeigersinn) für unix-UTC.
+def sun_pos(t_utc: float) -> Tuple[float, float]:
+    g = time.gmtime(t_utc)
+    hour  = g.tm_hour + g.tm_min / 60.0 + g.tm_sec / 3600.0
+    yday0 = g.tm_yday - 1                 # C struct tm tm_yday ist 0-basiert
+    gamma = 2.0 * math.pi / 365.0 * (yday0 + (hour - 12) / 24.0)
+    eqtime = 229.18 * (0.000075 + 0.001868 * math.cos(gamma) - 0.032077 * math.sin(gamma)
+                       - 0.014615 * math.cos(2 * gamma) - 0.040849 * math.sin(2 * gamma))
+    decl = (0.006918 - 0.399912 * math.cos(gamma) + 0.070257 * math.sin(gamma)
+            - 0.006758 * math.cos(2 * gamma) + 0.000907 * math.sin(2 * gamma)
+            - 0.002697 * math.cos(3 * gamma) + 0.00148 * math.sin(3 * gamma))
+    tst = hour * 60.0 + eqtime + 4.0 * LON           # tz = UTC
+    ha  = tst / 4.0 - 180.0                            # Stundenwinkel (Grad)
+    har, latr = _d2r(ha), _d2r(LAT)
+    cosz = math.sin(latr) * math.sin(decl) + math.cos(latr) * math.cos(decl) * math.cos(har)
+    cosz = max(-1.0, min(1.0, cosz))
+    elev = 90.0 - math.acos(cosz) * 180.0 / math.pi
+    az_s = math.atan2(math.sin(har), math.cos(har) * math.sin(latr) - math.tan(decl) * math.cos(latr))
+    az   = (az_s * 180.0 / math.pi + 180.0 + 360.0) % 360.0   # 0 = N
+    return elev, az
 
-DC = _DcForecast()
+def cos_aoi(elev: float, azN: float, tilt: float, azS: float) -> float:
+    e, b = _d2r(elev), _d2r(tilt)
+    da = _d2r((azN - 180.0) - azS)
+    return math.sin(e) * math.cos(b) + math.cos(e) * math.sin(b) * math.cos(da)
+
+def calc_arrays(arrs, t_utc: float, month: int) -> float:
+    elev, azN = sun_pos(t_utc)
+    if elev <= 0:
+        return 0.0
+    am = min(1.0 / math.sin(_d2r(elev)), 37.0)
+    T  = 0.7 ** (am ** 0.678)
+    kt = kt_month(month)
+    s = 0.0
+    for tilt, azS, power in arrs:
+        s += power * T * kt * max(0.0, cos_aoi(elev, azN, tilt, azS))
+    return s
+
+def dc_now(t_utc: float, month: int) -> float:
+    return calc_arrays(ARRAYS, t_utc, month) + calc_arrays(ARRAYS_EAST, t_utc, month)
+
+# ═══════════════════════════════════════════════════════════════════════════
+#                         ZUSTAND (fox::State, persistent)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class State:
+    def __init__(self):
+        self.relay_st    = 0
+        self.stable      = 0
+        self.last_excess = 0.0
+        self.prot        = False          # Tiefentladeschutz (Hysterese)
+        self.peak_today  = False          # pcc hat heute PCC_PEAK_TH überschritten
+        self.last_yday   = -1
+        self.pcc_buf     = [0.0] * 10
+        self.pcc_n       = 0
+        self.pcc_i       = 0
+
+def load_state() -> State:
+    st = State()
+    try:
+        d = json.loads(Path(PATHS['state']).read_text())
+    except Exception:
+        return st
+    st.relay_st    = int(d.get('relay_st', 0))
+    st.stable      = int(d.get('stable', 0))
+    st.last_excess = float(d.get('last_excess', 0.0))
+    st.prot        = bool(d.get('prot', False))
+    st.peak_today  = bool(d.get('peak_today', False))
+    st.last_yday   = int(d.get('last_yday', -1))
+    buf            = [float(x) for x in d.get('pcc_buf', [])]
+    st.pcc_buf     = (buf + [0.0] * 10)[:10]
+    st.pcc_n       = int(d.get('pcc_n', 0))
+    st.pcc_i       = int(d.get('pcc_i', 0))
+    return st
+
+def save_state(st: State):
+    Path(PATHS['state']).write_text(json.dumps({
+        'relay_st': st.relay_st, 'stable': st.stable, 'last_excess': st.last_excess,
+        'prot': st.prot, 'peak_today': st.peak_today, 'last_yday': st.last_yday,
+        'pcc_buf': st.pcc_buf, 'pcc_n': st.pcc_n, 'pcc_i': st.pcc_i,
+    }))
+
+class Inputs:
+    def __init__(self, pcc, bat1, soc1, soc2, ebox_w):
+        self.pcc, self.bat1, self.soc1, self.soc2, self.ebox_w = pcc, bat1, soc1, soc2, ebox_w
+
+class Result:
+    def __init__(self):
+        self.final_state = 0
+        self.changed     = False
+        self.do4_pulse   = False
+        self.ladesperre  = False
+        self.excess = 0.0
+        self.dc_expected = 0.0
+        self.dc_delta = 0.0
+        self.ratio = -1.0
+        self.peak_h = -1
+        self.win_end_h = -1
+        self.trace = ""
 
 # ═══════════════════════════════════════════════════════════════════════════
 #                         HILFSFUNKTIONEN
@@ -108,13 +217,6 @@ def _log(msg: str):
     with open(PATHS['log'], 'a') as f:
         f.write(line)
 
-def _read(path, as_float=False):
-    try:
-        v = Path(path).read_text().strip()
-        return float(v) if as_float else int(v)
-    except Exception:
-        return 0.0 if as_float else 0
-
 def _write(path, value):
     Path(path).write_text(str(value))
 
@@ -129,12 +231,15 @@ def fetch_mqtt() -> Optional[Dict]:
     def on_message(client, userdata, msg):
         nonlocal data, received
         try:
-            j = json.loads(msg.payload.decode())
+            raw = msg.payload.decode()
+            j   = json.loads(raw)
+            pcc_val = j.get('ActivePower_PCC_Total')
             data = {
-                'pcc':      float(j.get('ActivePower_PCC_Total') or 0) * 1000,
-                'bat1':     float(j.get('Power_Bat1')            or 0) * 1000,
-                'soc_bat1': float(j.get('SOC_Bat1')              or 0),
-                'load_sys': float(j.get('ActivePower_Load_Sys')  or 0) * 1000,
+                'pcc':      float(pcc_val or 0) * 1000,
+                'pcc_null': (pcc_val is None) or ('"ActivePower_PCC_Total":null' in raw),
+                'bat1':     float(j.get('Power_Bat1') or 0) * 1000,
+                'soc1':     float(j.get('SOC_Bat1')   or 0),
+                'load_sys': float(j.get('ActivePower_Load_Sys') or 0) * 1000,
             }
             received = True
             client.disconnect()
@@ -188,107 +293,210 @@ def fetch_z2() -> float:
         pass
     return received[0] if received else 0.0
 
-# ═══════════════════════════════════════════════════════════════════════════
-#                         DB / LADESPERRE
-# ═══════════════════════════════════════════════════════════════════════════
 
-def _db_connect():
-    return pymysql.connect(host=DB_CFG['host'], database=DB_CFG['db'],
-                           user=DB_CFG['user'], password=DB_CFG['pw'],
-                           connect_timeout=3)
+def fetch_ebox() -> Tuple[float, float]:
+    """ebox/pwr (retained) → (soc2, ebox_w).  soc2=-1 = unbekannt (HOLD)."""
+    got = {}
 
-def _db_relay_event(action, relay, state_new, reason):
-    if SHADOW:
-        _log(f"Shadow: DB relay_event unterdrückt: {action}/{relay} → {reason}")
-        return
+    def on_message(_c, _u, msg):
+        try:
+            j = json.loads(msg.payload.decode())
+            got['soc']   = float(j.get('soc', -1))
+            got['power'] = float(j.get('power_w', 0))
+        except Exception:
+            pass
+
+    client = mqtt.Client(client_id="fox2dbeasy_ebox", clean_session=True)
+    client.on_message = on_message
     try:
-        conn = _db_connect()
-        cur  = conn.cursor()
-        cur.execute(
-            "INSERT INTO pv_relay_events (ts,action,relay,state_new,reason) "
-            "VALUES (NOW(),%s,%s,%s,%s)",
-            (action, relay, state_new, reason[:255]))
-        conn.commit(); conn.close()
-    except Exception as e:
-        _log(f"DB relay_event error: {e}")
-
-def _ladesperre_events_today():
-    try:
-        conn = _db_connect()
-        cur  = conn.cursor()
-        cur.execute("SELECT action, relay FROM pv_relay_events "
-                    "WHERE relay IN ('do4','ladesperre') AND DATE(ts) = CURDATE()")
-        rows = cur.fetchall()
-        conn.close()
-        do4     = any(r[1] == 'do4'                                     for r in rows)
-        weather = any(r[1] == 'ladesperre' and r[0] == 'schlechtwetter' for r in rows)
-        reblock = any(r[1] == 'ladesperre' and r[0] == 'gutwetter'      for r in rows)
-        return do4, weather, reblock
+        client.connect(MQTT_CFG['broker'], MQTT_CFG['port'], keepalive=10)
+        client.subscribe(MQTT_CFG['ebox_topic'], qos=0)   # retained → kommt sofort
+        client.loop_start()
+        deadline = time.monotonic() + 3.0
+        while 'soc' not in got and time.monotonic() < deadline:
+            time.sleep(0.05)
+        client.loop_stop()
+        client.disconnect()
     except Exception:
-        return None
+        pass
+    return got.get('soc', -1.0), got.get('power', 0.0)
 
-def _pcc_avg_10min():
-    try:
-        conn = _db_connect()
-        cur  = conn.cursor()
-        cur.execute("SELECT AVG(pcc_w), COUNT(*) FROM pv_decision_log "
-                    "WHERE ts >= NOW() - INTERVAL 10 MINUTE AND pcc_w IS NOT NULL")
-        avg, count = cur.fetchone()
-        conn.close()
-        return float(avg) if avg is not None and count >= 3 else None
-    except Exception:
-        return None
+# ═══════════════════════════════════════════════════════════════════════════
+#                         ENTSCHEIDUNGSLOGIK (1:1 aus fox2db_logic.h)
+# ═══════════════════════════════════════════════════════════════════════════
 
-def _ladesperre_state(pcc_avg, ebox_w, bat1, dc_expected) -> bool:
-    _peak_w, _peak_t, _has_peak, _win_end = DC.peak_today()
-    now_dt     = dt.datetime.now(DC._TZ)
-    peak_ahead = _has_peak and _win_end is not None and now_dt < _win_end
+def decide(in_: Inputs, relay_st: int, prot: bool) -> Tuple[int, str, float]:
+    ebox_eff = max(in_.ebox_w, float(state_power(relay_st))) if relay_st > 0 else 0.0
+    excess = in_.pcc + ebox_eff + in_.bat1
 
-    events = _ladesperre_events_today()
-    if events is None:
-        return False
+    if in_.soc2 < 0:
+        ea = in_.ebox_w if relay_st > 0 else 0.0
+        return relay_st, "EBOX_SOC_UNKNOWN_HOLD", in_.pcc + ea + in_.bat1
 
-    do4_today, weather_rel, goodweather_rebl = events
-    ratio = None
-    if pcc_avg is not None and dc_expected > 5000:
-        ratio = (dc_expected - (pcc_avg + ebox_w + bat1)) / dc_expected
+    if in_.pcc > PCC_PEAK_TH and in_.soc2 < MAX_SOC:
+        next_st = min(relay_st + 1, 7)
+        if next_st > relay_st:
+            return next_st, f"PCC_OVER_20KW (SOC={in_.soc2:.0f}% State{relay_st}->{next_st})", excess
 
-    if do4_today:
-        return False
-    elif goodweather_rebl:
-        if not peak_ahead:
-            _log("GUTWETTER-REBLOCK beendet — Peak-Fenster vorbei")
-        return peak_ahead
-    elif weather_rel:
-        if peak_ahead and dc_expected > 10000 and ratio is not None and ratio < 0.4:
-            reason = f"Gutwetter zurueck PCC-avg={pcc_avg:.0f}W ratio={ratio:.0%}"
-            _db_relay_event("gutwetter", "ladesperre", 1, reason)
-            _log(f"GUTWETTER-REBLOCK — {reason}")
-            return True
-        return False
+    if prot:
+        if in_.soc2 < DD_CHARGE_TARGET:
+            return 1, f"EMERGENCY_CHARGE_TO_7% ({in_.soc2:.1f}%)", excess
+        return 0, f"CHARGE_TARGET_REACHED ({in_.soc2:.1f}%)", excess
+
+    if excess < MIN_EXCESS:
+        return 0, f"INSUFFICIENT_EXCESS ({excess:.0f}W)", excess
+
+    budget = excess + MAX_GRID_DRAW
+    best, best_pow = 0, -1
+    for s in range(8):
+        p = state_power(s)
+        if p <= budget and p > best_pow:
+            best, best_pow = s, p
+    trace = f"POWER_MATCHING (Excess: {excess:.0f}W, Budget: {budget:.0f}W)"
+
+    if best > relay_st:                       # Ramp-Limiting (State-Nr.-Vergleich)
+        idx = sorted_index(relay_st)
+        next_st = SORTED_STATES[idx + 1 if idx + 1 < 8 else 7]
+        if best > next_st:
+            trace += f" | RAMP_LIMITED ({best}->{next_st})"
+            best = next_st
+
+    return best, trace, excess
+
+
+def apply_guards(best: int, soc2: float, ladesperre: bool, trace: str) -> Tuple[int, bool, str]:
+    if ladesperre:
+        if best != 0:
+            trace += " | GUARD:LADESPERRE_BIS_PCC_20KW"
+        return 0, True, trace
+    if soc2 >= MAX_SOC:
+        if best != 0:
+            trace += " | GUARD:BATTERY_FULL_STOP"
+        return 0, True, trace
+    if 0 <= soc2 < DD_LOWER:
+        if best != 1:
+            trace += " | GUARD:CRITICAL_SOC_PROTECTION_ACTIVATE"
+        return 1, True, trace
+    return best, False, trace
+
+
+def apply_blocking(best: int, relay_st: int, pcc: float, bat1: float,
+                   stable: int, drop_rate: float, trace: str) -> Tuple[int, bool, str]:
+    if best == relay_st:
+        return relay_st, False, trace
+    pwr_diff = abs(state_power(best) - state_power(relay_st))
+    up = state_power(best) > state_power(relay_st)
+    if pcc < -EMERGENCY_IMPORT and not up:
+        return best, True, trace + f" | EMERGENCY_FORCE (Import={pcc:.0f}W)"
+    if up and abs(pcc) < SWEET_SPOT_PCC and bat1 > SWEET_SPOT_BAT:
+        return relay_st, False, trace + " | SWEET_SPOT_HOLD"
+    if up and drop_rate < MAX_DROP_RATE and drop_rate != 0:
+        return relay_st, False, trace + " | TREND_BLOCK"
+    if up and bat1 < BAT_DISCHARGE_TH:
+        return relay_st, False, trace + " | BAT_GUARD_BLOCK"
+    if not up and stable < STABILIZATION:
+        return relay_st, False, trace + " | STABILIZING"
+    if not up and pwr_diff < HYSTERESIS:
+        return relay_st, False, trace + " | HYSTERESIS"
+    return best, True, trace
+
+
+def step(in_: Inputs, st: State, now_local: dt.datetime,
+         ladesperre_enable: bool, ladesperre_ratio: float) -> Result:
+    r = Result()
+    now_utc       = now_local.timestamp()
+    local_sec_day = now_local.hour * 3600 + now_local.minute * 60 + now_local.second
+    month         = now_local.month
+    local_hour    = now_local.hour
+    local_yday    = now_local.timetuple().tm_yday
+
+    if local_yday != st.last_yday:            # Mitternachts-Reset
+        st.pcc_n = 0
+        st.pcc_i = 0
+        st.peak_today = False
+        st.last_yday  = local_yday
+
+    r.dc_expected = dc_now(now_utc, month)
+
+    st.pcc_buf[st.pcc_i] = in_.pcc
+    st.pcc_i = (st.pcc_i + 1) % 10
+    if st.pcc_n < 10:
+        st.pcc_n += 1
+    pcc_avg_valid = st.pcc_n >= 3
+    pcc_avg = sum(st.pcc_buf[:st.pcc_n]) / st.pcc_n if pcc_avg_valid else 0.0
+
+    # Peak-Fenster immer berechnen (auch ohne ladesperre_enable) → für Reporting
+    midnight = now_utc - local_sec_day
+    best_w = 0.0
+    peak_h_loc, win_end_loc = -1, -1
+    for h in range(5, 21):
+        w = dc_now(midnight + h * 3600, month)
+        if w > best_w:
+            best_w, peak_h_loc = w, h
+        if w > PCC_PEAK_TH:
+            win_end_loc = h
+    r.peak_h    = peak_h_loc if best_w > PCC_PEAK_TH else -1
+    r.win_end_h = win_end_loc
+
+    if in_.pcc > PCC_PEAK_TH:
+        st.peak_today = True
+
+    # Ist-Wetter-Ratio (ratio > Schwelle ⇒ Schlechtwetter); -1 = nicht berechenbar
+    if pcc_avg_valid and r.dc_expected > 5000:
+        r.ratio = (r.dc_expected - (pcc_avg + in_.ebox_w + in_.bat1)) / r.dc_expected
+
+    ladesperre = False
+    if ladesperre_enable:
+        has_peak  = best_w > PCC_PEAK_TH
+        in_window = (has_peak and win_end_loc >= 0 and not st.peak_today
+                     and local_hour <= peak_h_loc)
+        ladesperre = in_window and r.ratio >= 0.0 and r.ratio <= ladesperre_ratio
+    r.ladesperre = ladesperre
+
+    best, trace, excess = decide(in_, st.relay_st, st.prot)
+    best, guard_fired, trace = apply_guards(best, in_.soc2, ladesperre, trace)
+
+    drop_rate = (excess - st.last_excess) / 30.0 if st.last_excess > 0 else 0.0
+    st.last_excess = excess
+
+    if guard_fired:                            # Schutz unbypassbar
+        final_state = best
+        changed = (best != st.relay_st)
     else:
-        if ratio is not None:
-            if ratio > 0.8:
-                reason = f"Schlechtwetter PCC-avg={pcc_avg:.0f}W ratio={ratio:.0%}"
-                _db_relay_event("schlechtwetter", "ladesperre", 0, reason)
-                _log(f"LADESPERRE aufgehoben — {reason}")
-                return False
-            else:
-                _log(f"LADESPERRE aktiv ratio={ratio:.0%}")
-        else:
-            _log("LADESPERRE aktiv — PCC-Avg noch aufbauend")
-        return True
+        final_state, changed, trace = apply_blocking(
+            best, st.relay_st, in_.pcc, in_.bat1, st.stable, drop_rate, trace)
+
+    st.stable = 0 if changed else st.stable + 1
+
+    if in_.soc2 >= 0:                          # Deep-Discharge-Hysterese
+        if in_.soc2 < DD_LOWER:
+            st.prot = True
+        elif in_.soc2 >= DD_UPPER:
+            st.prot = False
+
+    need_down = (in_.pcc > PCC_HARD_TH) or \
+                ((in_.pcc > PCC_PEAK_TH) and (not trace.startswith("PCC_OVER_20KW") or ladesperre))
+    r.do4_pulse = need_down
+
+    st.relay_st  = final_state
+    r.final_state = final_state
+    r.changed     = changed
+    r.excess      = excess
+    r.dc_delta    = r.dc_expected - (in_.pcc + in_.ebox_w + in_.bat1)
+    r.trace       = trace[:159]
+    return r
 
 # ═══════════════════════════════════════════════════════════════════════════
-#                         RELAY CONTROL
+#                         RELAY CONTROL / PUBLISH
 # ═══════════════════════════════════════════════════════════════════════════
 
-def set_relay(state: int, reason: str = ""):
+def set_relay(state: int, do4_pulse: bool, reason: str = ""):
     if SHADOW:
-        _log(f"Shadow: Relay→{state} unterdrückt | {reason}")
+        _log(f"Shadow: Relay→{state} (do4={do4_pulse}) unterdrückt | {reason}")
         return
+    # sofar/auto wird bewusst NICHT angefasst: auto bleibt default=1 (ESP regelt
+    # selbst); Übernahme durch externen Controller nur per manuellem MQTT sofar/auto 0.
     payloads = {
-        'sofar/auto':        '{"ENABLE":0}',
         'waveshare/relay/1': f'{{"v":{1 if state & 1 else 0}}}',
         'waveshare/relay/2': f'{{"v":{1 if state & 2 else 0}}}',
         'waveshare/relay/3': f'{{"v":{1 if state & 4 else 0}}}',
@@ -298,22 +506,29 @@ def set_relay(state: int, reason: str = ""):
         client.connect(MQTT_CFG['broker'], MQTT_CFG['port'], keepalive=10)
         for topic, payload in payloads.items():
             client.publish(topic, payload, qos=0).wait_for_publish(timeout=3)
+        if do4_pulse:                          # CH4 3s-Puls → WR2 abregeln
+            client.publish('waveshare/relay/4', '{"v":1}', qos=0).wait_for_publish(timeout=3)
+            time.sleep(3)
+            client.publish('waveshare/relay/4', '{"v":0}', qos=0).wait_for_publish(timeout=3)
     except Exception as e:
         _log(f"MQTT relay error: {e}")
     finally:
         try: client.disconnect()
         except Exception: pass
     _write(PATHS['relay_state'], state)
-    _log(f"Relay: State→{state} | {reason}")
+    _log(f"Relay: State→{state} (do4={do4_pulse}) | {reason}")
 
 
-def publish_state(state: int, pcc: float, bat1: float, ebox_w: float,
-                  excess: float, trace: str):
+def publish_state(r: Result, in_: Inputs):
     payload = json.dumps({
-        "version": VERSION, "state": state,
-        "pcc": round(pcc), "bat1": round(bat1),
-        "ebox": round(ebox_w), "excess": round(excess),
-        "trace": trace,
+        "version": VERSION, "state": r.final_state, "changed": r.changed,
+        "pcc": round(in_.pcc), "bat1": round(in_.bat1),
+        "soc1": round(in_.soc1, 1), "soc2": round(in_.soc2, 1),
+        "ebox": round(in_.ebox_w), "excess": round(r.excess),
+        "dc_expected": round(r.dc_expected), "dc_delta": round(r.dc_delta),
+        "ratio": round(r.ratio, 2), "ladesperre": r.ladesperre, "do4": r.do4_pulse,
+        "peak_h": r.peak_h, "win_end_h": r.win_end_h,
+        "trace": r.trace,                      # Gründe — Debug-Feature
         "ts": dt.datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
     }, separators=(',', ':'))
     client = mqtt.Client(client_id="fox2dbeasy_pub", clean_session=True)
@@ -327,36 +542,6 @@ def publish_state(state: int, pcc: float, bat1: float, ebox_w: float,
         except Exception: pass
 
 # ═══════════════════════════════════════════════════════════════════════════
-#                         ENTSCHEIDUNGSLOGIK
-# ═══════════════════════════════════════════════════════════════════════════
-
-def decide(pcc: float, ebox_w: float, bat1: float, relay_st: int) -> Tuple[int, str, float]:
-    excess = pcc + ebox_w + bat1
-
-    if pcc < -CONFIG['emergency_import']:
-        return 0, f"EMERGENCY_IMPORT (PCC={pcc:.0f}W)", excess
-
-    if pcc > CONFIG['pcc_peak_threshold']:
-        return relay_st, f"PCC_OVER_20KW (PCC={pcc:.0f}W)", excess
-
-    if excess < CONFIG['min_excess']:
-        return 0, f"INSUFFICIENT_EXCESS ({excess:.0f}W)", excess
-
-    budget = excess + CONFIG['max_grid_draw']
-    best   = max((s for s, p in STATE_TO_POWER.items() if p <= budget),
-                 key=lambda s: STATE_TO_POWER[s], default=0)
-    trace  = f"POWER_MATCHING (Excess: {excess:.0f}W, Budget: {budget:.0f}W)"
-
-    if best > relay_st:
-        idx     = SORTED_STATES.index(relay_st) if relay_st in SORTED_STATES else 0
-        next_st = SORTED_STATES[min(idx + 1, len(SORTED_STATES) - 1)]
-        if best > next_st:
-            trace += f" | RAMP_LIMITED ({best}->{next_st})"
-            best = next_st
-
-    return best, trace, excess
-
-# ═══════════════════════════════════════════════════════════════════════════
 #                              MAIN
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -365,54 +550,45 @@ def main():
 
     mqtt_data = fetch_mqtt()
     if mqtt_data is None:
-        _log("SHUTDOWN: MQTT failed")
+        # Frische-Check fehlgeschlagen → Sicher auf State 0 (wie YAML MQTT_STALE_SAFE)
+        _log("SHUTDOWN: MQTT failed → MQTT_STALE_SAFE")
+        st = load_state()
+        st.relay_st = 0
+        save_state(st)
         if not SHADOW:
-            set_relay(0, "MQTT failed")
-        _write(PATHS['result'], '-1')
+            set_relay(0, False, "MQTT_STALE_SAFE")
+        _write(PATHS['result'], '0')
         return
 
-    wirkleist = fetch_z2()
-    raw_pcc   = mqtt_data['pcc']
-    bat1      = mqtt_data['bat1']
-    load_sys  = mqtt_data['load_sys']
-    relay_st  = _read(PATHS['relay_state'])
-    stable    = _read(PATHS['last_change'])
+    z2       = fetch_z2()
+    soc2, ebox_w = fetch_ebox()
 
-    if math.isnan(raw_pcc):
-        pcc = abs(min(0.0, wirkleist))
-        _log(f"PCC=NaN → Z2={wirkleist:.0f}W")
-    else:
-        pcc = raw_pcc
+    pcc  = mqtt_data['pcc']
+    bat1 = mqtt_data['bat1']
+    soc1 = mqtt_data['soc1']
+    # PCC: Inverter-Wert, Z2 nur als Fallback bei null-Lesefehler (wie YAML)
+    if mqtt_data['pcc_null'] and z2 != 0.0:
+        pcc = -z2
+        _log(f"PCC=null → Z2-Fallback PCC={pcc:.0f}W")
 
-    ebox_w = float(STATE_TO_POWER.get(relay_st, 0))
-    dc_exp = DC.now()
+    st = load_state()
+    in_ = Inputs(pcc=pcc, bat1=bat1, soc1=soc1, soc2=soc2, ebox_w=ebox_w)
 
-    _log(f"Data: PCC={pcc:.0f}W  Bat1={bat1:.0f}W  EBox(theo)={ebox_w:.0f}W"
-         f"  Load={load_sys:.0f}W  DC={dc_exp:.0f}W  State={relay_st}  Stable={stable}")
+    _log(f"Data: PCC={pcc:.0f}W  Bat1={bat1:.0f}W  SOC1={soc1:.1f}%  SOC2={soc2:.1f}%  "
+         f"EBox={ebox_w:.0f}W  State={st.relay_st}  Stable={st.stable}  Prot={st.prot}")
 
-    best, trace, excess = decide(pcc, ebox_w, bat1, relay_st)
+    now_local = dt.datetime.now(TZ)
+    r = step(in_, st, now_local, LADESPERRE_ENABLE, LADESPERRE_RATIO)
 
-    pcc_avg    = _pcc_avg_10min()
-    ladesperre = _ladesperre_state(pcc_avg, ebox_w, bat1, dc_exp)
-    if ladesperre and best != 0:
-        trace += " | GUARD:LADESPERRE_BIS_PCC_20KW"
-        best = 0
+    # Zustand IMMER fortschreiben (auch im Shadow) — sonst evolviert die FSM nicht.
+    save_state(st)
 
-    if best > relay_st and stable < CONFIG['stabilization_cycles']:
-        trace += f" | STABILIZING ({stable}/{CONFIG['stabilization_cycles']})"
-        best = relay_st
+    _log(f"Result: State {r.final_state} (changed={r.changed} ladesperre={r.ladesperre} "
+         f"do4={r.do4_pulse} ratio={r.ratio:.2f}) TRACE: {r.trace}")
 
-    _log(f"Result: State {best} (TRACE: {trace})")
-
-    # Ergebnis für Wrapper in Datei schreiben
-    _write(PATHS['result'], best)
-
-    changed = (best != relay_st)
-    if not SHADOW:
-        _write(PATHS['last_change'], 0 if changed else stable + 1)
-
-    set_relay(best, trace)
-    publish_state(best, pcc, bat1, ebox_w, excess, trace)
+    _write(PATHS['result'], r.final_state)
+    set_relay(r.final_state, r.do4_pulse, r.trace)
+    publish_state(r, in_)
 
 
 if __name__ == '__main__':
