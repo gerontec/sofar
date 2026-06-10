@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-waveshare_compare.py — 24h Vergleich: fox2db.py (Pi) vs Waveshare ESP32
-Subscriptions: fox2db/state + sofar/state
+waveshare_compare.py — 24h Vergleich: fox2dbEasy.py (Pi) vs Waveshare ESP32
+Subscriptions: fox2db/easy/state + sofar/waveshare/status
 Meldet nur Abweichungen. Start: jetzt, Ende: 24h später.
 """
 import json, time, datetime, signal, sys
@@ -38,11 +38,11 @@ def on_message(client, userdata, msg):
     except Exception:
         return
 
-    if msg.topic == 'fox2db/state':
+    if msg.topic == 'fox2db/easy/state':
         fox_state = int(j.get('state', -1))
         fox_trace = j.get('trace', '')
 
-    elif msg.topic == 'sofar/state':
+    elif msg.topic == 'sofar/waveshare/status':
         ws_state = int(j.get('state', -1))
         ws_trace = j.get('trace', '')
         if fox_state is None:
@@ -51,7 +51,7 @@ def on_message(client, userdata, msg):
         if ws_state != fox_state:
             diverge += 1
             log(f"DIVERGENZ #{diverge}/{total}: "
-                f"fox2db=State{fox_state} ({fox_trace[:50]}) | "
+                f"easy=State{fox_state} ({fox_trace[:50]}) | "
                 f"waveshare=State{ws_state} ({ws_trace[:50]})")
         # Stündliche Zusammenfassung
         if total % 60 == 0:
@@ -64,13 +64,13 @@ def on_signal(sig, frame):
 signal.signal(signal.SIGTERM, on_signal)
 signal.signal(signal.SIGINT, on_signal)
 
-log(f"Start 24h Vergleich — fox2db/state vs sofar/state (Abweichungen werden gemeldet)")
+log(f"Start 24h Vergleich — fox2db/easy/state vs sofar/waveshare/status (Abweichungen werden gemeldet)")
 
 client = mqtt.Client(client_id="ws_compare_24h", clean_session=True)
 client.on_message = on_message
 client.connect(BROKER, 1883, 60)
-client.subscribe('fox2db/state')
-client.subscribe('sofar/state')
+client.subscribe('fox2db/easy/state')
+client.subscribe('sofar/waveshare/status')
 
 while time.monotonic() < deadline:
     client.loop(timeout=1.0)

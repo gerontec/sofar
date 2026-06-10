@@ -118,6 +118,7 @@ struct Result {
   bool  do4_pulse = false;
   bool  ladesperre = false;
   float excess = 0, dc_expected = 0, dc_delta = 0;
+  float ratio = -1.0f;  // Ist-Wetter-Ratio (Anteil fehlender Klarhimmel-Leistung; -1 = nicht berechenbar)
   int   peak_h = -1;    // lokale Stunde des DC-Peaks (-1 = kein Peak heute)
   int   win_end_h = -1; // letzte lokale Stunde mit dc > PCC_PEAK_TH
   char  trace[160] = "";
@@ -196,7 +197,8 @@ inline int apply_blocking(int best, int relay_st, float pcc, float bat1, int sta
 //  local_sec_day:  Sekunden seit lokaler Mitternacht (hour*3600+min*60+sec)
 //  month, hour, yday: lokale Zeitfelder
 inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_day,
-                   int month, int local_hour, int local_yday, bool ladesperre_enable) {
+                   int month, int local_hour, int local_yday, bool ladesperre_enable,
+                   float ladesperre_ratio = 0.5f) {
   Result r;
   if (local_yday != st.last_yday) {            // Mitternachts-Reset
     st.pcc_n = 0; st.pcc_i = 0;
@@ -226,19 +228,23 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
   r.win_end_h = win_end_loc;
 
   // LADESPERRE: zeitbasiert bis win_end_h.
-  // Freigabe: Schlechtwetter (ratio>0.8) ODER pcc>20kW ODER Peak-Stunde überschritten.
+  // Freigabe: Schlechtwetter (ratio>ladesperre_ratio) ODER pcc>20kW ODER Peak-Stunde überschritten.
   // peak_today verhindert Oszillation nach Freigabe durch pcc-Abfall beim Laden.
   if (in.pcc > PCC_PEAK_TH) st.peak_today = true;
+
+  // Ist-Wetter-Ratio immer berechnen (für Reporting), -1 wenn pcc_avg/DC ungültig.
+  // ratio > ladesperre_ratio ⇒ Schlechtwetter ⇒ Freigabe.
+  if (pcc_avg_valid && r.dc_expected > 5000)
+    r.ratio = (r.dc_expected - (pcc_avg + in.ebox_w + in.bat1)) / r.dc_expected;
+
   bool ladesperre = false;
   if (ladesperre_enable) {
     bool has_peak = best_w > PCC_PEAK_TH;
     // Nach peak_h_loc: Peak-Stunde vorbei, PCC hat 20kW nicht erreicht → laden freigeben
-    ladesperre = has_peak && win_end_loc >= 0 && (local_hour < win_end_loc) && !st.peak_today
+    ladesperre = has_peak && win_end_loc >= 0 && !st.peak_today
                  && (local_hour <= peak_h_loc);
-    if (ladesperre && pcc_avg_valid && r.dc_expected > 5000) {
-      float ratio = (r.dc_expected - (pcc_avg + in.ebox_w + in.bat1)) / r.dc_expected;
-      if (ratio > 0.8f) ladesperre = false;   // Schlechtwetter
-    }
+    if (ladesperre && r.ratio >= 0.0f && r.ratio > ladesperre_ratio)
+      ladesperre = false;   // Schlechtwetter (MQTT: sofar/ratio)
   }
   r.ladesperre = ladesperre;
 
