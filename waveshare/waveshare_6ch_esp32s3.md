@@ -25,6 +25,43 @@ RS485 (SP3485-Transceiver)
 
 ---
 
+## Firmware-Architektur — Scheduling
+
+Die Zyklen werden **nicht** von einem RTOS-Timer pro Aufgabe getaktet, sondern vom
+**ESPHome-Software-Scheduler** in einer einzigen kooperativen Hauptschleife:
+
+```
+FreeRTOS loopTask (Arduino-Core, ESP32-S3)
+  └─ Arduino loop() → App.loop()        (ESPHome-Hauptschleife, läuft so schnell wie möglich)
+       └─ esphome::Scheduler (millis-basiert)
+            └─ interval:-Komponenten   ← hier liegen ALLE Zyklen
+```
+
+Framework ist `arduino` (`esp32: framework: type: arduino`): ein einzelner
+FreeRTOS-`loopTask` führt `loop()` → `App.loop()` aus. Jedes `interval:` ist via
+`App.scheduler.set_interval()` registriert und wird **jede** Schleifeniteration gegen
+`millis()` geprüft. **Kooperativ — kein Preemption, kein eigener Task pro Interval.**
+
+| Intervall | Aufgabe |
+|---:|---|
+| **60 s** | **Entscheidungs-Zyklus → `fox::step()`** (der eigentliche Reglertakt) |
+| 60 s | Soyo-Kalkulation → `soyo/calc` |
+| 50 ms | RS485: Soyo-TX (alle 3 s) + Frame-Empfang (25 ms Gap) |
+| 30 s | Board-Telemetrie (`pub_status`) |
+| 1 ms | GPIO-Edge-Scan (nur on-demand aktiv) |
+
+**Konsequenzen:**
+- Eine lange `lambda` (z. B. die NOAA-Sonnenstands-Rechnung im 60-s-Block) blockiert
+  *alle* anderen Intervalle, bis sie fertig ist → schwere Rechnung bewusst nur 1×/60 s;
+  der zeitkritische Soyo-Keepalive liegt im schlanken 50-ms-Interval (max. 50 ms Jitter,
+  Soyo-Timeout 4 s).
+- Timing-Basis ist `millis()` **ab Boot**, nicht auf die volle Minute synchronisiert.
+  SNTP (`id: sntp_time`) liefert nur die Wanduhr *innerhalb* des Lambdas
+  (Stunde/Monat/Tag für DC-Forecast & Ladesperre-Fenster) — es taktet den Zyklus nicht.
+- Frische-Check ebenfalls `millis()`-basiert: WR-Daten > 3 min alt → Zwangs-State 0.
+
+---
+
 ## Ladelogik — fox2db (EBox2-Steuerung via CH1–CH3)
 
 ### State-Tabelle
