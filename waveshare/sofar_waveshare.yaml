@@ -30,7 +30,7 @@ substitutions:
   wifi_ssid: f24
   wifi_password: "9876543210"
   ota_password: waveshare2026
-  fw_version: "3.3.28"     # State-1-Schwelle +20%: MIN_EXCESS=1200, MAX_GRID_DRAW=1200
+  fw_version: "3.3.30"     # Vereinfachung: MIN_EXCESS raus, SWEET_SPOT_BAT raus, EMERGENCY=G+120
 
 esphome:
   name: ${device_name}

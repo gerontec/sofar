@@ -19,15 +19,14 @@
 namespace fox {
 
 // ── CONFIG (1:1 aus fox2db.py) ───────────────────────────────────────────────
-constexpr float MIN_EXCESS       = 1200.0f;
-constexpr float MAX_GRID_DRAW    = 1200.0f;
+constexpr float MAX_GRID_DRAW    = 900.0f;
 constexpr float MAX_SOC          = 100.0f;
 constexpr float HYSTERESIS       = 505.0f;
 constexpr int   STABILIZATION    = 2;
-constexpr float EMERGENCY_IMPORT = 1020.0f;
-constexpr float BAT_DISCHARGE_TH = -220.0f;
+constexpr float EMERGENCY_MARGIN = 120.0f;                          // harter Abwurf erst bei G + Margin
+constexpr float EMERGENCY_IMPORT = MAX_GRID_DRAW + EMERGENCY_MARGIN; // = 1020 W (an G gekoppelt)
+constexpr float BAT_DISCHARGE_TH = -110.0f;
 constexpr float SWEET_SPOT_PCC   = 160.0f;
-constexpr float SWEET_SPOT_BAT   = -310.0f;
 constexpr float MAX_DROP_RATE    = -20.0f;
 constexpr int   DD_LOWER         = 6;
 constexpr int   DD_UPPER         = 8;
@@ -148,12 +147,12 @@ inline int decide(const Inputs &in, int relay_st, bool prot, char *trace, float 
     if (in.soc2 < DD_CHARGE_TARGET) { snprintf(trace, 80, "EMERGENCY_CHARGE_TO_7%% (%.1f%%)", in.soc2); return 1; }
     snprintf(trace, 80, "CHARGE_TARGET_REACHED (%.1f%%)", in.soc2); return 0;
   }
-  if (excess < MIN_EXCESS) {
-    snprintf(trace, 80, "INSUFFICIENT_EXCESS (%.0fW)", excess); *excess_out = excess; return 0;
-  }
   float budget = excess + MAX_GRID_DRAW;
   int best = 0, best_pow = -1;
   for (int s = 0; s <= 7; s++) { int p = state_power(s); if (p <= budget && p > best_pow) { best = s; best_pow = p; } }
+  if (best == 0) {                             // Quantisierer liefert 0 -> Überschuss reicht nicht für State 1
+    snprintf(trace, 80, "INSUFFICIENT_EXCESS (%.0fW)", excess); *excess_out = excess; return 0;
+  }
   snprintf(trace, 120, "POWER_MATCHING (Excess: %.0fW, Budget: %.0fW)", excess, budget);
   if (best > relay_st) {                       // Ramp-Limiting (State-Nr.-Vergleich, wie Python)
     int idx = sorted_index(relay_st);
@@ -184,7 +183,7 @@ inline int apply_blocking(int best, int relay_st, float pcc, float bat1, int sta
     char t[48]; snprintf(t, 48, " | EMERGENCY_FORCE (Import=%.0fW)", pcc); tcat(trace, t);
     *changed = true; return best;
   }
-  if (up && fabsf(pcc) < SWEET_SPOT_PCC && bat1 > SWEET_SPOT_BAT) { tcat(trace, " | SWEET_SPOT_HOLD"); *changed = false; return relay_st; }
+  if (up && fabsf(pcc) < SWEET_SPOT_PCC)                        { tcat(trace, " | SWEET_SPOT_HOLD"); *changed = false; return relay_st; }
   if (up && drop_rate < MAX_DROP_RATE && drop_rate != 0)         { tcat(trace, " | TREND_BLOCK");     *changed = false; return relay_st; }
   if (up && bat1 < BAT_DISCHARGE_TH)                            { tcat(trace, " | BAT_GUARD_BLOCK"); *changed = false; return relay_st; }
   if (!up && stable < STABILIZATION)                           { tcat(trace, " | STABILIZING");     *changed = false; return relay_st; }

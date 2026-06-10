@@ -1,7 +1,7 @@
 
 digraph WaveshareSoyo {
     graph [
-        label="fox2db v3.3.27 — LADESPERRE-Logik + Soyo-Entladung (RS485)"
+        label="fox2db v3.3.30 — LADESPERRE-Logik + Soyo-Entladung (RS485)"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
         bgcolor="#f8f9fa" size="11,17" ratio=fill

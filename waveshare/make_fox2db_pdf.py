@@ -114,20 +114,20 @@ def build():
         ("h", "Schritt-Rekursion  x_k=(s,c,E)"),
         ("m", r"$e_{\mathrm{eff}} = \max(e_k,\,P_{s_{k-1}})\quad (s_{k-1}>0)$"),
         ("m", r"$E_k = p_k + e_{\mathrm{eff}} + b_k$"),
-        ("m", r"$\tau_k = 0\;\;(E_k<E_{\min}),\quad \tau_k=Q(E_k+G)\;\;\mathrm{sonst}$"),
+        ("m", r"$\tau_k = Q(E_k+G)\;\;(0=\mathrm{unzureichend})$"),
         ("m", r"$Q(B)=\mathrm{groesster}\ \mathrm{State}\ s\ \mathrm{mit}\ P_s \leq B$"),
         ("h", "Hochrampe (max. eine Leistungsstufe / Takt)"),
         ("m", r"$\tilde\tau_k=\min(\tau_k,\;\hat{s}(\mathrm{rang}(s_{k-1})+1))$"),
         ("h", "Schalt-/Schutzlogik  (Reihenfolge = Priorität)"),
         ("mono",
-         "EMERGENCY_FORCE :  pcc < -1020  und  runter   -> sofort schalten\n"
-         "SWEET_SPOT_HOLD :  hoch & |pcc|<160 & bat1>-310 -> halten\n"
+         "EMERGENCY_FORCE :  pcc < -1020 (=-(G+120)) & runter -> sofort schalten\n"
+         "SWEET_SPOT_HOLD :  hoch & |pcc|<160              -> halten\n"
          "TREND_BLOCK     :  hoch & dE/dt < -20 W/s       -> halten\n"
-         "BAT_GUARD_BLOCK :  hoch & bat1 < -220 W         -> halten\n"
+         "BAT_GUARD_BLOCK :  hoch & bat1 < -110 W         -> halten\n"
          "STABILIZING     :  runter & c < 2 Takte         -> halten\n"
          "HYSTERESIS      :  runter & |dP| < 505 W        -> halten"),
         ("h", "Konstanten"),
-        ("m", r"$E_{\min}=1200,\;G=1200,\;H=505,\;N=2\;\;\mathrm{[W]}$"),
+        ("m", r"$G=900,\;H=505,\;N=2,\;\mathrm{EMERG}=G+120\;\mathrm{[W]}$"),
         ("h", "Totband (Gleichgewicht, Last an  e_eff=P_s)"),
         ("m", r"$-G \;<\; p \;<\; \left(\Pi^{+}(s)-P_s\right)-G$"),
     ])
@@ -173,7 +173,7 @@ def build():
     ax.set_xlabel("Netzaustausch pcc [W]   (links = Bezug, rechts = Einspeisung)")
     ax.set_xlim(-2500, 4500); ax.grid(axis="x", alpha=0.3)
     ax.text(0.02, 0.02,
-            "Unterkante immer -G = -1200 W (Abregeln via EMERGENCY/down).\n"
+            "Unterkante immer -G = -900 W (Abregeln; hart erst bei -1020 = -(G+120)).\n"
             "Oberkante = nächste Leistungsstufe - P[s] - G (dann Hochschalten).",
             transform=ax.transAxes, fontsize=8.5, va="bottom",
             bbox=dict(boxstyle="round", fc="#f3f3f3", ec="0.7"))

@@ -11,8 +11,7 @@ Hysterese). Kein PID, kein LTI. Zustand x = (s, c):
 Rekursion pro 60-s-Takt:
     ebox_eff = max(ebox, P[s])      falls s>0, sonst 0          (Selbstkopplung)
     E        = pcc + ebox_eff                                   (Überschuss)
-    target   = 0                    falls E < MIN_EXCESS
-             = Q(E + MAX_GRID_DRAW) sonst                       (Quantisierer)
+    target   = Q(E + MAX_GRID_DRAW)                             (Quantisierer; 0 = unzureichend)
     ramped   = ramp(target, s)                                  (Hochrampe ≤1 Stufe)
     s'       = blocking(ramped, s, c, pcc)                      (Hysterese/Schutz)
 
@@ -28,15 +27,14 @@ from typing import Tuple, Callable
 P            = [0, 3000, 3650, 6650, 3900, 7100, 7800, 11400]   # State → Leistung [W]
 SORTED       = [0, 1, 2, 4, 3, 5, 6, 7]                          # nach Leistung aufsteigend
 RANK         = {s: i for i, s in enumerate(SORTED)}             # State → Leistungs-Rang
-MIN_EXCESS       = 1200.0
-MAX_GRID_DRAW    = 1200.0   # G — erlaubter Netzbezug ins Budget
+MAX_GRID_DRAW    = 900.0    # G — erlaubter Netzbezug ins Budget
 HYSTERESIS       = 505.0    # H
 STABILIZATION    = 2        # N
-EMERGENCY_IMPORT = 1020.0
+EMERGENCY_MARGIN = 120.0    # harter Abwurf erst bei G + Margin
+EMERGENCY_IMPORT = MAX_GRID_DRAW + EMERGENCY_MARGIN   # = 1020 (an G gekoppelt)
 # nur für das volle (pcc, ebox, bat1)-Modell:
 SWEET_SPOT_PCC   = 160.0    # |pcc| darunter ⇒ Sweet-Spot (kein Hochschalten)
-SWEET_SPOT_BAT   = -310.0   # bat1 darüber ⇒ Batterie ~neutral
-BAT_DISCHARGE_TH = -220.0   # bat1 darunter ⇒ Sofar entlädt ⇒ kein Hochschalten
+BAT_DISCHARGE_TH = -110.0   # bat1 darunter ⇒ Sofar entlädt ⇒ kein Hochschalten
 MAX_DROP_RATE    = -20.0    # Excess-Steigung [W/s] darunter ⇒ Trendwende
 
 
@@ -53,9 +51,8 @@ def quantize(B: float) -> int:
 def target_state(s_prev: int, pcc: float, ebox: float) -> Tuple[int, float, str]:
     ebox_eff = max(ebox, float(P[s_prev])) if s_prev > 0 else 0.0
     E = pcc + ebox_eff
-    if E < MIN_EXCESS:
-        return 0, E, "INSUFFICIENT_EXCESS"
-    return quantize(E + MAX_GRID_DRAW), E, "POWER_MATCHING"
+    t = quantize(E + MAX_GRID_DRAW)
+    return t, E, ("INSUFFICIENT_EXCESS" if t == 0 else "POWER_MATCHING")
 
 
 # ── Ramp-Varianten (einziger Unterschied der beiden Modelle) ─────────────────
@@ -123,7 +120,7 @@ def blocking_full(ramped: int, s_prev: int, c: int, pcc: float, bat1: float,
     up = P[ramped] > P[s_prev]
     if pcc < -EMERGENCY_IMPORT and not up:
         return ramped, 0, "|EMERGENCY_FORCE"
-    if up and abs(pcc) < SWEET_SPOT_PCC and bat1 > SWEET_SPOT_BAT:
+    if up and abs(pcc) < SWEET_SPOT_PCC:
         return s_prev, c + 1, "|SWEET_SPOT_HOLD"
     if up and drop_rate < MAX_DROP_RATE and drop_rate != 0:
         return s_prev, c + 1, "|TREND_BLOCK"
@@ -141,10 +138,8 @@ def _step_full(s: int, c: int, last_excess: float, pcc: float, ebox: float,
                ) -> Tuple[int, int, float, str]:
     ebox_eff = max(ebox, float(P[s])) if s > 0 else 0.0
     excess = pcc + ebox_eff + bat1
-    if excess < MIN_EXCESS:
-        target, trace = 0, "INSUFFICIENT_EXCESS"
-    else:
-        target, trace = quantize(excess + MAX_GRID_DRAW), "POWER_MATCHING"
+    target = quantize(excess + MAX_GRID_DRAW)
+    trace = "INSUFFICIENT_EXCESS" if target == 0 else "POWER_MATCHING"
     ramped, capped = ramp(target, s)
     if capped:
         trace += "|RAMP_LIMITED"
@@ -253,22 +248,22 @@ def _run_tests() -> None:
     print("2) Totband / Sweet-Spot halten (State 6, Last an ebox=7800, stabil c=5):")
     for f in (step_literal, step_rank):
         nm = f.__name__
-        check(f(6, 5, -1000, 7800)[0] == 6, f"{nm}: pcc=-1000 hält 6")
+        check(f(6, 5,  -800, 7800)[0] == 6, f"{nm}: pcc=-800 hält 6")
         check(f(6, 5,  2000, 7800)[0] == 6, f"{nm}: pcc=+2000 hält 6")
-        check(f(6, 5, -1200, 7800)[0] == 6, f"{nm}: pcc=-1200 (Rand) hält 6")
-        check(f(6, 5, -1201, 7800)[0] == 5, f"{nm}: pcc=-1201 → runter (5)")
-        check(f(6, 5,  2400, 7800)[0] == 7, f"{nm}: pcc=+2400 → hoch (7)")
-        check(f(6, 5,  2399, 7800)[0] == 6, f"{nm}: pcc=+2399 hält 6")
+        check(f(6, 5,  -900, 7800)[0] == 6, f"{nm}: pcc=-900 (Rand) hält 6")
+        check(f(6, 5,  -901, 7800)[0] == 5, f"{nm}: pcc=-901 → runter (5)")
+        check(f(6, 5,  2700, 7800)[0] == 7, f"{nm}: pcc=+2700 → hoch (7)")
+        check(f(6, 5,  2699, 7800)[0] == 6, f"{nm}: pcc=+2699 hält 6")
     lo, hi = hold_band(6)
-    check((lo, hi) == (-1200.0, 2400.0), f"hold_band(6) = (-1200, 2400)")
+    check((lo, hi) == (-900.0, 2700.0), f"hold_band(6) = (-900, 2700)")
 
     print("3) Up-Rampe max. 1 Stufe (aus State 0, riesiger Überschuss):")
     check(step_literal(0, 0, 20000, 0)[0] == 1, "literal: 0 → 1 (nicht 7)")
     check(step_rank(0, 0, 20000, 0)[0] == 1,    "rank:    0 → 1 (nicht 7)")
 
     print("4) DIVERGENZ literal vs. rank (aus State 2, Ziel-Leistung 6650W):")
-    sl = step_literal(2, 5, 2000, 3650)
-    sr = step_rank(2, 5, 2000, 3650)
+    sl = step_literal(2, 5, 2200, 3650)
+    sr = step_rank(2, 5, 2200, 3650)
     print(f"     literal: {sl}")
     print(f"     rank:    {sr}")
     check(sl[0] == 3, "literal springt 2 → 3  (State-Nummer 3>2, Cap 4 greift nicht)")
@@ -304,13 +299,13 @@ def _run_tests() -> None:
     s, c, le, tr = step_full_literal(1, 5, 5000.0, 500.0, 3000.0, 0.0)
     check(s == 1 and "TREND_BLOCK" in tr, "TREND_BLOCK: drop_rate=-50 blockt Hochschalten")
     # 7d BAT_GUARD_BLOCK: bat1<-220 (Sofar entlädt), pcc>160
-    s, c, le, tr = step_full_literal(1, 5, 0.0, 500.0, 3000.0, -300.0)
-    check(s == 1 and "BAT_GUARD_BLOCK" in tr, "BAT_GUARD_BLOCK: bat1=-300 blockt Hochschalten")
+    s, c, le, tr = step_full_literal(1, 5, 0.0, 500.0, 3000.0, -150.0)
+    check(s == 1 and "BAT_GUARD_BLOCK" in tr, "BAT_GUARD_BLOCK: bat1=-150 < -110 blockt Hochschalten")
     # 7e STABILIZING jetzt erreichbar: down, pcc>-1020 (kein Emergency), c<2, gap≥H
     s, c, le, tr = step_full_literal(6, 0, 0.0, -1000.0, 7800.0, -500.0)
     check(s == 6 and "STABILIZING" in tr, "STABILIZING: down geblockt (c=0), pcc=-1000>-1020")
     # 7f HYSTERESIS jetzt erreichbar: down mit kleinem Sprung (7100→6650, gap 450<505), c≥2
-    s, c, le, tr = step_full_literal(5, 5, 0.0, -1000.0, 7100.0, -400.0)
+    s, c, le, tr = step_full_literal(5, 5, 0.0, -1000.0, 7100.0, -200.0)
     check(s == 5 and "HYSTERESIS" in tr, "HYSTERESIS: down 5→3 geblockt (gap 450<505)")
 
     print("8) Physikalische Grenzen (Sicherung 3×50A, PV 35kWp, bat1 5kWh, bat2 30kWh):")
@@ -335,10 +330,10 @@ def _run_tests() -> None:
     check(abs(dsoc_per_cycle(P[7], BAT1_KWH) - 3.8) < 1e-2, "bat1 (5kWh) @ 11.4kW = +3.8 %/min")
 
     print(f"\nAlle {n} Checks bestanden. ✅")
-    print("\nHinweis: Im reinen (pcc,ebox)-Modell sind STABILIZING/HYSTERESIS strukturell")
-    print("inaktiv (jeder Down braucht pcc<-1200 ⇒ immer zuerst EMERGENCY_FORCE bei pcc<-1020).")
-    print("Mit bat1 als 3. Eingang werden sie erreichbar (7e/7f): negatives bat1 erzwingt einen")
-    print("Down auch bei pcc>-1020. step_full_* ist damit 1:1 zu fox2db_logic.h (ohne soc2-Guards).")
+    print("\nHinweis: MAX_GRID_DRAW=900 < EMERGENCY_IMPORT=1020 ⇒ die Down-Schwelle (-G=-900 W)")
+    print("liegt jetzt ÜBER der Emergency-Schwelle (-1020 W). Im Fenster -1020..-900 W schaltet")
+    print("der Regler gedämpft runter (STABILIZING/HYSTERESIS) statt per EMERGENCY_FORCE —")
+    print("anders als bei G=1200. step_full_* bleibt 1:1 zu fox2db_logic.h (ohne soc2-Guards).")
 
 
 if __name__ == "__main__":

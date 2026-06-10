@@ -35,15 +35,14 @@ VERSION = "v2.0-Port"          # fox2db_logic.h v2.9-Port
 MAX_LOG_BYTES = 100 * 1024
 
 # ── CONFIG (1:1 aus fox2db_logic.h) ─────────────────────────────────────────
-MIN_EXCESS       = 1200.0
-MAX_GRID_DRAW    = 1200.0
+MAX_GRID_DRAW    = 900.0
 MAX_SOC          = 100.0
 HYSTERESIS       = 505.0
 STABILIZATION    = 2
-EMERGENCY_IMPORT = 1020.0
-BAT_DISCHARGE_TH = -220.0
+EMERGENCY_MARGIN = 120.0                          # harter Abwurf erst bei G + Margin
+EMERGENCY_IMPORT = MAX_GRID_DRAW + EMERGENCY_MARGIN   # = 1020.0 (an G gekoppelt)
+BAT_DISCHARGE_TH = -110.0
 SWEET_SPOT_PCC   = 160.0
-SWEET_SPOT_BAT   = -310.0
 MAX_DROP_RATE    = -20.0
 DD_LOWER         = 6
 DD_UPPER         = 8
@@ -343,15 +342,14 @@ def decide(in_: Inputs, relay_st: int, prot: bool) -> Tuple[int, str, float]:
             return 1, f"EMERGENCY_CHARGE_TO_7% ({in_.soc2:.1f}%)", excess
         return 0, f"CHARGE_TARGET_REACHED ({in_.soc2:.1f}%)", excess
 
-    if excess < MIN_EXCESS:
-        return 0, f"INSUFFICIENT_EXCESS ({excess:.0f}W)", excess
-
     budget = excess + MAX_GRID_DRAW
     best, best_pow = 0, -1
     for s in range(8):
         p = state_power(s)
         if p <= budget and p > best_pow:
             best, best_pow = s, p
+    if best == 0:                             # Quantisierer liefert 0 → Überschuss < State 1
+        return 0, f"INSUFFICIENT_EXCESS ({excess:.0f}W)", excess
     trace = f"POWER_MATCHING (Excess: {excess:.0f}W, Budget: {budget:.0f}W)"
 
     if best > relay_st:                       # Ramp-Limiting (State-Nr.-Vergleich)
@@ -388,7 +386,7 @@ def apply_blocking(best: int, relay_st: int, pcc: float, bat1: float,
     up = state_power(best) > state_power(relay_st)
     if pcc < -EMERGENCY_IMPORT and not up:
         return best, True, trace + f" | EMERGENCY_FORCE (Import={pcc:.0f}W)"
-    if up and abs(pcc) < SWEET_SPOT_PCC and bat1 > SWEET_SPOT_BAT:
+    if up and abs(pcc) < SWEET_SPOT_PCC:
         return relay_st, False, trace + " | SWEET_SPOT_HOLD"
     if up and drop_rate < MAX_DROP_RATE and drop_rate != 0:
         return relay_st, False, trace + " | TREND_BLOCK"
