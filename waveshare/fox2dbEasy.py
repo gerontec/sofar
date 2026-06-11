@@ -35,6 +35,7 @@ VERSION = "v2.0-Port"          # fox2db_logic.h v2.9-Port
 MAX_LOG_BYTES = 100 * 1024
 
 # ── CONFIG (1:1 aus fox2db_logic.h) ─────────────────────────────────────────
+MIN_EXCESS       = 2500.0
 MAX_GRID_DRAW    = 900.0
 MAX_SOC          = 100.0
 HYSTERESIS       = 505.0
@@ -342,14 +343,14 @@ def decide(in_: Inputs, relay_st: int, prot: bool) -> Tuple[int, str, float]:
             return 1, f"EMERGENCY_CHARGE_TO_7% ({in_.soc2:.1f}%)", excess
         return 0, f"CHARGE_TARGET_REACHED ({in_.soc2:.1f}%)", excess
 
+    if excess < MIN_EXCESS:
+        return 0, f"INSUFFICIENT_EXCESS ({excess:.0f}W)", excess
     budget = excess + MAX_GRID_DRAW
     best, best_pow = 0, -1
     for s in range(8):
         p = state_power(s)
         if p <= budget and p > best_pow:
             best, best_pow = s, p
-    if best == 0:                             # Quantisierer liefert 0 → Überschuss < State 1
-        return 0, f"INSUFFICIENT_EXCESS ({excess:.0f}W)", excess
     trace = f"POWER_MATCHING (Excess: {excess:.0f}W, Budget: {budget:.0f}W)"
 
     if best > relay_st:                       # Ramp-Limiting (State-Nr.-Vergleich)

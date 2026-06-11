@@ -30,7 +30,7 @@ substitutions:
   wifi_ssid: f24
   wifi_password: "9876543210"
   ota_password: waveshare2026
-  fw_version: "3.3.30"     # Vereinfachung: MIN_EXCESS raus, SWEET_SPOT_BAT raus, EMERGENCY=G+120
+  fw_version: "3.3.31"     # MIN_EXCESS wieder rein @2500W (Lade-Schwelle hoch, kein Morgen-Netzladen)
 
 esphome:
   name: ${device_name}

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ════════════════════════════════════════════════════════════════════════════
-#  Diagramm-Generator — NUR Waveshare-Version (fox2db v3.3.30, ESP32-S3 6CH)
+#  Diagramm-Generator — NUR Waveshare-Version (fox2db v3.3.31, ESP32-S3 6CH)
 #  Quelle: waveshare/fox2db_logic.h + waveshare/waveshare_6ch_esp32s3.md
 #  Mehrseitiges PDF, Mindest-Schriftgröße 10.
 # ════════════════════════════════════════════════════════════════════════════
@@ -13,7 +13,7 @@ OUT = Path(__file__).parent
 PAGE1 = """
 digraph WaveshareArch {
     graph [
-        label="fox2db v3.3.30 — Waveshare ESP32-S3 6CH — Architektur (fox2db_logic.h, autonom auf dem ESP)"
+        label="fox2db v3.3.31 — Waveshare ESP32-S3 6CH — Architektur (fox2db_logic.h, autonom auf dem ESP)"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=ortho nodesep=0.6 ranksep=0.8
         bgcolor="#f8f9fa" size="11,17" ratio=fill
@@ -102,7 +102,7 @@ digraph WaveshareArch {
 PAGE2 = """
 digraph WaveshareStep {
     graph [
-        label="fox2db v3.3.30 — step() Gesamtablauf (alle 60s, fox2db_logic.h)"
+        label="fox2db v3.3.31 — step() Gesamtablauf (alle 60s, fox2db_logic.h)"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
         bgcolor="#f8f9fa" size="11,17" ratio=fill
@@ -167,7 +167,7 @@ digraph WaveshareStep {
 PAGE3 = """
 digraph WaveshareDecision {
     graph [
-        label="fox2db v3.3.30 — decide() / apply_guards() / apply_blocking() im Detail"
+        label="fox2db v3.3.31 — decide() / apply_guards() / apply_blocking() im Detail"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
         bgcolor="#f8f9fa" size="11,17" ratio=fill
@@ -187,9 +187,9 @@ digraph WaveshareDecision {
     d_prot2 [shape=diamond fillcolor="#fce8e8" label="soc2 < 7%?"]
     r_emerg [shape=box fillcolor="#fce8e8" label="return 1\\nEMERGENCY_CHARGE_TO_7%"]
     r_target [shape=box fillcolor="#fce8e8" label="return 0\\nCHARGE_TARGET_REACHED"]
-    pm [shape=box fillcolor="#c9b8f0" label="POWER_MATCHING\\nbudget = excess + 900W (MAX_GRID_DRAW)\\nbest = höchste state_power <= budget"]
-    d_zero [shape=diamond fillcolor="#fce8e8" label="best == 0?\\n(Überschuss < State 1)"]
+    d_excess [shape=diamond fillcolor="#fce8e8" label="excess < 2500W?\\n(MIN_EXCESS)"]
     r_insuf [shape=box fillcolor="#fce8e8" label="return 0\\nINSUFFICIENT_EXCESS"]
+    pm [shape=box fillcolor="#c9b8f0" label="POWER_MATCHING\\nbudget = excess + 900W (MAX_GRID_DRAW)\\nbest = höchste state_power <= budget"]
     d_ramp [shape=diamond fillcolor="#fff3cd" label="best > relay_st &&\\nbest > next_up\\n(SORTED_STATES)?"]
     r_ramp [shape=box fillcolor="#fff3cd" label="best = next_state_up\\nRAMP_LIMITED"]
 
@@ -222,15 +222,15 @@ digraph WaveshareDecision {
     d_pcc -> d_prot [label="NEIN" color="green"]
     r_pcc -> End
     d_prot -> d_prot2 [label="JA" color="orange"]
-    d_prot -> pm [label="NEIN" color="green"]
+    d_prot -> d_excess [label="NEIN" color="green"]
     d_prot2 -> r_emerg [label="JA" color="red"]
     d_prot2 -> r_target [label="NEIN" color="green"]
     r_emerg -> End
     r_target -> End
-    pm -> d_zero
-    d_zero -> r_insuf [label="JA" color="red"]
-    d_zero -> d_ramp [label="NEIN" color="green"]
+    d_excess -> r_insuf [label="JA" color="red"]
+    d_excess -> pm [label="NEIN" color="green"]
     r_insuf -> End
+    pm -> d_ramp
     d_ramp -> r_ramp [label="JA" color="orange"]
     d_ramp -> End [label="NEIN" color="green"]
     r_ramp -> End
@@ -266,7 +266,7 @@ digraph WaveshareDecision {
 PAGE4 = """
 digraph WaveshareSoyo {
     graph [
-        label="fox2db v3.3.30 — LADESPERRE-Logik + Soyo-Entladung (RS485)"
+        label="fox2db v3.3.31 — LADESPERRE-Logik + Soyo-Entladung (RS485)"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
         bgcolor="#f8f9fa" size="11,17" ratio=fill

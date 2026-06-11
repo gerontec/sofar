@@ -19,6 +19,7 @@
 namespace fox {
 
 // ── CONFIG (1:1 aus fox2db.py) ───────────────────────────────────────────────
+constexpr float MIN_EXCESS       = 2500.0f;  // Mindest-Überschuss zum Laden (State 1)
 constexpr float MAX_GRID_DRAW    = 900.0f;
 constexpr float MAX_SOC          = 100.0f;
 constexpr float HYSTERESIS       = 505.0f;
@@ -147,12 +148,12 @@ inline int decide(const Inputs &in, int relay_st, bool prot, char *trace, float 
     if (in.soc2 < DD_CHARGE_TARGET) { snprintf(trace, 80, "EMERGENCY_CHARGE_TO_7%% (%.1f%%)", in.soc2); return 1; }
     snprintf(trace, 80, "CHARGE_TARGET_REACHED (%.1f%%)", in.soc2); return 0;
   }
+  if (excess < MIN_EXCESS) {
+    snprintf(trace, 80, "INSUFFICIENT_EXCESS (%.0fW)", excess); *excess_out = excess; return 0;
+  }
   float budget = excess + MAX_GRID_DRAW;
   int best = 0, best_pow = -1;
   for (int s = 0; s <= 7; s++) { int p = state_power(s); if (p <= budget && p > best_pow) { best = s; best_pow = p; } }
-  if (best == 0) {                             // Quantisierer liefert 0 -> Überschuss reicht nicht für State 1
-    snprintf(trace, 80, "INSUFFICIENT_EXCESS (%.0fW)", excess); *excess_out = excess; return 0;
-  }
   snprintf(trace, 120, "POWER_MATCHING (Excess: %.0fW, Budget: %.0fW)", excess, budget);
   if (best > relay_st) {                       // Ramp-Limiting (State-Nr.-Vergleich, wie Python)
     int idx = sorted_index(relay_st);

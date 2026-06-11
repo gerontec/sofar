@@ -11,7 +11,8 @@ Hysterese). Kein PID, kein LTI. Zustand x = (s, c):
 Rekursion pro 60-s-Takt:
     ebox_eff = max(ebox, P[s])      falls s>0, sonst 0          (Selbstkopplung)
     E        = pcc + ebox_eff                                   (Überschuss)
-    target   = Q(E + MAX_GRID_DRAW)                             (Quantisierer; 0 = unzureichend)
+    target   = 0                    falls E < MIN_EXCESS
+             = Q(E + MAX_GRID_DRAW) sonst                       (Quantisierer)
     ramped   = ramp(target, s)                                  (Hochrampe ≤1 Stufe)
     s'       = blocking(ramped, s, c, pcc)                      (Hysterese/Schutz)
 
@@ -27,6 +28,7 @@ from typing import Tuple, Callable
 P            = [0, 3000, 3650, 6650, 3900, 7100, 7800, 11400]   # State → Leistung [W]
 SORTED       = [0, 1, 2, 4, 3, 5, 6, 7]                          # nach Leistung aufsteigend
 RANK         = {s: i for i, s in enumerate(SORTED)}             # State → Leistungs-Rang
+MIN_EXCESS       = 2500.0   # Mindest-Überschuss zum Laden (State 1)
 MAX_GRID_DRAW    = 900.0    # G — erlaubter Netzbezug ins Budget
 HYSTERESIS       = 505.0    # H
 STABILIZATION    = 2        # N
@@ -51,8 +53,9 @@ def quantize(B: float) -> int:
 def target_state(s_prev: int, pcc: float, ebox: float) -> Tuple[int, float, str]:
     ebox_eff = max(ebox, float(P[s_prev])) if s_prev > 0 else 0.0
     E = pcc + ebox_eff
-    t = quantize(E + MAX_GRID_DRAW)
-    return t, E, ("INSUFFICIENT_EXCESS" if t == 0 else "POWER_MATCHING")
+    if E < MIN_EXCESS:
+        return 0, E, "INSUFFICIENT_EXCESS"
+    return quantize(E + MAX_GRID_DRAW), E, "POWER_MATCHING"
 
 
 # ── Ramp-Varianten (einziger Unterschied der beiden Modelle) ─────────────────
@@ -138,8 +141,10 @@ def _step_full(s: int, c: int, last_excess: float, pcc: float, ebox: float,
                ) -> Tuple[int, int, float, str]:
     ebox_eff = max(ebox, float(P[s])) if s > 0 else 0.0
     excess = pcc + ebox_eff + bat1
-    target = quantize(excess + MAX_GRID_DRAW)
-    trace = "INSUFFICIENT_EXCESS" if target == 0 else "POWER_MATCHING"
+    if excess < MIN_EXCESS:
+        target, trace = 0, "INSUFFICIENT_EXCESS"
+    else:
+        target, trace = quantize(excess + MAX_GRID_DRAW), "POWER_MATCHING"
     ramped, capped = ramp(target, s)
     if capped:
         trace += "|RAMP_LIMITED"
@@ -163,7 +168,7 @@ def hold_band(s: int) -> Tuple[float, float]:
     """pcc-Intervall, in dem State s gehalten wird (untere, obere Grenze)."""
     higher = [P[x] for x in range(8) if P[x] > P[s]]
     upper = (min(higher) - P[s] - MAX_GRID_DRAW) if higher else float("inf")
-    lower = -MAX_GRID_DRAW                       # darunter: Abregeln (EMERGENCY/down)
+    lower = max(-MAX_GRID_DRAW, MIN_EXCESS - P[s])  # darunter: Abregeln (MIN_EXCESS/EMERGENCY)
     return lower, upper
 
 
