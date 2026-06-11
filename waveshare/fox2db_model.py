@@ -38,6 +38,7 @@ EMERGENCY_IMPORT = MAX_GRID_DRAW + EMERGENCY_MARGIN   # = 1020 (an G gekoppelt)
 SWEET_SPOT_PCC   = 160.0    # |pcc| darunter ⇒ Sweet-Spot (kein Hochschalten)
 BAT_DISCHARGE_TH = -110.0   # bat1 darunter ⇒ Sofar entlädt ⇒ kein Hochschalten
 MAX_DROP_RATE    = -20.0    # Excess-Steigung [W/s] darunter ⇒ Trendwende
+BAT1_CHARGE_FACTOR = 0.5    # Anteil der Sofar-Ladung (bat1>0), der als EBox-Überschuss zählt (0..1)
 
 
 # ── Quantisierer Q(B): höchster State mit P[s] ≤ B ───────────────────────────
@@ -140,7 +141,8 @@ def _step_full(s: int, c: int, last_excess: float, pcc: float, ebox: float,
                bat1: float, ramp: Callable[[int, int], Tuple[int, bool]]
                ) -> Tuple[int, int, float, str]:
     ebox_eff = max(ebox, float(P[s])) if s > 0 else 0.0
-    excess = pcc + ebox_eff + bat1
+    bat1_eff = bat1 if bat1 < 0 else bat1 * BAT1_CHARGE_FACTOR  # Sofar-Ladung zählt nur anteilig
+    excess = pcc + ebox_eff + bat1_eff
     if excess < MIN_EXCESS:
         target, trace = 0, "INSUFFICIENT_EXCESS"
     else:
@@ -312,6 +314,11 @@ def _run_tests() -> None:
     # 7f HYSTERESIS jetzt erreichbar: down mit kleinem Sprung (7100→6650, gap 450<505), c≥2
     s, c, le, tr = step_full_literal(5, 5, 0.0, -1000.0, 7100.0, -200.0)
     check(s == 5 and "HYSTERESIS" in tr, "HYSTERESIS: down 5→3 geblockt (gap 450<505)")
+    # 7g Sofar-Ladung (bat1>0) zählt nur anteilig (BAT1_CHARGE_FACTOR=0.5) als Überschuss
+    s, c, le, tr = step_full_literal(0, 0, 0.0, 1000.0, 0.0, 2500.0)
+    check(s == 0, "bat1=+2500 zu 50%: excess=1000+1250=2250<2500 → State 0 (kein Laden)")
+    s, c, le, tr = step_full_literal(0, 0, 0.0, 3000.0, 0.0, 2500.0)
+    check(s > 0, "echter Export 3000W → excess=3000+1250=4250 → lädt")
 
     print("8) Physikalische Grenzen (Sicherung 3×50A, PV 35kWp, bat1 5kWh, bat2 30kWh):")
     limits_report()

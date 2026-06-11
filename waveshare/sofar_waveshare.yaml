@@ -30,7 +30,7 @@ substitutions:
   wifi_ssid: f24
   wifi_password: "9876543210"
   ota_password: waveshare2026
-  fw_version: "3.3.31"     # MIN_EXCESS wieder rein @2500W (Lade-Schwelle hoch, kein Morgen-Netzladen)
+  fw_version: "3.3.33"     # bat1_charge_factor (MQTT sofar/bat1_factor, default 0.5): Anteil Sofar-Ladung im Überschuss
 
 esphome:
   name: ${device_name}
@@ -99,6 +99,7 @@ globals:
   - { id: auto_enable,       type: bool, restore_value: false, initial_value: 'true' }
   - { id: ladesperre_enable, type: bool, restore_value: false, initial_value: 'true' }
   - { id: ladesperre_ratio,  type: float, restore_value: false, initial_value: '0.5' } # Schlechtwetter-Freigabe-Schwelle (MQTT: sofar/ratio)
+  - { id: bat1_charge_factor, type: float, restore_value: false, initial_value: '0.5' } # Anteil der Sofar-Ladung, der als EBox-Überschuss zählt (MQTT: sofar/bat1_factor, 0..1)
   - { id: do4_req,           type: bool, restore_value: false, initial_value: 'false' }
   - { id: g_peak_h,    type: int, restore_value: false, initial_value: '-1' }
   - { id: g_win_end_h, type: int, restore_value: false, initial_value: '-1' }
@@ -207,16 +208,16 @@ script:
             else if (s.find(':') != std::string::npos && !got6) { strncpy(ip6, s.c_str(), 40); got6 = true; }
           }
           id(dev_ip) = ip4; id(dev_ip6) = ip6;
-          char json[420];
+          char json[480];
           int phys_state = (id(relay_ch1).state ? 1 : 0)
                          | (id(relay_ch2).state ? 2 : 0)
                          | (id(relay_ch3).state ? 4 : 0);
           snprintf(json, sizeof(json),
             "{\"ip\":\"%s\",\"ip6\":\"%s\",\"state\":%d,\"target_state\":%d,\"auto\":%d,\"ladesperre_en\":%d,"
-            "\"ratio_th\":%.2f,\"ratio_ist\":%.2f,\"peak_h\":%d,\"win_end_h\":%d,"
+            "\"ratio_th\":%.2f,\"bat1_f\":%.2f,\"ratio_ist\":%.2f,\"peak_h\":%d,\"win_end_h\":%d,"
             "\"soyo_w\":%d,\"uptime\":%lu,\"mem_free\":%lu,\"fw\":\"%s\",\"fw_date\":\"" __DATE__ "T" __TIME__ "\"}",
             ip4, ip6, phys_state, id(fox_relay_state), id(auto_enable) ? 1 : 0,
-            id(ladesperre_enable) ? 1 : 0, id(ladesperre_ratio), id(g_ratio_ist), id(g_peak_h), id(g_win_end_h), id(soyo_w),
+            id(ladesperre_enable) ? 1 : 0, id(ladesperre_ratio), id(bat1_charge_factor), id(g_ratio_ist), id(g_peak_h), id(g_win_end_h), id(soyo_w),
             (unsigned long)(millis() / 1000), (unsigned long)ESP.getFreeHeap(),
             "${fw_version}");
           id(mqtt_client).publish("sofar/waveshare/status", json);
@@ -333,6 +334,15 @@ mqtt:
             float v = atof(p);
             if (v > 0.0f && v <= 1.0f) id(ladesperre_ratio) = v;
 
+    # ── Anteil der Sofar-Ladung als EBox-Überschuss (0..1), default 0.5 ──────
+    - topic: sofar/bat1_factor
+      then:
+        - lambda: |-
+            const char* p = strstr(x.c_str(), "FACTOR"); if (!p) p = strchr(x.c_str(), ':');
+            if (!p) p = x.c_str(); else { p = strchr(p, ':'); if (!p) return; p++; }
+            float v = atof(p);
+            if (v >= 0.0f && v <= 1.0f) id(bat1_charge_factor) = v;
+
     # ── Soyo-Sollwert (W) ──────────────────────────────────────────────────
     #   akzeptiert {"W":350} oder nackte Zahl "350"
     - topic: soyo/set
@@ -402,7 +412,7 @@ interval:
           int local_sec = t.hour * 3600 + t.minute * 60 + t.second;
           fox::Result r = fox::step(in, fox::g_state, (time_t) t.timestamp, local_sec,
                                     t.month, t.hour, t.day_of_year, id(ladesperre_enable),
-                                    id(ladesperre_ratio));
+                                    id(ladesperre_ratio), id(bat1_charge_factor));
 
           bool auto_on = id(auto_enable);
           if (auto_on) {

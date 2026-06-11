@@ -45,6 +45,8 @@ EMERGENCY_IMPORT = MAX_GRID_DRAW + EMERGENCY_MARGIN   # = 1020.0 (an G gekoppelt
 BAT_DISCHARGE_TH = -110.0
 SWEET_SPOT_PCC   = 160.0
 MAX_DROP_RATE    = -20.0
+LADESPERRE_HYST  = 0.15                           # Hysterese-Band für Ladesperre-Ratio (Latch)
+BAT1_CHARGE_FACTOR = 0.5                           # Anteil der Sofar-Ladung (bat1>0), der als EBox-Überschuss zählt
 DD_LOWER         = 6
 DD_UPPER         = 8
 DD_CHARGE_TARGET = 7
@@ -155,6 +157,7 @@ class State:
         self.last_excess = 0.0
         self.prot        = False          # Tiefentladeschutz (Hysterese)
         self.peak_today  = False          # pcc hat heute PCC_PEAK_TH überschritten
+        self.ladesperre_latched = False   # Ladesperre-Latch (Hysterese gegen Flattern)
         self.last_yday   = -1
         self.pcc_buf     = [0.0] * 10
         self.pcc_n       = 0
@@ -171,6 +174,7 @@ def load_state() -> State:
     st.last_excess = float(d.get('last_excess', 0.0))
     st.prot        = bool(d.get('prot', False))
     st.peak_today  = bool(d.get('peak_today', False))
+    st.ladesperre_latched = bool(d.get('ladesperre_latched', False))
     st.last_yday   = int(d.get('last_yday', -1))
     buf            = [float(x) for x in d.get('pcc_buf', [])]
     st.pcc_buf     = (buf + [0.0] * 10)[:10]
@@ -182,6 +186,7 @@ def save_state(st: State):
     Path(PATHS['state']).write_text(json.dumps({
         'relay_st': st.relay_st, 'stable': st.stable, 'last_excess': st.last_excess,
         'prot': st.prot, 'peak_today': st.peak_today, 'last_yday': st.last_yday,
+        'ladesperre_latched': st.ladesperre_latched,
         'pcc_buf': st.pcc_buf, 'pcc_n': st.pcc_n, 'pcc_i': st.pcc_i,
     }))
 
@@ -327,11 +332,13 @@ def fetch_ebox() -> Tuple[float, float]:
 
 def decide(in_: Inputs, relay_st: int, prot: bool) -> Tuple[int, str, float]:
     ebox_eff = max(in_.ebox_w, float(state_power(relay_st))) if relay_st > 0 else 0.0
-    excess = in_.pcc + ebox_eff + in_.bat1
+    # Sofar-Entladung (bat1<0) voll; von der Sofar-Ladung (bat1>0) nur der Anteil BAT1_CHARGE_FACTOR
+    bat1_eff = in_.bat1 if in_.bat1 < 0 else in_.bat1 * BAT1_CHARGE_FACTOR
+    excess = in_.pcc + ebox_eff + bat1_eff
 
     if in_.soc2 < 0:
         ea = in_.ebox_w if relay_st > 0 else 0.0
-        return relay_st, "EBOX_SOC_UNKNOWN_HOLD", in_.pcc + ea + in_.bat1
+        return relay_st, "EBOX_SOC_UNKNOWN_HOLD", in_.pcc + ea + bat1_eff
 
     if in_.pcc > PCC_PEAK_TH and in_.soc2 < MAX_SOC:
         next_st = min(relay_st + 1, 7)
@@ -413,6 +420,7 @@ def step(in_: Inputs, st: State, now_local: dt.datetime,
         st.pcc_n = 0
         st.pcc_i = 0
         st.peak_today = False
+        st.ladesperre_latched = False
         st.last_yday  = local_yday
 
     r.dc_expected = dc_now(now_utc, month)
@@ -449,7 +457,15 @@ def step(in_: Inputs, st: State, now_local: dt.datetime,
         has_peak  = best_w > PCC_PEAK_TH
         in_window = (has_peak and win_end_loc >= 0 and not st.peak_today
                      and local_hour <= peak_h_loc)
-        ladesperre = in_window and r.ratio >= 0.0 and r.ratio <= ladesperre_ratio
+        # LATCH mit Hysterese gegen Flattern an der Ratio-Schwelle:
+        if not in_window:
+            st.ladesperre_latched = False
+        elif r.ratio >= 0.0:
+            if not st.ladesperre_latched and r.ratio <= ladesperre_ratio:
+                st.ladesperre_latched = True          # LOCK: belegtes Gutwetter
+            elif st.ladesperre_latched and r.ratio >= ladesperre_ratio + LADESPERRE_HYST:
+                st.ladesperre_latched = False         # RELEASE: klar Schlechtwetter
+        ladesperre = in_window and st.ladesperre_latched
     r.ladesperre = ladesperre
 
     best, trace, excess = decide(in_, st.relay_st, st.prot)

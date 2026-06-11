@@ -29,6 +29,7 @@ constexpr float EMERGENCY_IMPORT = MAX_GRID_DRAW + EMERGENCY_MARGIN; // = 1020 W
 constexpr float BAT_DISCHARGE_TH = -110.0f;
 constexpr float SWEET_SPOT_PCC   = 160.0f;
 constexpr float MAX_DROP_RATE    = -20.0f;
+constexpr float LADESPERRE_HYST  = 0.15f;   // Hysterese-Band für Ladesperre-Ratio (Latch gegen Flattern)
 constexpr int   DD_LOWER         = 6;
 constexpr int   DD_UPPER         = 8;
 constexpr int   DD_CHARGE_TARGET = 7;
@@ -105,6 +106,7 @@ struct State {
   float last_excess = 0;
   bool  prot = false;               // Tiefentladeschutz (Hysterese)
   bool  peak_today = false;         // pcc hat heute PCC_PEAK_TH überschritten → Laden vor DO4
+  bool  ladesperre_latched = false; // Ladesperre-Latch (Hysterese gegen Flattern)
   int   last_yday = -1;
   float pcc_buf[10] = {0};
   int   pcc_n = 0, pcc_i = 0;
@@ -127,12 +129,14 @@ struct Result {
 inline void tcat(char *t, const char *s) { strncat(t, s, 159 - strlen(t)); }
 
 // ── decide() ─────────────────────────────────────────────────────────────────
-inline int decide(const Inputs &in, int relay_st, bool prot, char *trace, float *excess_out) {
+inline int decide(const Inputs &in, int relay_st, bool prot, float bat1_factor, char *trace, float *excess_out) {
   float ebox_eff = (relay_st > 0) ? fmaxf(in.ebox_w, (float)state_power(relay_st)) : 0.0f;
-  float excess = in.pcc + ebox_eff + in.bat1;
+  // Sofar-Entladung (bat1<0) zählt voll; von der Sofar-Ladung (bat1>0) nur der Anteil bat1_factor.
+  float bat1_eff = (in.bat1 < 0.0f) ? in.bat1 : in.bat1 * bat1_factor;
+  float excess = in.pcc + ebox_eff + bat1_eff;
   if (in.soc2 < 0) {
     float ea = (relay_st > 0) ? in.ebox_w : 0.0f;
-    *excess_out = in.pcc + ea + in.bat1;
+    *excess_out = in.pcc + ea + bat1_eff;
     strcpy(trace, "EBOX_SOC_UNKNOWN_HOLD");
     return relay_st;
   }
@@ -198,11 +202,12 @@ inline int apply_blocking(int best, int relay_st, float pcc, float bat1, int sta
 //  month, hour, yday: lokale Zeitfelder
 inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_day,
                    int month, int local_hour, int local_yday, bool ladesperre_enable,
-                   float ladesperre_ratio = 0.5f) {
+                   float ladesperre_ratio = 0.5f, float bat1_charge_factor = 0.5f) {
   Result r;
   if (local_yday != st.last_yday) {            // Mitternachts-Reset
     st.pcc_n = 0; st.pcc_i = 0;
     st.peak_today = false;
+    st.ladesperre_latched = false;
     st.last_yday = local_yday;
   }
   r.dc_expected = dc_now(now_utc, month);
@@ -243,15 +248,24 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
     // Zeitfenster: Peak vorhergesagt, vor/in Peak-Stunde, PCC hat 20kW noch nicht erreicht.
     bool in_window = has_peak && win_end_loc >= 0 && !st.peak_today
                      && (local_hour <= peak_h_loc);
-    // Sperre NUR bei BELEGTEM Gutwetter: gültige Ratio UND <= Schwelle.
-    // Wetter unbeurteilbar (ratio < 0, z.B. nach Boot/Nacht) ⇒ Sperre OFF (default).
-    // Schlechtwetter (ratio > Schwelle) ⇒ Sperre OFF.
-    ladesperre = in_window && r.ratio >= 0.0f && r.ratio <= ladesperre_ratio;
+    // LATCH mit Hysterese gegen Flattern an der Ratio-Schwelle:
+    //   LOCK   bei belegtem Gutwetter (ratio <= ladesperre_ratio)
+    //   RELEASE erst bei klarem Schlechtwetter (ratio >= ladesperre_ratio + LADESPERRE_HYST)
+    //   dazwischen / ratio<0 (unbeurteilbar): Zustand halten; außerhalb Fenster: aus.
+    if (!in_window) {
+      st.ladesperre_latched = false;
+    } else if (r.ratio >= 0.0f) {
+      if (!st.ladesperre_latched && r.ratio <= ladesperre_ratio)
+        st.ladesperre_latched = true;
+      else if (st.ladesperre_latched && r.ratio >= ladesperre_ratio + LADESPERRE_HYST)
+        st.ladesperre_latched = false;
+    }
+    ladesperre = in_window && st.ladesperre_latched;
   }
   r.ladesperre = ladesperre;
 
   char trace[160]; float excess;
-  int best = decide(in, st.relay_st, st.prot, trace, &excess);
+  int best = decide(in, st.relay_st, st.prot, bat1_charge_factor, trace, &excess);
   bool guard_fired = false;
   best = apply_guards(best, in.soc2, ladesperre, trace, &guard_fired);
 
