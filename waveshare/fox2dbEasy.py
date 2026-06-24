@@ -58,14 +58,14 @@ LADESPERRE_RATIO  = 0.5        # YAML default (sofar/ratio)
 
 # STATE_TO_POWER {0:0,1:3000,2:3650,3:6650,4:3900,5:7100,6:7800,7:11400}
 _STATE_POWER  = [0, 3000, 3650, 6650, 3900, 7100, 7800, 11400]
-# SORTED_STATES nach Leistung sortiert: [0,1,2,4,3,5,6,7]
-SORTED_STATES = [0, 1, 2, 4, 3, 5, 6, 7]
+# SORTED_STATES nach Leistung sortiert, OHNE State 2 (ch2 nur in Kombination erlaubt): [0,1,4,3,5,6,7]
+SORTED_STATES = [0, 1, 4, 3, 5, 6, 7]
 
 def state_power(s: int) -> int:
     return _STATE_POWER[s] if 0 <= s <= 7 else 0
 
 def sorted_index(s: int) -> int:
-    for i in range(8):
+    for i in range(len(SORTED_STATES)):
         if SORTED_STATES[i] == s:
             return i
     return 0
@@ -342,6 +342,8 @@ def decide(in_: Inputs, relay_st: int, prot: bool) -> Tuple[int, str, float]:
 
     if in_.pcc > PCC_PEAK_TH and in_.soc2 < MAX_SOC:
         next_st = min(relay_st + 1, 7)
+        if next_st == 2:
+            next_st = 3
         if next_st > relay_st:
             return next_st, f"PCC_OVER_20KW (SOC={in_.soc2:.0f}% State{relay_st}->{next_st})", excess
 
@@ -355,6 +357,8 @@ def decide(in_: Inputs, relay_st: int, prot: bool) -> Tuple[int, str, float]:
     budget = excess + MAX_GRID_DRAW
     best, best_pow = 0, -1
     for s in range(8):
+        if s == 2:
+            continue
         p = state_power(s)
         if p <= budget and p > best_pow:
             best, best_pow = s, p
@@ -362,7 +366,7 @@ def decide(in_: Inputs, relay_st: int, prot: bool) -> Tuple[int, str, float]:
 
     if best > relay_st:                       # Ramp-Limiting (State-Nr.-Vergleich)
         idx = sorted_index(relay_st)
-        next_st = SORTED_STATES[idx + 1 if idx + 1 < 8 else 7]
+        next_st = SORTED_STATES[idx + 1 if idx + 1 < len(SORTED_STATES) else len(SORTED_STATES) - 1]
         if best > next_st:
             trace += f" | RAMP_LIMITED ({best}->{next_st})"
             best = next_st

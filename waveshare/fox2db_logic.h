@@ -41,10 +41,11 @@ inline int state_power(int s) {
   static const int P[8] = {0, 3000, 3650, 6650, 3900, 7100, 7800, 11400};
   return (s >= 0 && s <= 7) ? P[s] : 0;
 }
-// SORTED_STATES nach Leistung sortiert: [0,1,2,4,3,5,6,7]
-static const int SORTED_STATES[8] = {0, 1, 2, 4, 3, 5, 6, 7};
+// SORTED_STATES nach Leistung sortiert, OHNE State 2 (ch2 nur in Kombination erlaubt): [0,1,4,3,5,6,7]
+static const int N_SORTED = 7;
+static const int SORTED_STATES[N_SORTED] = {0, 1, 4, 3, 5, 6, 7};
 inline int sorted_index(int s) {
-  for (int i = 0; i < 8; i++) if (SORTED_STATES[i] == s) return i;
+  for (int i = 0; i < N_SORTED; i++) if (SORTED_STATES[i] == s) return i;
   return 0;
 }
 
@@ -141,7 +142,7 @@ inline int decide(const Inputs &in, int relay_st, bool prot, float bat1_factor, 
     return relay_st;
   }
   if (in.pcc > PCC_PEAK_TH && in.soc2 < MAX_SOC) {
-    int next_st = relay_st + 1; if (next_st > 7) next_st = 7;
+    int next_st = relay_st + 1; if (next_st == 2) next_st = 3; if (next_st > 7) next_st = 7;
     if (next_st > relay_st) {
       snprintf(trace, 80, "PCC_OVER_20KW (SOC=%.0f%% State%d->%d)", in.soc2, relay_st, next_st);
       *excess_out = excess; return next_st;
@@ -157,11 +158,11 @@ inline int decide(const Inputs &in, int relay_st, bool prot, float bat1_factor, 
   }
   float budget = excess + MAX_GRID_DRAW;
   int best = 0, best_pow = -1;
-  for (int s = 0; s <= 7; s++) { int p = state_power(s); if (p <= budget && p > best_pow) { best = s; best_pow = p; } }
+  for (int s = 0; s <= 7; s++) { if (s == 2) continue; int p = state_power(s); if (p <= budget && p > best_pow) { best = s; best_pow = p; } }
   snprintf(trace, 120, "POWER_MATCHING (Excess: %.0fW, Budget: %.0fW)", excess, budget);
   if (best > relay_st) {                       // Ramp-Limiting (State-Nr.-Vergleich, wie Python)
     int idx = sorted_index(relay_st);
-    int next_st = SORTED_STATES[(idx + 1 < 8) ? idx + 1 : 7];
+    int next_st = SORTED_STATES[(idx + 1 < N_SORTED) ? idx + 1 : N_SORTED - 1];
     if (best > next_st) {
       char tmp[48]; snprintf(tmp, sizeof(tmp), " | RAMP_LIMITED (%d->%d)", best, next_st);
       tcat(trace, tmp); best = next_st;
