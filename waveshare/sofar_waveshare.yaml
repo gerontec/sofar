@@ -30,7 +30,7 @@ substitutions:
   wifi_ssid: f24
   wifi_password: "9876543210"
   ota_password: waveshare2026
-  fw_version: "3.3.33"     # bat1_charge_factor (MQTT sofar/bat1_factor, default 0.5): Anteil Sofar-Ladung im Überschuss
+  fw_version: "3.4.1"      # Z2-Fallback entfernt (toter pv_zaehl2-Zähler erzeugte +18kW Phantom-PCC-Spitzen bei Lesefehlern)
 
 esphome:
   name: ${device_name}
@@ -89,16 +89,19 @@ globals:
   # Eingänge (aus MQTT)
   - { id: in_pcc,   type: float, restore_value: false, initial_value: '0' }
   - { id: in_bat1,  type: float, restore_value: false, initial_value: '0' }
+  - { id: in_bat1_avg5, type: float, restore_value: false, initial_value: '0' }  # 5-Min-Mittel bat1 (pivot2db) → nur Wetter-Ratio
+  - { id: in_pcc_avg5,  type: float, restore_value: false, initial_value: '0' }  # 5-Min-Mittel pcc  (pivot2db) → nur Wetter-Ratio
   - { id: in_soc1,  type: float, restore_value: false, initial_value: '0' }
   - { id: in_soc2,  type: float, restore_value: false, initial_value: '-1' }   # -1 = unbekannt -> HOLD
   - { id: in_ebox,  type: float, restore_value: false, initial_value: '0' }
+  - { id: in_pv,    type: float, restore_value: false, initial_value: '0' }   # gemessene Sofar-PV (Power_PV1+PV2, W) → Soyo is_night
   - { id: last_inv_ms, type: int, restore_value: false, initial_value: '0' }
-  - { id: in_z2,      type: float, restore_value: false, initial_value: '0' }   # Z2 Zähler wirkleist (W)
-  - { id: in_pcc_null, type: bool, restore_value: false, initial_value: 'false' } # PCC war null (Lesefehler)
+  - { id: in_aussen,    type: float, restore_value: false, initial_value: '0' }   # Außentemp °C (MQTT aussen/temp) → DC-Temp-Derating
+  - { id: in_aussen_ms, type: int,   restore_value: false, initial_value: '0' }   # millis() der letzten Außentemp (Freshness, 0 = nie)
   # Schalter (per MQTT)
   - { id: auto_enable,       type: bool, restore_value: false, initial_value: 'true' }
   - { id: ladesperre_enable, type: bool, restore_value: false, initial_value: 'true' }
-  - { id: ladesperre_ratio,  type: float, restore_value: false, initial_value: '0.5' } # Schlechtwetter-Freigabe-Schwelle (MQTT: sofar/ratio)
+  - { id: ladesperre_ratio,  type: float, restore_value: false, initial_value: '0.62' } # Gutwetter-Erkennung, Ratio mit geglättetem bat1_avg5 (MQTT: sofar/ratio)
   - { id: bat1_charge_factor, type: float, restore_value: false, initial_value: '0.5' } # Anteil der Sofar-Ladung, der als EBox-Überschuss zählt (MQTT: sofar/bat1_factor, 0..1)
   - { id: do4_req,           type: bool, restore_value: false, initial_value: 'false' }
   - { id: g_peak_h,    type: int, restore_value: false, initial_value: '-1' }
@@ -110,6 +113,9 @@ globals:
   # fox2db/state (relay state + soc_bat2 für soyo-Kalkulation)
   - { id: fox_relay_state, type: int,  restore_value: false, initial_value: '0' }
   - { id: fox_state_ms,    type: int,  restore_value: false, initial_value: '0' }
+  # R290 Wärmepumpe (r290/heatpump/all) → Sommer-Soyo-Boost
+  - { id: r290_hz, type: int, restore_value: false, initial_value: '0' }   # comp_freq_actual (Hz); >0 = WP läuft
+  - { id: r290_ms, type: int, restore_value: false, initial_value: '0' }   # millis() der letzten r290-Nachricht (Freshness)
   # GPIO-Scan (nicht-blockierend): Flankenzähler für alle Pins
   - { id: scan_active,   type: bool, restore_value: false, initial_value: 'false' }
   - { id: scan_start_ms, type: int,  restore_value: false, initial_value: '0' }
@@ -270,22 +276,14 @@ mqtt:
               p = strchr(p, ':'); if (!p) return d; return atof(p + 1);
             };
             const char* raw = x.c_str();
-            id(in_pcc_null) = strstr(raw, "\"ActivePower_PCC_Total\":null") != nullptr
-                           || strstr(raw, "\"ActivePower_PCC_Total\": null") != nullptr;
+            // PCC-Lesefehler (null) → num() liefert 0 → neutraler PCC (kein Z2-Fallback mehr)
             id(in_pcc)  = num(raw, "ActivePower_PCC_Total", 0) * 1000.0f;
             id(in_bat1) = num(raw, "Power_Bat1", 0) * 1000.0f;
+            id(in_bat1_avg5) = num(raw, "Power_Bat1_avg5", num(raw, "Power_Bat1", 0)) * 1000.0f;
+            id(in_pcc_avg5)  = num(raw, "ActivePower_PCC_Total_avg5", num(raw, "ActivePower_PCC_Total", 0)) * 1000.0f;
             id(in_soc1) = num(raw, "SOC_Bat1", 0);
+            id(in_pv)   = (num(raw, "Power_PV1", 0) + num(raw, "Power_PV2", 0)) * 1000.0f;
             id(last_inv_ms) = (int) millis();
-
-    # ── Z2-Zähler: Wirkleistung als PCC-Fallback bei NaN ─────────────────
-    - topic: pv_zaehl2
-      then:
-        - lambda: |-
-            auto num = [](const char* s, const char* k, float d) -> float {
-              const char* p = strstr(s, k); if (!p) return d;
-              p = strchr(p, ':'); if (!p) return d; return atof(p + 1);
-            };
-            id(in_z2) = num(x.c_str(), "wirkleist", 0);
 
     # ── EBox: SOC2 + Leistung (ebox_mqtt.py → ebox/pwr retained) ─────────
     - topic: ebox/pwr
@@ -309,6 +307,18 @@ mqtt:
             id(fox_relay_state) = (int) num(x.c_str(), "\"state\"", 0);
             id(in_soc2)         = num(x.c_str(), "soc_bat2", id(in_soc2));
             id(fox_state_ms)    = (int) millis();
+
+    # ── R290 Wärmepumpe: comp_freq_actual (Hz) → Sommer-Soyo-Boost ───────
+    #   r290mb.py publiziert r290/heatpump/all retained, jede Minute (cron).
+    - topic: r290/heatpump/all
+      then:
+        - lambda: |-
+            auto num = [](const char* s, const char* k, float d) -> float {
+              const char* p = strstr(s, k); if (!p) return d;
+              p = strchr(p, ':'); if (!p) return d; return atof(p + 1);
+            };
+            id(r290_hz) = (int) num(x.c_str(), "\"comp_freq_actual\"", 0);
+            id(r290_ms) = (int) millis();
 
     # ── Auto-Regelung scharf/aus ───────────────────────────────────────────
     - topic: sofar/auto
@@ -342,6 +352,13 @@ mqtt:
             if (!p) p = x.c_str(); else { p = strchr(p, ':'); if (!p) return; p++; }
             float v = atof(p);
             if (v >= 0.0f && v <= 1.0f) id(bat1_charge_factor) = v;
+
+    # ── Außentemperatur °C (heizung3.py PT1000) → DC-Temperatur-Derating ─────
+    - topic: aussen/temp
+      then:
+        - lambda: |-
+            float v = atof(x.c_str());
+            if (v > -40.0f && v < 55.0f) { id(in_aussen) = v; id(in_aussen_ms) = millis(); }
 
     # ── Soyo-Sollwert (W) ──────────────────────────────────────────────────
     #   akzeptiert {"W":350} oder nackte Zahl "350"
@@ -402,12 +419,14 @@ interval:
           }
 
           fox::Inputs in;
-          // PCC: Inverter-Wert, Z2 nur als Fallback bei null-Lesefehler
-          float pcc_raw = id(in_pcc);
-          if (id(in_pcc_null) && id(in_z2) != 0.0f)
-            pcc_raw = -id(in_z2);
-          in.pcc = pcc_raw; in.bat1 = id(in_bat1); in.soc1 = id(in_soc1);
+          // PCC: Inverter-Wert (Lesefehler null → 0 → neutral; kein Z2-Fallback mehr)
+          in.pcc = id(in_pcc); in.bat1 = id(in_bat1); in.soc1 = id(in_soc1);
           in.soc2 = id(in_soc2); in.ebox_w = id(in_ebox);
+          in.bat1_avg5 = id(in_bat1_avg5); in.pcc_avg5 = id(in_pcc_avg5);
+          // Außentemp nur durchreichen, wenn frisch (<15 min); sonst Fallback: ohne Temp
+          if (id(in_aussen_ms) != 0 && (millis() - (uint32_t) id(in_aussen_ms)) < 900000UL) {
+            in.aussen_temp = id(in_aussen); in.aussen_valid = true;
+          }
 
           int local_sec = t.hour * 3600 + t.minute * 60 + t.second;
           fox::Result r = fox::step(in, fox::g_state, (time_t) t.timestamp, local_sec,
@@ -433,19 +452,19 @@ interval:
                      | (id(relay_ch3).state ? 4 : 0);
           int conflict = (!auto_on && r.final_state != ext_st) ? 1 : 0;
 
-          char js[480];
+          char js[512];
           snprintf(js, sizeof(js),
             "{\"ip\":\"%s\",\"state\":%d,\"changed\":%d,\"pcc\":%.0f,\"bat1\":%.0f,"
             "\"soc2\":%.1f,\"soc1\":%.1f,\"ebox\":%.0f,\"excess\":%.0f,"
             "\"dc_expected\":%.0f,\"dc_delta\":%.0f,\"ratio_ist\":%.2f,\"ratio_th\":%.2f,"
             "\"ladesperre\":%d,\"do4\":%d,"
-            "\"peak_h\":%d,\"win_end_h\":%d,\"auto\":%d,\"ext_st\":%d,\"conflict\":%d,"
+            "\"peak_h\":%d,\"win_end_h\":%d,\"noon_h\":%.2f,\"auto\":%d,\"ext_st\":%d,\"conflict\":%d,"
             "\"trace\":\"%s\"}",
             id(dev_ip).c_str(), r.final_state, r.changed ? 1 : 0, in.pcc, in.bat1,
             in.soc2, in.soc1, in.ebox_w, r.excess, r.dc_expected, r.dc_delta,
             r.ratio, id(ladesperre_ratio),
             r.ladesperre ? 1 : 0, r.do4_pulse ? 1 : 0,
-            r.peak_h, r.win_end_h, auto_on ? 1 : 0, ext_st, conflict, r.trace);
+            r.peak_h, r.win_end_h, r.noon_h, auto_on ? 1 : 0, ext_st, conflict, r.trace);
           id(mqtt_client).publish("sofar/state", js);
       - if:
           condition:
@@ -458,38 +477,58 @@ interval:
     then:
       - lambda: |-
           int w = 0;
-          auto t = id(sntp_time).now();
           // Stale: Inverter-Daten älter als 3min → 0W
           bool stale = (uint32_t)millis() - (uint32_t)id(last_inv_ms) > 180000UL
                        || id(last_inv_ms) == 0;
+          // Sommer (DC-Sommermodell kt_month: hohe kt von Mai–Sep) + R290-WP läuft.
+          // WP-Signal frisch (<3min) und comp_freq_actual > 0 → WP fördert.
+          auto tnow = id(sntp_time).now();
+          int  month = tnow.is_valid() ? tnow.month : 0;
+          bool is_summer = (month >= 5 && month <= 9);
+          bool is_winter = (month >= 1 && (month <= 4 || month >= 10));   // Mai–Sep = Sommer, sonst Winter
+          bool wp_fresh  = id(r290_ms) != 0
+                           && ((uint32_t)millis() - (uint32_t)id(r290_ms) < 180000UL);
+          bool wp_running = wp_fresh && id(r290_hz) > 0;
+          // Klarhimmel-Ertrag (reines DC-Modell, ohne Temp-Derating): nur Bat2
+          // entladen, wenn Prognose < 2kW (viel PV → Akku schonen).
+          double dc_clear = tnow.is_valid()
+                            ? fox::dc_now((time_t)tnow.timestamp, month) : 0.0;
+          bool dc_low = dc_clear < 2000.0;
+          bool wp_boost = wp_running && dc_low;
           if (!stale) {
             int   st   = fox::g_state.relay_st;   // lokal, kein Pi nötig
             float soc2 = id(in_soc2);
             float pcc  = id(in_pcc);
+            // "Nacht" = gemessene PV < 100W. Der PV-String-Wert ist ehrlich
+            // (nicht überschätzt wie das dc-Modell) UND batterieunabhängig
+            // (anders als pcc, den der Akku nachts auf ~0 verfälscht).
+            bool is_night = id(in_pv) < fox::NIGHT_DC_TH;
             if (st != 0) {
-              w = 0;  // EBox aktiv → soyo nie
+              w = 0;  // EBox aktiv → soyo nie (gemeinsamer Bat2-Ausgang)
             } else if (soc2 >= 0 && soc2 < 9.0f) {
               w = 0;  // Entladeschutz
+            } else if (is_summer && wp_boost) {
+              w = 900;  // Sommer + WP läuft + Klarhimmel<2kW → pauschal 900W (Bat2 decken)
+            } else if (is_winter && wp_boost) {
+              w = 450;  // Winter + WP läuft + Klarhimmel<2kW → pauschal 450W
             } else if (id(in_ebox) > 200.0f) {
               w = 0;  // bat2 lädt → soyo aus
             } else if (pcc > 200.0f) {
               w = 0;  // PV-Überschuss → bat2 schonen
             } else if (pcc < -100.0f) {
-              int h = t.is_valid() ? t.hour : 12;
-              bool is_night = (h < 6 || h >= 20);
               w = (int)(-pcc * 1.01f) + (is_night ? 468 : 0);  // wie soyo1min.c: error*kp + night_standard
               if (w > 900) w = 900;
             } else {
               // Ausgeglichen / Nacht
-              int h = t.is_valid() ? t.hour : 12;
-              w = (h < 6 || h >= 20) ? 468 : 10;
+              w = is_night ? 468 : 10;
             }
           }
           id(soyo_w)  = w;
           id(soyo_ms) = (int) millis();
-          char js[80];
-          snprintf(js, sizeof(js), "{\"W\":%d,\"soc2\":%.1f,\"stale\":%d}",
-                   w, id(in_soc2), stale ? 1 : 0);
+          char js[160];
+          snprintf(js, sizeof(js),
+                   "{\"W\":%d,\"soc2\":%.1f,\"stale\":%d,\"summer\":%d,\"wp\":%d,\"wp_hz\":%d,\"dc_clear\":%.0f}",
+                   w, id(in_soc2), stale ? 1 : 0, is_summer ? 1 : 0, wp_running ? 1 : 0, id(r290_hz), dc_clear);
           id(mqtt_client).publish("soyo/calc", js);
 
   # ── GPIO-Scan Sampler (1ms, nicht-blockierend) ───────────────────────────

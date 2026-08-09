@@ -29,12 +29,13 @@ constexpr float EMERGENCY_IMPORT = MAX_GRID_DRAW + EMERGENCY_MARGIN; // = 1020 W
 constexpr float BAT_DISCHARGE_TH = -110.0f;
 constexpr float SWEET_SPOT_PCC   = 160.0f;
 constexpr float MAX_DROP_RATE    = -20.0f;
-constexpr float LADESPERRE_HYST  = 0.15f;   // Hysterese-Band für Ladesperre-Ratio (Latch gegen Flattern)
+constexpr float LADESPERRE_HYST  = 0.25f;   // Hysterese-Band für Ladesperre-Ratio (Latch gegen Flattern); breit genug gegen rohes pcc-Rauschen (Release 0.62+0.25=0.87)
 constexpr int   DD_LOWER         = 6;
 constexpr int   DD_UPPER         = 8;
 constexpr int   DD_CHARGE_TARGET = 7;
 constexpr float PCC_PEAK_TH      = 20000.0f;
 constexpr float PCC_HARD_TH      = 22000.0f;  // bedingungsloser DO4-Trigger
+constexpr float NIGHT_DC_TH      = 100.0f;    // gemessene PV (Power_PV1+PV2) < 100W → "Nacht" (Soyo-Baseline 468W). PV-String statt pcc: batterieunabhängig & ehrlich
 
 // STATE_TO_POWER {0:0,1:3000,2:3650,3:6650,4:3900,5:7100,6:7800,7:11400}
 inline int state_power(int s) {
@@ -100,6 +101,34 @@ inline double dc_now(time_t t, int month) {
   return calc_arrays(ARRAYS, 2, t, month) + calc_arrays(ARRAYS_EAST, 3, t, month);
 }
 
+// Astronomischer lokaler Mittag (Sonnen-Meridiandurchgang, Stundenwinkel ha=0) als unix-UTC.
+// NOAA-eqtime bei 12 UTC ausgewertet (Tagesvariation der eqtime vernachlässigbar).
+inline time_t solar_noon_utc(time_t ref_utc) {
+  time_t utc_midnight = (ref_utc / 86400) * 86400;
+  time_t tmid = utc_midnight + 12 * 3600;
+  struct tm g; gmtime_r(&tmid, &g);
+  int yday0 = g.tm_yday;                              // (hour-12)/24 = 0 am Mittag
+  double gamma = 2.0 * M_PI / 365.0 * yday0;
+  double eqtime = 229.18 * (0.000075 + 0.001868 * cos(gamma) - 0.032077 * sin(gamma)
+                            - 0.014615 * cos(2 * gamma) - 0.040849 * sin(2 * gamma));
+  double hour_utc = (720.0 - eqtime - 4.0 * LON) / 60.0;  // tst = 720 min ⇒ ha = 0
+  return utc_midnight + (time_t)(hour_utc * 3600.0);
+}
+
+// ── Temperatur-Derating (defensiv) ───────────────────────────────────────────
+// Konservativer Datenblatt-Koeffizient (DAH 420W N-Type, -0.30 %/°C), NOCT-Zelltemp.
+// Greift durch sin(Elevation) nur bei hohem Sonnenstand spürbar (dort gilt der
+// Effekt real). Wird NUR angewendet, wenn eine gültige Außentemp vorliegt.
+static const double TEMP_COEFF = -0.0030;
+static const double NOCT       = 45.0;
+static const double T_STC      = 25.0;
+inline double dc_temp_factor(double elev_deg, double ambient) {
+  double g = fmax(0.0, sin(d2r(elev_deg)));                 // POA-Anteil 0..1 (klar)
+  double cell = ambient + (NOCT - 20.0) / 800.0 * 1000.0 * g;
+  double f = 1.0 + TEMP_COEFF * (cell - T_STC);
+  return fmax(0.85, fmin(1.0, f));                          // defensiv geklemmt
+}
+
 // ── Zustand (im RAM, über Cron-Zyklen hinweg) ────────────────────────────────
 struct State {
   int   relay_st = 0;
@@ -109,11 +138,12 @@ struct State {
   bool  peak_today = false;         // pcc hat heute PCC_PEAK_TH überschritten → Laden vor DO4
   bool  ladesperre_latched = false; // Ladesperre-Latch (Hysterese gegen Flattern)
   int   last_yday = -1;
-  float pcc_buf[10] = {0};
-  int   pcc_n = 0, pcc_i = 0;
 };
 
-struct Inputs { float pcc, bat1, soc1, soc2, ebox_w; };
+// pcc_avg5 + bat1_avg5: 5-Min-Mittel aus pivot2db/MariaDB, nur für die Wetter-Ratio.
+// Beide über dasselbe Fenster gemittelt → Akku-voll-Sprung (bat1→pcc) ist neutral.
+struct Inputs { float pcc, bat1, soc1, soc2, ebox_w, bat1_avg5, pcc_avg5;
+                float aussen_temp = 0; bool aussen_valid = false; };
 
 struct Result {
   int   final_state = 0;
@@ -124,6 +154,7 @@ struct Result {
   float ratio = -1.0f;  // Ist-Wetter-Ratio (Anteil fehlender Klarhimmel-Leistung; -1 = nicht berechenbar)
   int   peak_h = -1;    // lokale Stunde des DC-Peaks (-1 = kein Peak heute)
   int   win_end_h = -1; // letzte lokale Stunde mit dc > PCC_PEAK_TH
+  float noon_h = -1.0f; // astronomischer lokaler Mittag (Dezimalstunde, Reporting)
   char  trace[160] = "";
 };
 
@@ -173,7 +204,7 @@ inline int decide(const Inputs &in, int relay_st, bool prot, float bat1_factor, 
 
 // ── apply_guards() — feuert -> Blocking wird übersprungen ────────────────────
 inline int apply_guards(int best, float soc2, bool ladesperre, char *trace, bool *guard_fired) {
-  if (ladesperre) { if (best != 0) tcat(trace, " | GUARD:LADESPERRE_BIS_PCC_20KW"); *guard_fired = true; return 0; }
+  if (ladesperre) { if (best != 0) tcat(trace, " | GUARD:CHARGE_BLOCK_UNTIL_PCC_20KW"); *guard_fired = true; return 0; }
   if (soc2 >= MAX_SOC) { if (best != 0) tcat(trace, " | GUARD:BATTERY_FULL_STOP"); *guard_fired = true; return 0; }
   if (soc2 >= 0 && soc2 < DD_LOWER) { if (best != 1) tcat(trace, " | GUARD:CRITICAL_SOC_PROTECTION_ACTIVATE"); *guard_fired = true; return 1; }
   *guard_fired = false; return best;
@@ -192,7 +223,7 @@ inline int apply_blocking(int best, int relay_st, float pcc, float bat1, int sta
   if (up && fabsf(pcc) < SWEET_SPOT_PCC)                        { tcat(trace, " | SWEET_SPOT_HOLD"); *changed = false; return relay_st; }
   if (up && drop_rate < MAX_DROP_RATE && drop_rate != 0)         { tcat(trace, " | TREND_BLOCK");     *changed = false; return relay_st; }
   if (up && bat1 < BAT_DISCHARGE_TH)                            { tcat(trace, " | BAT_GUARD_BLOCK"); *changed = false; return relay_st; }
-  if (!up && stable < STABILIZATION)                           { tcat(trace, " | STABILIZING");     *changed = false; return relay_st; }
+  if (stable < STABILIZATION)                                  { tcat(trace, " | STABILIZING");     *changed = false; return relay_st; }
   if (!up && pwr_diff < HYSTERESIS)                            { tcat(trace, " | HYSTERESIS");      *changed = false; return relay_st; }
   *changed = true; return best;
 }
@@ -203,24 +234,19 @@ inline int apply_blocking(int best, int relay_st, float pcc, float bat1, int sta
 //  month, hour, yday: lokale Zeitfelder
 inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_day,
                    int month, int local_hour, int local_yday, bool ladesperre_enable,
-                   float ladesperre_ratio = 0.5f, float bat1_charge_factor = 0.5f) {
+                   float ladesperre_ratio = 0.62f, float bat1_charge_factor = 0.5f) {
   Result r;
   if (local_yday != st.last_yday) {            // Mitternachts-Reset
-    st.pcc_n = 0; st.pcc_i = 0;
     st.peak_today = false;
     st.ladesperre_latched = false;
     st.last_yday = local_yday;
   }
   r.dc_expected = dc_now(now_utc, month);
-
-  st.pcc_buf[st.pcc_i] = in.pcc; st.pcc_i = (st.pcc_i + 1) % 10;
-  if (st.pcc_n < 10) st.pcc_n++;
-  bool pcc_avg_valid = st.pcc_n >= 3;
-  float pcc_avg = 0;
-  if (pcc_avg_valid) { for (int i = 0; i < st.pcc_n; i++) pcc_avg += st.pcc_buf[i]; pcc_avg /= st.pcc_n; }
-
-  // pcc_avg nur für LADESPERRE-Ratio (historischer Hausverbrauch).
-  // decide() und apply_blocking() nutzen rohen in.pcc (gleiche Quelle, gleicher Zeitpunkt).
+  // Temperatur-Derating nur bei gültiger, plausibler Außentemp; sonst unverändert.
+  if (in.aussen_valid && in.aussen_temp > -40.0f && in.aussen_temp < 55.0f && r.dc_expected > 0) {
+    double elev, azN; sun_pos(now_utc, elev, azN);
+    r.dc_expected *= dc_temp_factor(elev, in.aussen_temp);
+  }
 
   // Peak-Fenster immer berechnen (auch ohne ladesperre_enable) → für JSON-Reporting
   time_t midnight = now_utc - local_sec_day;
@@ -233,22 +259,31 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
   r.peak_h    = (best_w > PCC_PEAK_TH) ? peak_h_loc : -1;
   r.win_end_h = win_end_loc;
 
+  // Astronomischer lokaler Mittag → harte Obergrenze für die Ladesperre:
+  // Laden startet IMMER spätestens zum Sonnen-Meridiandurchgang.
+  time_t noon_utc = solar_noon_utc(now_utc);
+  r.noon_h = (float)((double)(noon_utc - midnight) / 3600.0);  // lokale Dezimalstunde
+
   // LADESPERRE: zeitbasiert bis win_end_h.
   // Freigabe: Schlechtwetter (ratio>ladesperre_ratio) ODER pcc>20kW ODER Peak-Stunde überschritten.
   // peak_today verhindert Oszillation nach Freigabe durch pcc-Abfall beim Laden.
   if (in.pcc > PCC_PEAK_TH) st.peak_today = true;
 
-  // Ist-Wetter-Ratio immer berechnen (für Reporting), -1 wenn pcc_avg/DC ungültig.
-  // ratio > ladesperre_ratio ⇒ Schlechtwetter.
-  if (pcc_avg_valid && r.dc_expected > 5000)
-    r.ratio = (r.dc_expected - (pcc_avg + in.ebox_w + in.bat1)) / r.dc_expected;
+  // Ist-Wetter-Ratio immer berechnen (für Reporting), -1 wenn DC ungültig.
+  // ratio > ladesperre_ratio ⇒ Schlechtwetter. Proxy = pcc_avg5 + ebox + bat1_avg5
+  // (beide 5-Min-Mittel aus pivot2db): bringt das Gutwetter-Signal der Akkuladung
+  // ohne 0↔2500W-Flattern, und der Akku-voll-Sprung (bat1→pcc) hebt sich auf.
+  if (r.dc_expected > 5000)
+    r.ratio = (r.dc_expected - (in.pcc_avg5 + in.ebox_w + in.bat1_avg5)) / r.dc_expected;
 
   bool ladesperre = false;
   if (ladesperre_enable) {
     bool has_peak = best_w > PCC_PEAK_TH;
     // Zeitfenster: Peak vorhergesagt, vor/in Peak-Stunde, PCC hat 20kW noch nicht erreicht.
+    // Harte Obergrenze astronomischer Mittag (now_utc < noon_utc) → Laden startet
+    // spätestens zum lokalen Sonnenhöchststand, auch wenn die Peak-Stunde später läge.
     bool in_window = has_peak && win_end_loc >= 0 && !st.peak_today
-                     && (local_hour <= peak_h_loc);
+                     && (local_hour <= peak_h_loc) && (now_utc < noon_utc);
     // LATCH mit Hysterese gegen Flattern an der Ratio-Schwelle:
     //   LOCK   bei belegtem Gutwetter (ratio <= ladesperre_ratio)
     //   RELEASE erst bei klarem Schlechtwetter (ratio >= ladesperre_ratio + LADESPERRE_HYST)
