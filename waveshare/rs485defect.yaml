@@ -1,0 +1,442 @@
+# ════════════════════════════════════════════════════════════════════════════
+#  rs485defect — Waveshare ESP32-S3-Relay-6CH mit defektem RS485-Zweig
+#
+#  Board MAC 50:78:7D:07:FF:E4 (USB-JTAG /dev/ttyACM0)
+#  Der SP3485-Zweig (GPIO17/18/3) ist defekt -> UART bewusst NICHT konfiguriert.
+#  Verwendbar bleiben die 6 Relais:
+#
+#    CH1 GPIO1   CH2 GPIO2   CH3 GPIO41
+#    CH4 GPIO42  CH5 GPIO45  CH6 GPIO46
+#
+#  Eigener MQTT-Prefix "rs485defect-wav-esp32s3", damit die Produktions-Topics
+#  (waveshare/relay/...) des Boards 192.168.178.187 nicht mitgeschaltet werden.
+#
+#  WLAN: offener AP bevorzugt (open_wifi_join.h), f24 nur Fallback.
+#  Am offenen AP ist das Board aus 192.168.178.x NICHT per OTA erreichbar
+#  -> vorher {"ENABLE":0} auf .../openwifi schicken.
+#
+#  Steuerung (alles retain=false):
+#    mosquitto_pub -h 192.168.178.218 -t rs485defect-wav-esp32s3/relay/1   -m '{"v":1}'
+#    mosquitto_pub -h 192.168.178.218 -t rs485defect-wav-esp32s3/relay/all -m '{"v":0}'
+#    mosquitto_pub -h 192.168.178.218 -t rs485defect-wav-esp32s3/openwifi  -m '{"ENABLE":0}'
+#    mosquitto_pub -h 192.168.178.218 -t rs485defect-wav-esp32s3/scan      -m 'go'
+#  Status (30s):  rs485defect-wav-esp32s3/status
+#
+#  USB-Multiplex (seit 1.5, usb_mux.h) — zwei logische Kanäle auf /dev/ttyACM0:
+#    Kanal 1  Steuerung: Klartext-Kommando rein, Antwort mit Präfix "#K1# "
+#    Kanal 2  Log-Monitor: unveränderter ESPHome-Log (alles ohne dieses Präfix)
+#  Host-Seite: waveshare/usbmux.py (Daemon hält den Port, zwei Unix-Sockets).
+#    ./usbmux.py daemon &        # hält /dev/ttyACM0
+#    ./usbmux.py cmd status      # Kanal 1
+#    ./usbmux.py mon             # Kanal 2
+#  Damit läuft Steuerung auch ohne WLAN/MQTT — der Rückweg, wenn das Board am
+#  offenen AP in 192.168.4.x hängt (siehe open_wifi_join.h).
+# ════════════════════════════════════════════════════════════════════════════
+
+substitutions:
+  device_name: rs485defect-wav-esp32s3
+  mqtt_broker: 192.168.178.218
+  wifi_ssid: f24
+  wifi_password: "9876543210"
+  ota_password: waveshare2026
+  ap_ssid: RS485defect-AP
+  open_mqtt_timeout: "180000"   # ms ohne MQTT am offenen AP -> Blacklist
+  fw_version: "1.5"      # USB-Multiplex: Kanal 1 Steuerung, Kanal 2 Log
+
+esphome:
+  name: ${device_name}
+  friendly_name: RS485 defekt (6CH Relay)
+  includes:
+    - open_wifi_join.h
+    - usb_mux.h
+  on_boot:
+    priority: -100
+    then:
+      - wait_until:
+          condition:
+            wifi.connected:
+      - delay: 10s
+      - script.execute: scan_open
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: arduino
+
+network:
+  enable_ipv6: true
+
+logger:
+  level: INFO
+  baud_rate: 115200
+  hardware_uart: USB_SERIAL_JTAG   # Konsole auf /dev/ttyACM0 (kein RS485 im Weg)
+
+ota:
+  - platform: esphome
+    password: ${ota_password}
+
+wifi:
+  id: wifi_comp
+  ssid: ${wifi_ssid}
+  password: ${wifi_password}
+  reboot_timeout: 5min
+  ap:
+    ssid: ${ap_ssid}
+    password: ${ota_password}
+
+web_server:
+  port: 80
+
+mqtt:
+  id: mqtt_client
+  broker: ${mqtt_broker}
+  port: 1883
+  client_id: ${device_name}
+  topic_prefix: ${device_name}
+  discovery: false
+  birth_message:
+    topic: ${device_name}/online
+    payload: "1"
+    retain: false
+  will_message:
+    topic: ${device_name}/online
+    payload: "0"
+    retain: false
+  on_message:
+    # Sofort-Scan nach offenen APs anstoßen
+    - topic: ${device_name}/scan
+      then:
+        - script.execute: scan_open
+
+    # Offenes WLAN an/aus: {"ENABLE":0} holt das Board zurück auf f24
+    # (nötig für OTA, weil 192.168.4.x von außen nicht erreichbar ist)
+    - topic: ${device_name}/openwifi
+      then:
+        - script.execute:
+            id: set_openwifi
+            en: !lambda 'return x.find("1") != std::string::npos;'
+    # Relais: n = 1..6, relay/all -> n = 0. Logik in script set_relay,
+    # damit MQTT und USB-Kanal 1 dieselbe Stelle benutzen.
+    - topic: ${device_name}/relay/1
+      then:
+        - script.execute: {id: set_relay, n: 1, st: !lambda 'return x.find("1") != std::string::npos;'}
+    - topic: ${device_name}/relay/2
+      then:
+        - script.execute: {id: set_relay, n: 2, st: !lambda 'return x.find("1") != std::string::npos;'}
+    - topic: ${device_name}/relay/3
+      then:
+        - script.execute: {id: set_relay, n: 3, st: !lambda 'return x.find("1") != std::string::npos;'}
+    - topic: ${device_name}/relay/4
+      then:
+        - script.execute: {id: set_relay, n: 4, st: !lambda 'return x.find("1") != std::string::npos;'}
+    - topic: ${device_name}/relay/5
+      then:
+        - script.execute: {id: set_relay, n: 5, st: !lambda 'return x.find("1") != std::string::npos;'}
+    - topic: ${device_name}/relay/6
+      then:
+        - script.execute: {id: set_relay, n: 6, st: !lambda 'return x.find("1") != std::string::npos;'}
+    - topic: ${device_name}/relay/all
+      then:
+        - script.execute: {id: set_relay, n: 0, st: !lambda 'return x.find("1") != std::string::npos;'}
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: "CET-1CEST,M3.5.0,M10.5.0/3"
+
+globals:
+  - id: open_ap_ssid
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: open_ap_rssi
+    type: int
+    restore_value: false
+    initial_value: '-127'
+  - id: open_ap_count
+    type: int
+    restore_value: false
+    initial_value: '0'
+  # false -> offenes WLAN ignorieren, fest auf f24 bleiben (OTA aus 192.168.178.x
+  # erreichbar). Nicht persistent: nach Reboot wieder offenes WLAN bevorzugt.
+  - id: open_enabled
+    type: bool
+    restore_value: false
+    initial_value: 'true'
+  # Zuletzt gebautes Status-JSON (build_status) — von MQTT-Telemetrie und
+  # USB-Kanal-1-Kommando "status" gemeinsam genutzt.
+  - id: status_js
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+
+script:
+  # Offene APs suchen und den besten bevorzugen (f24 bleibt Fallback)
+  - id: scan_open
+    mode: single
+    then:
+      - lambda: |-
+          if (!id(open_enabled))
+            return;
+          OpenApResult r = ow_find_open("${ap_ssid}");
+          id(open_ap_ssid)  = r.ssid;
+          id(open_ap_rssi)  = r.rssi;
+          id(open_ap_count) = r.count;
+          ow_prefer(r.ssid, "${wifi_ssid}", "${wifi_password}");
+
+  # Relais schalten — einzige Stelle, die die 6 GPIO-Switches kennt.
+  # n = 1..6, n = 0 bedeutet "alle". Von MQTT und USB-Kanal 1 gerufen.
+  - id: set_relay
+    mode: single
+    parameters:
+      n: int
+      st: bool      # 'on' geht nicht: YAML 1.1 liest den Schluessel als Boolean
+    then:
+      - lambda: |-
+          switch (n) {
+            case 0:
+              st ? id(ch1).turn_on() : id(ch1).turn_off();
+              st ? id(ch2).turn_on() : id(ch2).turn_off();
+              st ? id(ch3).turn_on() : id(ch3).turn_off();
+              st ? id(ch4).turn_on() : id(ch4).turn_off();
+              st ? id(ch5).turn_on() : id(ch5).turn_off();
+              st ? id(ch6).turn_on() : id(ch6).turn_off();
+              break;
+            case 1: st ? id(ch1).turn_on() : id(ch1).turn_off(); break;
+            case 2: st ? id(ch2).turn_on() : id(ch2).turn_off(); break;
+            case 3: st ? id(ch3).turn_on() : id(ch3).turn_off(); break;
+            case 4: st ? id(ch4).turn_on() : id(ch4).turn_off(); break;
+            case 5: st ? id(ch5).turn_on() : id(ch5).turn_off(); break;
+            case 6: st ? id(ch6).turn_on() : id(ch6).turn_off(); break;
+            default: ESP_LOGW("usb_mux", "Relais %d gibt es nicht", n); break;
+          }
+
+  # Offenes WLAN an/aus — einzige Stelle, von MQTT und USB-Kanal 1 gerufen.
+  - id: set_openwifi
+    mode: single
+    parameters:
+      en: bool
+    then:
+      - lambda: |-
+          id(open_enabled) = en;
+          ESP_LOGI("open_wifi", "Offenes WLAN %s", en ? "aktiviert" : "deaktiviert -> f24");
+          if (en) {
+            id(scan_open).execute();
+          } else {
+            id(open_ap_ssid)  = "";
+            id(open_ap_rssi)  = -127;
+            id(open_ap_count) = 0;
+            ow_prefer("", "${wifi_ssid}", "${wifi_password}");
+          }
+
+  # Telemetrie-JSON bauen und in id(status_js) ablegen (kein Versand).
+  - id: build_status
+    mode: single
+    then:
+      - lambda: |-
+          std::string ip = "-";
+          for (auto &a : id(wifi_comp).wifi_sta_ip_addresses()) {
+            if (a.is_set() && a.is_ip4()) { ip = a.str(); break; }
+          }
+          std::string ssid = ow_current_ssid();
+          char js[480];
+          snprintf(js, sizeof(js),
+            "{\"name\":\"%s\",\"ip\":\"%s\",\"ssid\":\"%s\",\"rssi\":%d,"
+            "\"open_ap\":\"%s\",\"open_rssi\":%d,\"open_count\":%d,"
+            "\"relays\":[%d,%d,%d,%d,%d,%d],"
+            "\"mqtt\":%d,\"uptime\":%u,\"mem_free\":%u,"
+            "\"fw\":\"%s\",\"rs485\":\"defekt\"}",
+            "${device_name}",
+            ip.c_str(),
+            json_escape(ssid).c_str(),
+            (int) id(rssi_sensor).state,
+            id(open_ap_ssid).c_str(), id(open_ap_rssi), id(open_ap_count),
+            id(ch1).state ? 1 : 0, id(ch2).state ? 1 : 0, id(ch3).state ? 1 : 0,
+            id(ch4).state ? 1 : 0, id(ch5).state ? 1 : 0, id(ch6).state ? 1 : 0,
+            id(mqtt_client).is_connected() ? 1 : 0,
+            (unsigned) (millis() / 1000), (unsigned) ESP.getFreeHeap(),
+            "${fw_version}");
+          id(status_js) = js;
+
+sensor:
+  - platform: wifi_signal
+    id: rssi_sensor
+    name: "WiFi RSSI"
+    update_interval: 60s
+
+switch:
+  - platform: gpio
+    id: ch1
+    name: "CH1"
+    pin: GPIO1
+    restore_mode: ALWAYS_OFF
+  - platform: gpio
+    id: ch2
+    name: "CH2"
+    pin: GPIO2
+    restore_mode: ALWAYS_OFF
+  - platform: gpio
+    id: ch3
+    name: "CH3"
+    pin: GPIO41
+    restore_mode: ALWAYS_OFF
+  - platform: gpio
+    id: ch4
+    name: "CH4"
+    pin: GPIO42
+    restore_mode: ALWAYS_OFF
+  - platform: gpio
+    id: ch5
+    name: "CH5"
+    pin: GPIO45
+    restore_mode: ALWAYS_OFF
+  - platform: gpio
+    id: ch6
+    name: "CH6"
+    pin: GPIO46
+    restore_mode: ALWAYS_OFF
+
+interval:
+  # Offene APs alle 5 min neu scannen (blockiert ~1,3 s, unkritisch)
+  - interval: 5min
+    then:
+      - script.execute: scan_open
+
+  # Watchdog: am offenen AP ohne MQTT -> blacklisten, zurück auf f24
+  - interval: 30s
+    then:
+      - lambda: |-
+          ow_watchdog(id(mqtt_client).is_connected(), ${open_mqtt_timeout},
+                      "${wifi_ssid}", "${wifi_password}");
+
+  # Board-Telemetrie: Name, IP, RSSI, offener AP, Relaiszustände — retain=false
+  - interval: 30s
+    then:
+      - script.execute: build_status
+      - lambda: |-
+          id(mqtt_client).publish(std::string("${device_name}/status"),
+                                  id(status_js), 0, false);
+
+  # ── USB-Multiplex Kanal 1: Kommandozeilen von /dev/ttyACM0 abarbeiten ─────
+  # Nicht blockierend (usb_serial_jtag_read_bytes mit Timeout 0). Kanal 2
+  # (Log) läuft unverändert über denselben stdout, getrennt wird über das
+  # Präfix "#K1# " auf jeder Antwortzeile — siehe usb_mux.h.
+  - interval: 50ms
+    then:
+      - lambda: |-
+          std::string line;
+          while (um_read_line(line)) {
+            auto a = um_split(line);
+            if (a.empty())
+              continue;
+            const std::string &c = a[0];
+
+            if (c == "help") {
+              um_reply("Kanal 1 (Steuerung), Kommandos:");
+              um_reply("  ping                      Lebenszeichen");
+              um_reply("  status                    Telemetrie-JSON (wie MQTT .../status)");
+              um_reply("  relay                     Zustaende CH1..CH6");
+              um_reply("  relay <1-6|all> <0|1>     Relais schalten");
+              um_reply("  openwifi <0|1>            offenes WLAN an/aus (0 = fest auf f24)");
+              um_reply("  scan                      offene APs jetzt neu scannen");
+              um_reply("  wifi                      SSID/IP/RSSI/offener AP");
+              um_reply("  loglevel <NONE|ERROR|WARN|INFO|DEBUG|VERBOSE>   Kanal 2 lauter/leiser");
+              um_reply("  reboot                    Neustart");
+              um_ok();
+
+            } else if (c == "ping") {
+              um_reply("pong fw=${fw_version} uptime=%u", (unsigned) (millis() / 1000));
+              um_ok();
+
+            } else if (c == "status") {
+              id(build_status).execute();
+              um_reply("%s", id(status_js).c_str());
+              um_ok();
+
+            } else if (c == "relay") {
+              if (a.size() == 1) {
+                um_reply("relays %d %d %d %d %d %d",
+                         id(ch1).state ? 1 : 0, id(ch2).state ? 1 : 0, id(ch3).state ? 1 : 0,
+                         id(ch4).state ? 1 : 0, id(ch5).state ? 1 : 0, id(ch6).state ? 1 : 0);
+                um_ok();
+              } else if (a.size() < 3) {
+                um_err("Aufruf: relay <1-6|all> <0|1>");
+              } else {
+                const bool on = um_truthy(a[2]);
+                int n = -1;
+                if (a[1] == "all")
+                  n = 0;
+                else if (a[1].size() == 1 && a[1][0] >= '1' && a[1][0] <= '6')
+                  n = a[1][0] - '0';
+                if (n < 0) {
+                  um_err("Kanal '%s' gibt es nicht (1-6 oder all)", a[1].c_str());
+                } else {
+                  id(set_relay).execute(n, on);
+                  um_reply("relay %s = %d", a[1].c_str(), on ? 1 : 0);
+                  um_ok();
+                }
+              }
+
+            } else if (c == "openwifi") {
+              if (a.size() < 2) {
+                um_reply("openwifi = %d, aktuell '%s'", id(open_enabled) ? 1 : 0,
+                         id(open_ap_ssid).c_str());
+                um_ok();
+              } else {
+                const bool en = um_truthy(a[1]);
+                id(set_openwifi).execute(en);
+                um_reply("openwifi = %d", en ? 1 : 0);
+                um_ok();
+              }
+
+            } else if (c == "scan") {
+              id(scan_open).execute();
+              um_reply("Scan angestossen (blockiert ~1,3 s), Ergebnis in 'status'");
+              um_ok();
+
+            } else if (c == "wifi") {
+              std::string ip = "-";
+              for (auto &ad : id(wifi_comp).wifi_sta_ip_addresses()) {
+                if (ad.is_set() && ad.is_ip4()) { ip = ad.str(); break; }
+              }
+              um_reply("ssid=%s ip=%s rssi=%d open_ap=%s open_rssi=%d open_count=%d mqtt=%d",
+                       ow_current_ssid().c_str(), ip.c_str(), (int) id(rssi_sensor).state,
+                       id(open_ap_ssid).empty() ? "-" : id(open_ap_ssid).c_str(),
+                       id(open_ap_rssi), id(open_ap_count),
+                       id(mqtt_client).is_connected() ? 1 : 0);
+              um_ok();
+
+            } else if (c == "loglevel") {
+              if (a.size() < 2) {
+                um_err("Aufruf: loglevel <NONE|ERROR|WARN|INFO|DEBUG|VERBOSE>");
+              } else {
+                int lvl = -1;
+                if (a[1] == "NONE")         lvl = ESPHOME_LOG_LEVEL_NONE;
+                else if (a[1] == "ERROR")   lvl = ESPHOME_LOG_LEVEL_ERROR;
+                else if (a[1] == "WARN")    lvl = ESPHOME_LOG_LEVEL_WARN;
+                else if (a[1] == "INFO")    lvl = ESPHOME_LOG_LEVEL_INFO;
+                else if (a[1] == "DEBUG")   lvl = ESPHOME_LOG_LEVEL_DEBUG;
+                else if (a[1] == "VERBOSE") lvl = ESPHOME_LOG_LEVEL_VERBOSE;
+                if (lvl < 0) {
+                  um_err("Level '%s' unbekannt", a[1].c_str());
+                } else if (lvl > ESPHOME_LOG_LEVEL) {
+                  // Hoeher als einkompiliert geht nicht: der Code fuer feinere
+                  // Level ist gar nicht erst uebersetzt (logger: level: INFO).
+                  um_err("Level '%s' nicht einkompiliert (max %d)", a[1].c_str(), ESPHOME_LOG_LEVEL);
+                } else {
+                  esphome::logger::global_logger->set_log_level((uint8_t) lvl);
+                  um_reply("loglevel = %s", a[1].c_str());
+                  um_ok();
+                }
+              }
+
+            } else if (c == "reboot") {
+              um_reply("reboot");
+              um_ok();
+              App.safe_reboot();
+
+            } else {
+              um_err("unbekanntes Kommando '%s' (help)", c.c_str());
+            }
+          }
