@@ -4,8 +4,8 @@ getdc MMDDHH      →  expected PV DC watts (Stundenmitte :30)
 getdc MMDDHHMM    →  expected PV DC watts (exakte Minute)
 
 Zwei Arrays (kalibriert aus inverter_data DC*1.8 an klaren Tagen):
-  PV1: tilt=25°, azimut=+80° von Süd (fast West),  P_peak=27854 W
-  PV2: tilt=60°, azimut= -5° von Süd (fast Süd),   P_peak=11138 W
+  PV1: tilt=25°, azimut=+80° von Süd (fast West),  P_peak=16438 W
+  PV2: tilt=60°, azimut= -5° von Süd (fast Süd),   P_peak=6573 W
 
 Atmosphäre: Meinel-Klarhimmel  T = 0.7^(AM^0.678)
 Monatlicher Clearness-Index KT kalibriert aus inverter_data 2025-12..2026-05.

@@ -53,7 +53,7 @@ inline int sorted_index(int s) {
 // ── DC-Klarhimmel-Forecast (Meinel-Modell wie _DcForecast) ───────────────────
 constexpr double LAT = 47.6811, LON = 11.5732;
 struct Arr { double tilt, azS, power; };   // tilt, Azimut-Süd, Nennleistung
-static const Arr ARRAYS[2]      = {{25, 80, 27854}, {60, -5, 11138}};
+static const Arr ARRAYS[2]      = {{25, 80, 16438}, {60, -5, 6573}};
 static const Arr ARRAYS_EAST[3] = {{41, -74, 19852}, {60, 90, 2078}, {32, 94, 2378}};
 inline double kt_month(int m) {
   static const double K[13] = {0, .331, .402, .563, .838, .909, .880,

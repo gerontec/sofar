@@ -1,0 +1,170 @@
+\documentclass[11pt, a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[german]{babel}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+
+\title{Clear-Sky-Modell des DC-Forecasts\\\large Funktionsformeln von \texttt{dc\_now()}}
+\author{Systemdokumentation}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\noindent
+Identisch implementiert in \texttt{waveshare/fox2db\_logic.h} (C++, aktiver Regler
+auf dem ESP) und \texttt{fox2dbEasy.py} (Python, Schattenrechnung auf dem Pi).
+Standort: $\varphi = 47{,}6811^\circ$ N, $\lambda = 11{,}5732^\circ$ O.
+
+\section{Sonnenstand (NOAA)}
+
+Mit dem Tag im Jahr $n$ (nullbasiert) und der UTC-Stunde $h$ ergibt sich der
+Bahnwinkel
+\[
+\gamma = \frac{2\pi}{365}\left(n + \frac{h-12}{24}\right).
+\]
+
+Zeitgleichung in Minuten und Deklination in Radiant als Fourier-Reihen
+(Spencer):
+\begin{align}
+E_t &= 229{,}18\,\bigl(0{,}000075 + 0{,}001868\cos\gamma - 0{,}032077\sin\gamma \notag\\
+    &\qquad\qquad - 0{,}014615\cos 2\gamma - 0{,}040849\sin 2\gamma\bigr),\\[2pt]
+\delta &= 0{,}006918 - 0{,}399912\cos\gamma + 0{,}070257\sin\gamma \notag\\
+    &\quad - 0{,}006758\cos 2\gamma + 0{,}000907\sin 2\gamma \notag\\
+    &\quad - 0{,}002697\cos 3\gamma + 0{,}001480\sin 3\gamma .
+\end{align}
+
+Wahre Ortszeit $t_s$ (Minuten) und Stundenwinkel $\omega$ (Grad), ausgewertet in
+UTC, weshalb der Zeitzonenterm entfällt:
+\[
+t_s = 60h + E_t + 4\lambda,
+\qquad
+\omega = \frac{t_s}{4} - 180^\circ .
+\]
+
+Zenitwinkel $\theta_z$, Elevation $\alpha$ und Azimut $A$ (von Nord, im
+Uhrzeigersinn):
+\begin{align}
+\cos\theta_z &= \sin\varphi\sin\delta + \cos\varphi\cos\delta\cos\omega,\\
+\alpha &= 90^\circ - \arccos\bigl(\cos\theta_z\bigr),\\
+A &= 180^\circ + \operatorname{atan2}\bigl(\sin\omega,\;
+     \cos\omega\sin\varphi - \tan\delta\cos\varphi\bigr).
+\end{align}
+
+\subsection*{Sonnenmittag}
+
+Der Meridiandurchgang ($\omega = 0$, also $t_s = 720$) liefert die harte
+Obergrenze der Ladesperre:
+\[
+h_{\text{noon}}^{\text{UTC}} = \frac{720 - E_t - 4\lambda}{60}.
+\]
+$E_t$ wird dafür bei 12\,UTC ausgewertet; die Tagesvariation ist vernachlässigbar.
+
+\section{Atmosphäre}
+
+Luftmasse nach dem einfachen Sekans-Ansatz, gedeckelt gegen die Divergenz am
+Horizont, und Transmission nach Meinel:
+\[
+m = \min\!\left(\frac{1}{\sin\alpha},\; 37\right),
+\qquad
+T = 0{,}7^{\,m^{0{,}678}} .
+\]
+
+Ein empirischer Monatsfaktor $k_t(M)$ fängt alles auf, was dieses Modell nicht
+auflöst -- Trübung, Diffusanteil, Verschmutzung, mittlere Verschattung:
+
+\begin{center}
+\begin{tabular}{lrrrrrrrrrrrr}
+\toprule
+$M$ & 1 & 2 & 3 & 4 & 5 & 6 & 7 & 8 & 9 & 10 & 11 & 12\\
+$k_t$ & 0{,}331 & 0{,}402 & 0{,}563 & 0{,}838 & 0{,}909 & 0{,}880
+      & 0{,}840 & 0{,}820 & 0{,}760 & 0{,}600 & 0{,}350 & 0{,}134\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Modulebene und Summenleistung}
+
+Für ein Feld mit Neigung $\beta$ und Azimut $\psi$ (von Süd, Ost negativ) ist der
+Einfallswinkel $\vartheta$ auf die geneigte Ebene
+\[
+\cos\vartheta = \sin\alpha\cos\beta
+   + \cos\alpha\sin\beta\cos\bigl((A - 180^\circ) - \psi\bigr).
+\]
+
+Über alle Teilfelder $i$ mit Nennleistung $P_i$:
+\[
+\boxed{\;
+P_{\text{DC}} = \sum_i P_i\, T\, k_t(M)\, \max\bigl(0,\; \cos\vartheta_i\bigr)
+\;}
+\]
+und $P_{\text{DC}} = 0$ für $\alpha \le 0$. \texttt{dc\_now()} summiert die beiden
+Feldsätze \texttt{ARRAYS} (Sofar) und \texttt{ARRAYS\_EAST} (FoxESS).
+
+\section{Temperatur-Derating}
+
+Zelltemperatur über den NOCT-Ansatz mit dem Einstrahlungsproxy
+$g = \max(0, \sin\alpha)$:
+\[
+T_{\text{cell}} = T_{\text{amb}} + \frac{\mathrm{NOCT} - 20}{800}\cdot 1000\,g,
+\qquad
+f_T = \operatorname{clip}\Bigl(1 + \kappa\,(T_{\text{cell}} - 25\,^\circ\mathrm{C}),\;
+0{,}85,\; 1\Bigr),
+\]
+mit $\kappa = -0{,}0030\,\mathrm{K}^{-1}$ und $\mathrm{NOCT} = 45\,^\circ$C.
+Angewandt wird $f_T$ nur bei gültiger Außentemperatur im Bereich
+$-40 < T_{\text{amb}} < 55\,^\circ$C.
+
+\section{Verwendung im Regler}
+
+Aus dem Prognosewert und dem gemessenen Proxy (5-Minuten-Mittel von
+Netzübergabe, EBox-Last und Batterieleistung) folgt das Wettermaß
+\[
+r = \frac{P_{\text{DC}} - \bigl(P_{\text{PCC}}^{(5)} + P_{\text{EBox}}
+      + P_{\text{Bat}}^{(5)}\bigr)}{P_{\text{DC}}},
+\qquad P_{\text{DC}} > 5\,\text{kW},
+\]
+wobei $r > r_{\text{th}}$ als Schlechtwetter gilt. Zusätzlich wird der Tagesgang
+stündlich abgetastet,
+\[
+h_{\text{peak}} = \arg\max_{h \in [5,20]} P_{\text{DC}}(h),
+\qquad
+h_{\text{end}} = \max\{h : P_{\text{DC}}(h) > P_{\text{peak,th}}\},
+\]
+was das Zeitfenster der Ladesperre aufspannt.
+
+\section{Feldparameter}
+
+Tripel $(\beta, \psi, P)$ in Grad, Grad und Watt.
+
+\begin{center}
+\begin{tabular}{llrr}
+\toprule
+Feldsatz & Teilfeld & Stand 2022 & gefittet 08/2026\\
+\midrule
+\texttt{ARRAYS} (Sofar)      & West   & $(25, +80, 27\,854)$ & $(25, +80, 16\,438)$\\
+                             & Süd    & $(60, -5, 11\,138)$  & $(60, -5, 6\,573)$\\
+\texttt{ARRAYS\_EAST} (FoxESS)& Ost    & $(41, -74, 19\,852)$ & unverändert\\
+                             & West   & $(60, +90, 2\,078)$  & unverändert\\
+                             & West   & $(32, +94, 2\,378)$  & unverändert\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Der Fit stammt aus \texttt{gen\_pv\_model.py}, ausgewertet gegen
+\texttt{inverter\_data} (Sofar) und \texttt{inverter\_data2} (FoxESS) zweier klarer
+Tage. Für \texttt{ARRAYS} sinkt der RMSE von 5391\,W auf 1298\,W ($-76\,\%$), das
+Verhältnis Messung/Modell liegt danach von 10 bis 17\,Uhr bei 0{,}98--1{,}02.
+
+\texttt{ARRAYS\_EAST} bleibt bewusst unverändert: eine reine Leistungsanpassung
+bringt dort nichts ($-1\,\%$ RMSE), und der freie Geometrie-Fit läuft in
+$\beta = 64^\circ$, $\psi = -25^\circ$ -- er kompensiert damit die
+Morgenverschattung, die dem Modell fehlt, statt die Dachgeometrie abzubilden. Ein
+Horizontprofil wäre der richtige Ansatz, keine verbogene Neigung.
+
+\end{document}

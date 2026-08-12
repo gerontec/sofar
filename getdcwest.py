@@ -4,8 +4,8 @@ getdcwest MMDDHH      →  expected PV DC watts WR1 (Stundenmitte :30)
 getdcwest MMDDHHMM    →  expected PV DC watts WR1 (exakte Minute)
 
 WR1 (Sofar-Inverter, Power_PV1+PV2 via MQTT) — zwei kalibrierte Arrays:
-  PV1: tilt=25°, azimut=+80° von Süd (fast West),  P_peak=27854 W
-  PV2: tilt=60°, azimut= -5° von Süd (fast Süd),   P_peak=11138 W
+  PV1: tilt=25°, azimut=+80° von Süd (fast West),  P_peak=16438 W
+  PV2: tilt=60°, azimut= -5° von Süd (fast Süd),   P_peak=6573 W
 
 Kalibrierung:
   Datenquelle: inverter_data.Power_PV1+Power_PV2, 2025-12 bis 2026-05

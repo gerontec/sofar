@@ -30,18 +30,26 @@ substitutions:
   wifi_ssid: f24
   wifi_password: "9876543210"
   ota_password: waveshare2026
-  fw_version: "3.4.1"      # Z2-Fallback entfernt (toter pv_zaehl2-Zähler erzeugte +18kW Phantom-PCC-Spitzen bei Lesefehlern)
+  ap_ssid: Sofar-Waveshare-AP
+  open_mqtt_timeout: "300000"   # ms ohne MQTT am offenen AP -> Blacklist
+  fw_version: "3.6.2"      # 3.6.1 + Kanal A wieder auf soyo_w/soyo_set statt Testwert A_W
 
 esphome:
   name: ${device_name}
   friendly_name: Sofar fox2db Relay
   includes:
     - fox2db_logic.h
-    - open_wifi_scan.h
+    - open_wifi_join.h
+    - rs485_mux.h
   on_boot:
     priority: -100
     then:
       - script.execute: pub_status
+      - wait_until:
+          condition:
+            wifi.connected:
+      - delay: 10s
+      - script.execute: scan_open
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -65,7 +73,7 @@ wifi:
   password: ${wifi_password}
   reboot_timeout: 5min
   ap:
-    ssid: Sofar-Waveshare-AP
+    ssid: ${ap_ssid}
     password: ${ota_password}
 
 time:
@@ -86,6 +94,13 @@ uart:
   rx_buffer_size: 256
 
 globals:
+  # Offenes WLAN (Component open_wifi, nur fuer die Status-JSONs)
+  - { id: open_ap_ssid,  type: std::string, restore_value: false, initial_value: '""' }
+  - { id: open_ap_rssi,  type: int,  restore_value: false, initial_value: '-127' }
+  - { id: open_ap_count, type: int,  restore_value: false, initial_value: '0' }
+  # false -> offenes WLAN ignorieren, fest auf f24 bleiben (OTA-Rückweg)
+  - { id: open_enabled,  type: bool, restore_value: false, initial_value: 'true' }
+
   # Eingänge (aus MQTT)
   - { id: in_pcc,   type: float, restore_value: false, initial_value: '0' }
   - { id: in_bat1,  type: float, restore_value: false, initial_value: '0' }
@@ -101,7 +116,7 @@ globals:
   # Schalter (per MQTT)
   - { id: auto_enable,       type: bool, restore_value: false, initial_value: 'true' }
   - { id: ladesperre_enable, type: bool, restore_value: false, initial_value: 'true' }
-  - { id: ladesperre_ratio,  type: float, restore_value: false, initial_value: '0.62' } # Gutwetter-Erkennung, Ratio mit geglättetem bat1_avg5 (MQTT: sofar/ratio)
+  - { id: ladesperre_ratio,  type: float, restore_value: false, initial_value: '0.50' } # Gutwetter-Erkennung, Ratio mit geglättetem bat1_avg5 (MQTT: sofar/ratio)
   - { id: bat1_charge_factor, type: float, restore_value: false, initial_value: '0.5' } # Anteil der Sofar-Ladung, der als EBox-Überschuss zählt (MQTT: sofar/bat1_factor, 0..1)
   - { id: do4_req,           type: bool, restore_value: false, initial_value: 'false' }
   - { id: g_peak_h,    type: int, restore_value: false, initial_value: '-1' }
@@ -144,6 +159,23 @@ switch:
   - { platform: gpio, id: relay_ch6, name: CH6, pin: GPIO46, restore_mode: ALWAYS_OFF }
 
 script:
+  # ── Offene APs suchen und bevorzugen (f24 bleibt Fallback) ───────────────
+  # Seit v3.5.4 ohne eigenen Radio-Scan: es werden nur ESPHomes Scan-Ergebnisse
+  # ausgewertet. Damit entfällt die ~1,3-s-Blockade der Hauptschleife, und der
+  # Soyo-Keepalive (TX alle 3 s, Timeout 4 s) läuft nicht mehr aus.
+  # Ein Reconnect kann die Komponente weiterhin auslösen.
+  - id: scan_open
+    mode: single
+    then:
+      - lambda: |-
+          if (!id(open_enabled))
+            return;
+          OpenApResult r = ow_find_open("${ap_ssid}");
+          id(open_ap_ssid)  = r.ssid;
+          id(open_ap_rssi)  = r.rssi;
+          id(open_ap_count) = r.count;
+          ow_prefer(r.ssid, "${wifi_ssid}", "${wifi_password}");
+
   - id: beep
     mode: single
     then:
@@ -219,10 +251,13 @@ script:
                          | (id(relay_ch2).state ? 2 : 0)
                          | (id(relay_ch3).state ? 4 : 0);
           snprintf(json, sizeof(json),
-            "{\"ip\":\"%s\",\"ip6\":\"%s\",\"state\":%d,\"target_state\":%d,\"auto\":%d,\"ladesperre_en\":%d,"
+            "{\"ip\":\"%s\",\"ip6\":\"%s\",\"ssid\":\"%s\",\"open_ap\":\"%s\",\"open_rssi\":%d,\"open_count\":%d,"
+            "\"state\":%d,\"target_state\":%d,\"auto\":%d,\"ladesperre_en\":%d,"
             "\"ratio_th\":%.2f,\"bat1_f\":%.2f,\"ratio_ist\":%.2f,\"peak_h\":%d,\"win_end_h\":%d,"
             "\"soyo_w\":%d,\"uptime\":%lu,\"mem_free\":%lu,\"fw\":\"%s\",\"fw_date\":\"" __DATE__ "T" __TIME__ "\"}",
-            ip4, ip6, phys_state, id(fox_relay_state), id(auto_enable) ? 1 : 0,
+            ip4, ip6, json_escape(ow_current_ssid()).c_str(),
+            id(open_ap_ssid).c_str(), id(open_ap_rssi), id(open_ap_count),
+            phys_state, id(fox_relay_state), id(auto_enable) ? 1 : 0,
             id(ladesperre_enable) ? 1 : 0, id(ladesperre_ratio), id(bat1_charge_factor), id(g_ratio_ist), id(g_peak_h), id(g_win_end_h), id(soyo_w),
             (unsigned long)(millis() / 1000), (unsigned long)ESP.getFreeHeap(),
             "${fw_version}");
@@ -240,6 +275,27 @@ mqtt:
     then:
       - script.execute: pub_status
   on_message:
+    # ── Offenes WLAN: Sofort-Scan anstoßen ─────────────────────────────────
+    - topic: sofar/openwifi/scan
+      then:
+        - script.execute: scan_open
+
+    # ── Offenes WLAN an/aus: {"ENABLE":0} holt das Board zurück auf f24 ────
+    - topic: sofar/openwifi
+      then:
+        - lambda: |-
+            bool en = x.find("1") != std::string::npos;
+            id(open_enabled) = en;
+            ESP_LOGI("open_wifi", "Offenes WLAN %s", en ? "aktiviert" : "deaktiviert -> f24");
+            if (en) {
+              id(scan_open).execute();
+            } else {
+              id(open_ap_ssid)  = "";
+              id(open_ap_rssi)  = -127;
+              id(open_ap_count) = 0;
+              ow_prefer("", "${wifi_ssid}", "${wifi_password}");
+            }
+
     # ── GPIO-Scan: Aktiviert nicht-blockierend, Ergebnis nach 3s ────────────
     - topic: rs485/scan
       then:
@@ -398,6 +454,39 @@ mqtt:
             (on ? id(relay_ch6).turn_on() : id(relay_ch6).turn_off());
 
 interval:
+  # ── Offene APs alle 5 min neu suchen ─────────────────────────────────────
+  - interval: 5min
+    then:
+      - script.execute: scan_open
+
+  # ── Watchdog: am offenen AP ohne MQTT -> blacklisten, zurück auf f24 ─────
+  - interval: 30s
+    then:
+      - lambda: |-
+          ow_watchdog(id(mqtt_client).is_connected(), ${open_mqtt_timeout},
+                      "${wifi_ssid}", "${wifi_password}");
+
+  # ── WLAN-Aufnahme melden, sobald der Broker da ist ───────────────────────
+  #
+  # Das ist NICHT die Survey, die in 3.5.4/3.6.0 Ärger gemacht hat. Damals lag
+  # der Eingriff im Scan selbst (erst passiv, dann als Component) — einmal war
+  # die Entscheidung danach unmöglich, einmal stand das Board. Hier bleibt der
+  # Scan unangetastet: mitgeschrieben wird nur, was er ohnehin zurückgibt, in
+  # einen RAM-Puffer von ~1,2 kB.
+  #
+  # RETAINED, damit ein später dazukommender Abonnent die letzte Ausleuchtung
+  # sofort bekommt; age_ms im JSON macht eine alte Aufnahme als alt erkennbar.
+  # Beide Argumente ausdrücklich als std::string, sonst greift die Überladung
+  # publish(topic, payload, payload_length, qos) und retain bliebe still false.
+  - interval: 10s
+    then:
+      - lambda: |-
+          if (!ow_survey_pending || !id(mqtt_client).is_connected())
+            return;
+          if (id(mqtt_client).publish(std::string("sofar/waveshare/survey"),
+                                      ow_survey_json(), 0, true))
+            ow_survey_pending = false;   // nur bei Erfolg, sonst beim nächsten Takt
+
   # ── Entscheidungs-Zyklus (wie Cron, 60s) ─────────────────────────────────
   - interval: 60s
     then:
@@ -570,29 +659,33 @@ interval:
           static uint32_t last_rx_ms = 0;
           uint32_t now = millis();
 
-          // Soyo TX: alle 3s — geprüft alle 50ms → max. 50ms Verzögerung (Soyo-Timeout=4s)
-          if (now - last_soyo_tx >= 3000UL) {
-            last_soyo_tx = now;
+          // Soyo TX über rs485_mux, Kanal A, Takt A_PERIOD_MS (3800 ms).
+          // Sollwert wieder aus der Regelung bzw. per MQTT soyo/set; ohne
+          // frische Vorgabe (90 s) fällt er auf 0 — wie vor dem Mux.
+          // Kanal B ist per B_ENABLE=false stumm.
+          // "dt" im JSON = tatsächlicher Abstand zweier Sendungen — damit ist
+          // am Broker prüfbar, ob der Takt gegen das 4-s-Soyo-Timeout hält.
+          static rs485_mux::State mux_st;
+          if (rs485_mux::tick(mux_st, now, buf) == rs485_mux::ACT_A_TX) {
             int w = id(soyo_w);
-            if (now - (uint32_t)id(soyo_ms) > 90000UL) w = 0;
-            uint8_t ph = (w >> 8) & 0xFF, pl = w & 0xFF;
-            uint8_t crc = (264 - ph - pl) & 0xFF;
-            uint8_t f[8] = {0x24, 0x56, 0x00, 0x21, ph, pl, 0x80, crc};
+            if (now - (uint32_t) id(soyo_ms) > 90000UL) w = 0;
+            uint8_t f[8];
+            rs485_mux::a_frame(f, w);
             id(rs485).write_array(f, 8);
             id(rs485).flush();
+            send_count++;
             char hex[20];
             snprintf(hex, sizeof(hex), "%02X%02X%02X%02X%02X%02X%02X%02X",
                      f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
-            send_count++;
             bool changed = (strcmp(hex, prev_hex) != 0);
             if (changed) { change_count++; strncpy(prev_hex, hex, sizeof(prev_hex)); }
-            if (changed) {
-              char js[160];
-              snprintf(js, sizeof(js),
-                "{\"w\":%d,\"hex\":\"%s\",\"sends\":%lu,\"changes\":%lu}",
-                w, hex, send_count, change_count);
-              id(mqtt_client).publish("soyo/sent", js);
-            }
+            char js[200];
+            snprintf(js, sizeof(js),
+              "{\"w\":%d,\"hex\":\"%s\",\"sends\":%lu,\"changes\":%lu,\"dt\":%lu,\"mux\":\"A\"}",
+              w, hex, send_count, change_count,
+              (unsigned long) (now - last_soyo_tx));
+            last_soyo_tx = now;
+            id(mqtt_client).publish("soyo/sent", js);
           }
 
           // RX: Frame-Empfang (25ms Gap-Erkennung)

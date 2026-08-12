@@ -2,6 +2,7 @@
 #include "esphome.h"
 #include "esphome/components/wifi/wifi_component.h"
 #include <esp_wifi.h>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -105,6 +106,96 @@ inline std::string ow_current_ssid() {
 // Gefundene offene APs dieses Durchlaufs (SSID -> bester RSSI).
 static std::vector<std::pair<std::string, int>> ow_cands;
 
+// ── Aufnahme des Standorts (Survey) ─────────────────────────────────────────
+//
+// Der Scan laeuft regelmaessig, bevor eine Verbindung steht. Ein ESP_LOGI
+// davon ist nur am seriellen Port zu sehen und im Nachhinein gar nicht — genau
+// die Luecke, die das ESP8266-Bauteil mit seiner RAM-Aufnahme schliesst. Hier
+// dasselbe ohne Component: die Aufnahme bleibt im RAM stehen, bis sie jemand
+// abholt. Per MQTT, sobald der Broker wieder da ist (ow_survey_pending, die
+// YAML-Seite meldet im Takt), oder sofort ueber Kanal 1 am USB.
+//
+// Sie enthaelt bewusst ALLE Netze, nicht nur die offenen: fuer die Auswahl
+// zaehlt nur das offene Feld, fuer die Beurteilung eines Standorts das ganze
+// Band. Der Mitschnitt sitzt deshalb VOR dem Filter in beiden Scan-Quellen und
+// vor allen Ausschlusskriterien von ow_consider_ (Geraete-AP, OW_MIN_RSSI,
+// Blacklist) — was die Auswahl verwirft, ist fuer die Ausleuchtung gerade
+// interessant.
+struct OwSurveyEntry {
+  std::string ssid;
+  int rssi;
+  int channel;
+  bool open;
+};
+
+static const size_t OW_SURVEY_MAX = 24;  // ~1,2 kB; Deckel gegen volle Baender
+static std::vector<OwSurveyEntry> ow_survey;
+static uint32_t ow_survey_ms = 0;        // millis() des Scans
+static int ow_survey_scanned = 0;        // angebotene Records, mit Doppelten
+static bool ow_survey_pending = false;   // noch nicht gemeldet
+
+inline void ow_survey_reset() {
+  ow_survey.clear();
+  ow_survey_scanned = 0;
+  ow_survey_ms = millis();
+}
+
+// Doppelte kommen vor: findet der eigene Scan zwar Netze, aber kein offenes,
+// zieht ow_find_open zusaetzlich ESPHomes Liste heran, und beide Quellen
+// schreiben hier hinein. Gleiche SSID auf gleichem Kanal -> staerkeren
+// behalten. Deshalb zaehlt `scanned` die angebotenen Records und `recorded`
+// die unterscheidbaren Netze; die beiden duerfen auseinanderliegen.
+inline void ow_survey_add(const std::string &ssid, int rssi, int channel, bool open) {
+  if (ssid.empty())
+    return;
+  ow_survey_scanned++;
+  for (auto &e : ow_survey) {
+    if (e.channel == channel && e.ssid == ssid) {
+      if (rssi > e.rssi)
+        e.rssi = rssi;
+      return;
+    }
+  }
+  if (ow_survey.size() >= OW_SURVEY_MAX)
+    return;
+  ow_survey.push_back(OwSurveyEntry{ssid, rssi, channel, open});
+}
+
+// Zeiger auf die Aufnahme, nach RSSI absteigend. Zeiger statt Kopien, weil der
+// Aufrufer die Eintraege nur liest und der Heap hier knapp ist.
+inline std::vector<const OwSurveyEntry *> ow_survey_sorted() {
+  std::vector<const OwSurveyEntry *> s;
+  s.reserve(ow_survey.size());
+  for (const auto &e : ow_survey)
+    s.push_back(&e);
+  std::sort(s.begin(), s.end(),
+            [](const OwSurveyEntry *a, const OwSurveyEntry *b) { return a->rssi > b->rssi; });
+  return s;
+}
+
+// Aufnahme als JSON. age_ms macht eine retained Nachricht als alt erkennbar —
+// ohne das sieht eine Aufnahme von gestern aus wie eine von eben.
+inline std::string ow_survey_json() {
+  char head[256];
+  snprintf(head, sizeof(head),
+           "{\"scan_ms\":%u,\"age_ms\":%u,\"scanned\":%d,\"recorded\":%u,"
+           "\"connected\":\"%s\",\"aps\":[",
+           (unsigned) ow_survey_ms, (unsigned) (millis() - ow_survey_ms), ow_survey_scanned,
+           (unsigned) ow_survey.size(), json_escape(ow_current_ssid()).c_str());
+
+  std::string out(head);
+  bool first = true;
+  for (const auto *e : ow_survey_sorted()) {
+    char b[160];
+    snprintf(b, sizeof(b), "%s{\"ssid\":\"%s\",\"rssi\":%d,\"ch\":%d,\"open\":%s}", first ? "" : ",",
+             json_escape(e->ssid).c_str(), e->rssi, e->channel, e->open ? "true" : "false");
+    out += b;
+    first = false;
+  }
+  out += "]}";
+  return out;
+}
+
 // Ein Kandidat prüfen und in die Kandidatenliste aufnehmen.
 inline void ow_consider_(OpenApResult &r, const std::string &ssid, int rssi, const char *own_ap_ssid) {
   if (ssid.empty() || ssid == own_ap_ssid)
@@ -154,9 +245,13 @@ inline OpenApResult ow_from_esphome_scan(const char *own_ap_ssid) {
   if (wc == nullptr)
     return r;
   for (const auto &s : wc->get_scan_result()) {
+    std::string ssid(s.get_ssid().c_str(), s.get_ssid().size());
+    // Mitschnitt vor dem Filter — verschluesselte und versteckte Netze
+    // gehoeren in die Ausleuchtung, nur nicht in die Auswahl.
+    ow_survey_add(ssid, s.get_rssi(), s.get_channel(), !s.get_with_auth());
     if (s.get_with_auth() || s.get_is_hidden())
       continue;
-    ow_consider_(r, std::string(s.get_ssid().c_str(), s.get_ssid().size()), s.get_rssi(), own_ap_ssid);
+    ow_consider_(r, ssid, s.get_rssi(), own_ap_ssid);
   }
   return r;
 }
@@ -198,9 +293,13 @@ inline OpenApResult ow_scan(const char *own_ap_ssid) {
   wifi_ap_record_t *aps = new wifi_ap_record_t[n];
   if (esp_wifi_scan_get_ap_records(&n, aps) == ESP_OK) {
     for (int i = 0; i < n; i++) {
+      std::string ssid((const char *) aps[i].ssid);
+      // Mitschnitt vor dem Filter, siehe ow_survey_add. primary ist der
+      // Hauptkanal des AP.
+      ow_survey_add(ssid, aps[i].rssi, aps[i].primary, aps[i].authmode == WIFI_AUTH_OPEN);
       if (aps[i].authmode != WIFI_AUTH_OPEN)
         continue;
-      ow_consider_(r, std::string((const char *) aps[i].ssid), aps[i].rssi, own_ap_ssid);
+      ow_consider_(r, ssid, aps[i].rssi, own_ap_ssid);
     }
   }
   delete[] aps;
@@ -210,10 +309,15 @@ inline OpenApResult ow_scan(const char *own_ap_ssid) {
 // Eigener Scan bevorzugt, sonst ESPHomes letzte Scan-Ergebnisse.
 inline OpenApResult ow_find_open(const char *own_ap_ssid) {
   ow_cands.clear();
+  ow_survey_reset();
   OpenApResult r = ow_scan(own_ap_ssid);
   if (r.count == 0)
     r = ow_from_esphome_scan(own_ap_ssid);
   ow_pick_(r);
+  // Nur melden, wenn wirklich etwas aufgenommen wurde. Ein leerer Durchlauf
+  // (beide Quellen still) darf die vorige Aufnahme nicht als neue ausgeben —
+  // deshalb wird pending hier gesetzt und nicht in ow_survey_reset().
+  ow_survey_pending = !ow_survey.empty();
   ESP_LOGI("open_wifi", "%d offene APs, gewählt '%s' (%d dBm)", r.count,
            r.ssid.empty() ? "-" : r.ssid.c_str(), r.rssi);
   return r;
