@@ -32,7 +32,7 @@ substitutions:
   ota_password: waveshare2026
   ap_ssid: Sofar-Waveshare-AP
   open_mqtt_timeout: "300000"   # ms ohne MQTT am offenen AP -> Blacklist
-  fw_version: "3.6.3"      # ARRAYS gegen Messung kalibriert (16438/6573 W), ladesperre_ratio 0.62->0.50
+  fw_version: "3.6.4"      # Ladesperre hart auf Mai-August begrenzt, sonst nur DO4-Abregelung >20 kW
 
 esphome:
   name: ${device_name}

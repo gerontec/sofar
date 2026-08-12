@@ -52,6 +52,8 @@ DD_UPPER         = 8
 DD_CHARGE_TARGET = 7
 PCC_PEAK_TH      = 20000.0
 PCC_HARD_TH      = 22000.0     # bedingungsloser DO4-Trigger
+LADESPERRE_MONTH_FROM = 5      # Mai; ausserhalb Mai-August keine
+LADESPERRE_MONTH_TO   = 8      # August; Ladesperre, nur DO4 >20 kW
 
 LADESPERRE_ENABLE = True       # YAML default
 LADESPERRE_RATIO  = 0.5        # YAML default (sofar/ratio)
@@ -459,7 +461,10 @@ def step(in_: Inputs, st: State, now_local: dt.datetime,
     ladesperre = False
     if ladesperre_enable:
         has_peak  = best_w > PCC_PEAK_TH
-        in_window = (has_peak and win_end_loc >= 0 and not st.peak_today
+        # Harte Monatsschranke: ausserhalb Mai-August nur DO4-Abregelung (>20 kW),
+        # der Akku laedt sofort. Nicht dem impliziten has_peak ueberlassen.
+        in_season = LADESPERRE_MONTH_FROM <= now_local.month <= LADESPERRE_MONTH_TO
+        in_window = (in_season and has_peak and win_end_loc >= 0 and not st.peak_today
                      and local_hour <= peak_h_loc)
         # LATCH mit Hysterese gegen Flattern an der Ratio-Schwelle:
         if not in_window:

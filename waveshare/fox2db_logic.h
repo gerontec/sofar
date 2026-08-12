@@ -35,6 +35,11 @@ constexpr int   DD_UPPER         = 8;
 constexpr int   DD_CHARGE_TARGET = 7;
 constexpr float PCC_PEAK_TH      = 20000.0f;
 constexpr float PCC_HARD_TH      = 22000.0f;  // bedingungsloser DO4-Trigger
+// Ladesperre nur im Sommerhalbjahr. Ausserhalb wird ausschliesslich ueber DO4
+// abgeregelt (>20 kW), der Akku laedt sofort. Harte Schranke, damit die Sperre
+// nicht ueber geaenderte Feldleistungen wieder in Fruehjahr/Herbst rutscht.
+constexpr int LADESPERRE_MONTH_FROM = 5;   // Mai
+constexpr int LADESPERRE_MONTH_TO   = 8;   // August
 constexpr float NIGHT_DC_TH      = 100.0f;    // gemessene PV (Power_PV1+PV2) < 100W → "Nacht" (Soyo-Baseline 468W). PV-String statt pcc: batterieunabhängig & ehrlich
 
 // STATE_TO_POWER {0:0,1:3000,2:3650,3:6650,4:3900,5:7100,6:7800,7:11400}
@@ -282,7 +287,8 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
     // Zeitfenster: Peak vorhergesagt, vor/in Peak-Stunde, PCC hat 20kW noch nicht erreicht.
     // Harte Obergrenze astronomischer Mittag (now_utc < noon_utc) → Laden startet
     // spätestens zum lokalen Sonnenhöchststand, auch wenn die Peak-Stunde später läge.
-    bool in_window = has_peak && win_end_loc >= 0 && !st.peak_today
+    bool in_season = (month >= LADESPERRE_MONTH_FROM && month <= LADESPERRE_MONTH_TO);
+    bool in_window = in_season && has_peak && win_end_loc >= 0 && !st.peak_today
                      && (local_hour <= peak_h_loc) && (now_utc < noon_utc);
     // LATCH mit Hysterese gegen Flattern an der Ratio-Schwelle:
     //   LOCK   bei belegtem Gutwetter (ratio <= ladesperre_ratio)
