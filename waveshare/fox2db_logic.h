@@ -337,8 +337,12 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
     else if (in.soc2 >= DD_UPPER) st.prot = false;
   }
 
-  bool need_down = (in.pcc > PCC_HARD_TH) ||   // >22kW: bedingungslos
-                   ((in.pcc > PCC_PEAK_TH) && (strncmp(trace, "PCC_OVER_20KW", 13) != 0 || ladesperre));
+  // DO4: ueber 22 kW bedingungslos. Zwischen 20 und 22 kW nur, wenn die EBox die
+  // Leistung nicht aufnehmen konnte (Speicher voll oder schon Stufe 7) -- Laden
+  // hat Vorrang. Kein ladesperre-Term noetig: ueber 20 kW hat peak_today oben
+  // bereits gegriffen, die Sperre ist in derselben Minute aufgehoben.
+  bool need_down = (in.pcc > PCC_HARD_TH) ||
+                   ((in.pcc > PCC_PEAK_TH) && strncmp(trace, "PCC_OVER_20KW", 13) != 0);
   r.do4_pulse = need_down;
 
   st.relay_st = final_state;

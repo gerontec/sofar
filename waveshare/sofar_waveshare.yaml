@@ -32,7 +32,7 @@ substitutions:
   ota_password: waveshare2026
   ap_ssid: Sofar-Waveshare-AP
   open_mqtt_timeout: "300000"   # ms ohne MQTT am offenen AP -> Blacklist
-  fw_version: "3.7.0"      # Standorthorizont (Baumkante Ost 23 Grad) + Feldparameter je String
+  fw_version: "3.7.1"      # toter ladesperre-Term aus der DO4-Bedingung entfernt (kein Verhaltensunterschied)
 
 esphome:
   name: ${device_name}

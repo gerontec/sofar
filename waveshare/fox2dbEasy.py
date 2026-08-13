@@ -510,8 +510,12 @@ def step(in_: Inputs, st: State, now_local: dt.datetime,
         elif in_.soc2 >= DD_UPPER:
             st.prot = False
 
+    # DO4: ueber 22 kW bedingungslos. Zwischen 20 und 22 kW nur, wenn die EBox die
+    # Leistung nicht aufnehmen konnte (Speicher voll oder schon Stufe 7) -- Laden
+    # hat Vorrang. Kein ladesperre-Term noetig: ueber 20 kW hat peak_today oben
+    # bereits gegriffen, die Sperre ist in derselben Minute aufgehoben.
     need_down = (in_.pcc > PCC_HARD_TH) or \
-                ((in_.pcc > PCC_PEAK_TH) and (not trace.startswith("PCC_OVER_20KW") or ladesperre))
+                ((in_.pcc > PCC_PEAK_TH) and not trace.startswith("PCC_OVER_20KW"))
     r.do4_pulse = need_down
 
     st.relay_st  = final_state
