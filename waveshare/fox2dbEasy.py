@@ -97,8 +97,17 @@ TZ = zoneinfo.ZoneInfo("Europe/Berlin")
 
 LAT, LON = 47.6811, 11.5732
 # (tilt, Azimut-Süd, Nennleistung)
-ARRAYS      = [(25, 80, 16438), (60, -5, 6573)]
-ARRAYS_EAST = [(41, -74, 19852), (60, 90, 2078), (32, 94, 2378)]
+# Feldparameter je String gefittet (gen_pv_strings.py, 14 klare Tage):
+# Sofar  PV1 West / PV2 Sued,  FoxESS pv2 Ost / pv1 West.
+ARRAYS      = [(60, 33, 19430), (68, -12, 7690)]
+ARRAYS_EAST = [(59, -29, 22036), (67, 32, 2781)]
+# Standorthorizont: hoher Baumbestand im Ostsektor. Unter der Baumlinie bleibt
+# nur Diffusstrahlung. Der Ertrag setzt dadurch ganzjaehrig rund zwei Stunden
+# nach Sonnenaufgang ein (Messung: Kante bei 22-26 Grad, s. clearsky.tex).
+HOR_AZ_SPLIT = 120.0     # Grenze Ost-/Suedsektor (Azimut von Nord)
+HOR_EAST     = 23.0      # Elevation, unter der Ost verschattet ist
+HOR_SOUTH    = 15.0      # dito Suedost
+HOR_DIFFUSE  = 0.25      # Restanteil im Schatten
 _KT = [0, .331, .402, .563, .838, .909, .880, .840, .820, .760, .600, .350, .134]
 
 def kt_month(m: int) -> float:
@@ -140,10 +149,13 @@ def calc_arrays(arrs, t_utc: float, month: int) -> float:
     am = min(1.0 / math.sin(_d2r(elev)), 37.0)
     T  = 0.7 ** (am ** 0.678)
     kt = kt_month(month)
+    # Horizont: steht die Sonne unter der Baumlinie, nur Diffusanteil.
+    hor = HOR_EAST if azN < HOR_AZ_SPLIT else HOR_SOUTH
+    shade = 1.0 if elev >= hor else HOR_DIFFUSE
     s = 0.0
     for tilt, azS, power in arrs:
         s += power * T * kt * max(0.0, cos_aoi(elev, azN, tilt, azS))
-    return s
+    return s * shade
 
 def dc_now(t_utc: float, month: int) -> float:
     return calc_arrays(ARRAYS, t_utc, month) + calc_arrays(ARRAYS_EAST, t_utc, month)

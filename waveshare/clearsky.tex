@@ -97,10 +97,13 @@ Einfallswinkel $\vartheta$ auf die geneigte Ebene
    + \cos\alpha\sin\beta\cos\bigl((A - 180^\circ) - \psi\bigr).
 \]
 
-Über alle Teilfelder $i$ mit Nennleistung $P_i$:
+Über alle Teilfelder $i$ mit Nennleistung $P_i$, gedämpft mit dem
+Horizontfaktor $s$ aus Abschnitt~7:
 \[
 \boxed{\;
-P_{\text{DC}} = \sum_i P_i\, T\, k_t(M)\, \max\bigl(0,\; \cos\vartheta_i\bigr)
+P_{\text{DC}} = s(\alpha, A)\,\sum_i P_i\, T\, k_t(M)\, \max\bigl(0,\; \cos\vartheta_i\bigr),
+\qquad
+s = \begin{cases} 1 & \alpha \ge h(A)\\ 0{,}25 & \text{sonst}\end{cases}
 \;}
 \]
 und $P_{\text{DC}} = 0$ für $\alpha \le 0$. \texttt{dc\_now()} summiert die beiden
@@ -161,7 +164,8 @@ Der Fit stammt aus \texttt{gen\_pv\_model.py}, ausgewertet gegen
 Tage. Für \texttt{ARRAYS} sinkt der RMSE von 5391\,W auf 1298\,W ($-76\,\%$), das
 Verhältnis Messung/Modell liegt danach von 10 bis 17\,Uhr bei 0{,}98--1{,}02.
 
-\texttt{ARRAYS\_EAST} blieb in diesem Schritt unverändert: eine reine
+Die Werte dieses Abschnitts sind durch den Fit je String in Abschnitt~8 überholt.
+\texttt{ARRAYS\_EAST} blieb in diesem Zwischenschritt unverändert: eine reine
 Leistungsanpassung bringt dort nichts ($-1\,\%$ RMSE), und der freie
 Geometrie-Fit lief in $\beta = 64^\circ$, $\psi = -25^\circ$ -- er kompensierte
 damit die Morgenverschattung, die dem Modell fehlt, statt die Dachgeometrie
@@ -288,12 +292,88 @@ kompensieren, mit ihm trennen sich beide Effekte. Die Werte stammen aus
 Summenfit aus \texttt{gen\_pv\_model.py} (alle drei auf dem Pi unter
 \texttt{/home/pi/python}, rein lesend).
 
-\paragraph{Stand der Umsetzung.} Produktiv sind bisher nur die skalierten
-\texttt{ARRAYS} aus Abschnitt~3 (fw 3.6.3) und die Monatsschranke der Ladesperre
-(fw 3.6.4). Der Horizont-Term und die Parameter dieses Abschnitts sind
-ausgewertet, aber noch nicht in \texttt{fox2db\_logic.h} bzw.
-\texttt{fox2dbEasy.py} eingesetzt -- beides würde \texttt{dc\_expected} und damit
-\texttt{ratio\_ist} verschieben und eine erneute Prüfung von
-\texttt{LADESPERRE\_RATIO} verlangen.
+\section{Wirkung auf die Regelung}
+
+Vor der Übernahme wurde die echte \texttt{step()}-Funktion über 13\,433 Minuten
+(30.07.--13.08.2026) zweimal parallel mit getrennten Zustandsobjekten gefahren --
+einmal mit dem alten Summenmodell, einmal mit Horizont und Feldparametern je
+String. Nur die Konstanten und \texttt{calc\_arrays()} wurden getauscht, die
+Logik blieb unangetastet.
+
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+Entscheidung & abweichend & Anteil\\
+\midrule
+DO4-Puls     &   0 & 0{,}00 \%\\
+Relaisstufe  & 153 & 1{,}14 \%\\
+Ladesperre   & 296 & 2{,}20 \%\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Die DO4-Abregelung ändert sich nirgends -- sie hängt am gemessenen
+Netzübergabepunkt, nicht am Modell. Sämtliche Abweichungen liegen zwischen 08:24
+und 09:09 und zeigen in dieselbe Richtung: das neue Modell hält die Ladesperre,
+wo das alte sie freigab. Bisher meldete das Modell um 08:30 rund 8\,kW, real
+kamen wegen der Bäume knapp 1\,kW -- die Ratio sah wie Schlechtwetter aus, die
+EBox lief auf einem Überschuss an, den es noch nicht gab. Im Tagesmittel liegen
+beide Modelle bei \texttt{dc\_expected} nur 0--3\,\% auseinander, weshalb
+\texttt{LADESPERRE\_RATIO} bei 0{,}50 bleiben konnte.
+
+\section{Validierung}
+
+Der Horizont-Term ruht auf drei voneinander unabhängigen Belegen:
+
+\begin{enumerate}
+\item \textbf{Least-Squares-Fit} über 3133 Messpunkte des Ostrings, ohne Kenntnis
+  der Kantenanalyse: $23^\circ$ im Ostsektor.
+\item \textbf{Kantenmessung} aus den Ertragssprüngen von vierzehn klaren Tagen:
+  $22^\circ$--$26^\circ$.
+\item \textbf{Prognose auf einen fremden Tag}: für den 13.08.2026 wurde der
+  Durchbruch aus reiner Sonnengeometrie und der Kante des Vortages auf 08:37
+  vorhergesagt. Gemessen wurde er zwischen 08:33 und 08:36 -- innerhalb der
+  3-Minuten-Auflösung.
+\end{enumerate}
+
+Die Kante selbst ist scharf. Am 13.08.2026 stieg der Strang\-strom des Ostrings
+binnen drei Minuten von 1{,}7 auf 10{,}6\,A, während die Spannung von 519 auf
+388\,V einbrach -- das MPPT wandert vom Leerlauf auf den Lastpunkt.
+
+Die niedrigere Südost-Kante von $15^\circ$ belegen die Wintertage: am 02.12.2025
+lief der Ertrag zwischen $13{,}4^\circ$ und $15{,}2^\circ$ hoch, am 31.01.2026 ab
+$14{,}7^\circ$. Im Winter geht die Sonne im Südosten auf und läuft seitlich am
+dichten Ostbestand vorbei; im Sommer steigt sie im Nordosten über die volle
+Baumhöhe. Deshalb ist der Verzug im Juni mit 118 Minuten größer als im Dezember
+mit 71.
+
+Über das Jahr ergibt sich als Freigabezeitpunkt:
+
+\begin{center}
+\begin{tabular}{lr@{\qquad}lr}
+\toprule
+Monat & frei ab & Monat & frei ab\\
+\midrule
+Januar  & 10:08 & Juli      & 08:04\\
+Februar & 09:10 & August    & 08:34\\
+März    & 08:46 & September & 09:14\\
+April   & 08:50 & Oktober   & 09:10\\
+Mai     & 08:06 & November  & 09:20\\
+Juni    & 07:52 & Dezember  & 10:17\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Der späteste Wert des Jahres liegt bei 10:28 Uhr um die Weihnachtstage. Selbst
+zwei Wochen vor der Wintersonnenwende steht der Ostring also vor zehn Uhr in der
+Sonne.
+
+\paragraph{Stand der Umsetzung.} Produktiv seit fw 3.7.0 (geflasht am 13.08.2026,
+08:37): Horizont-Term in \texttt{calc\_arrays()} und die Feldparameter je String,
+identisch in \texttt{fox2db\_logic.h} (ESP, aktiver Regler) und
+\texttt{fox2dbEasy.py} (Schatten auf dem Pi). Zuvor eingesetzt: skalierte
+\texttt{ARRAYS} (fw 3.6.3, überholt durch Abschnitt~8) und die Monatsschranke
+der Ladesperre auf Mai--August (fw 3.6.4). \texttt{LADESPERRE\_RATIO} bleibt bei
+0{,}50.
 
 \end{document}
