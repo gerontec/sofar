@@ -161,10 +161,139 @@ Der Fit stammt aus \texttt{gen\_pv\_model.py}, ausgewertet gegen
 Tage. Für \texttt{ARRAYS} sinkt der RMSE von 5391\,W auf 1298\,W ($-76\,\%$), das
 Verhältnis Messung/Modell liegt danach von 10 bis 17\,Uhr bei 0{,}98--1{,}02.
 
-\texttt{ARRAYS\_EAST} bleibt bewusst unverändert: eine reine Leistungsanpassung
-bringt dort nichts ($-1\,\%$ RMSE), und der freie Geometrie-Fit läuft in
-$\beta = 64^\circ$, $\psi = -25^\circ$ -- er kompensiert damit die
-Morgenverschattung, die dem Modell fehlt, statt die Dachgeometrie abzubilden. Ein
-Horizontprofil wäre der richtige Ansatz, keine verbogene Neigung.
+\texttt{ARRAYS\_EAST} blieb in diesem Schritt unverändert: eine reine
+Leistungsanpassung bringt dort nichts ($-1\,\%$ RMSE), und der freie
+Geometrie-Fit lief in $\beta = 64^\circ$, $\psi = -25^\circ$ -- er kompensierte
+damit die Morgenverschattung, die dem Modell fehlt, statt die Dachgeometrie
+abzubilden. Der nächste Abschnitt trennt beide Effekte.
+
+\section{Standorthorizont}
+
+Das Modell setzt freien Horizont voraus. Am Standort steht im Ostsektor hoher
+Baumbestand, der sich in den Messdaten als Morgendefizit zeigt: die Sonne steht
+rechnerisch längst über dem Horizont, die Anlage liefert noch nichts.
+
+Ausgewertet wurden vierzehn klare Tage (jeweils der ertragsstärkste Tag eines
+Monats, per FoxESS-Cloud-API im 3-Minuten-Raster nachgeladen). Bezugsniveau ist
+der Median von Messung/Modell zwischen 11 und 13 Uhr desselben Tages, damit der
+Betragsfehler des Modells und die Tagesgüte herausfallen. Als Kante gilt die
+erste \emph{anhaltende} Überschreitung von 50\,\% dieses Niveaus über 15 Minuten.
+
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+Tag & Sonne über $0^\circ$ & Ertrag setzt ein & Verzug & Ausfall\\
+\midrule
+27.06.2026 & 05:49 & 07:47 ($22^\circ$) & 118 min & 6 \%\\
+02.07.2026 & 06:10 & 08:10 ($26^\circ$) & 120 min & 9 \%\\
+12.08.2026 & 06:53 & 08:37 ($24^\circ$) & 104 min & 10 \%\\
+03.09.2025 & 06:50 & 09:08 ($25^\circ$) & 138 min & 11 \%\\
+03.10.2025 & 07:31 & 10:12 ($27^\circ$) & 161 min & 23 \%\\
+02.12.2025 & 08:32 & 09:43 ($14^\circ$) & 71 min & 15 \%\\
+26.02.2026 & 07:26 & 09:41 ($22^\circ$) & 135 min & 22 \%\\
+20.03.2026 & 06:58 & 09:12 ($27^\circ$) & 134 min & 17 \%\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Die Verschattung wirkt ganzjährig mit rund zwei Stunden Verzug -- nicht nur im
+Winterhalbjahr. Was sich ändert, ist der Preis: im Sommer 6--10\,\% des
+Tagesertrags, an den Äquinoktien 17--23\,\%, weil die Sonne dort flach durch den
+dichtesten Sektor läuft.
+
+Nach Sonnenazimut sortiert ergibt sich das Profil:
+
+\begin{center}
+\begin{tabular}{llr}
+\toprule
+Sektor & Sonnenazimut & verschattet bis\\
+\midrule
+Ost          & $79^\circ$--$96^\circ$   & $22^\circ$--$26^\circ$\\
+Ost-Südost   & $102^\circ$--$131^\circ$ & $25^\circ$--$27^\circ$\\
+Südost       & $135^\circ$--$147^\circ$ & $14^\circ$--$22^\circ$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Ein Hindernis von $22^\circ$--$26^\circ$ Höhenwinkel entspricht bei 30\,m Abstand
+rund 13--15\,m Baumhöhe.
+
+\section{Feldparameter je String}
+
+Beide Wechselrichter melden ihre MPP-Tracker einzeln, womit jede Fläche eine
+eigene Messreihe hat und der Sammelfit entfällt. Die Strings unterscheiden sich
+elektrisch deutlich:
+
+\begin{center}
+\begin{tabular}{llrrl}
+\toprule
+Modell & String & Spannung & $I_{\max}$ & Charakter\\
+\midrule
+FoxESS & \texttt{pv2Power} & $\approx 500$\,V & 21{,}8\,A & Ost, Peak 11--12 Uhr\\
+FoxESS & \texttt{pv1Power} & $\approx 200$\,V & 6{,}4\,A  & West, Peak 14--15 Uhr\\
+Sofar  & \texttt{Power\_PV1} & -- & -- & West, Peak 14--15 Uhr\\
+Sofar  & \texttt{Power\_PV2} & -- & -- & Süd (steil), Peak 12 Uhr\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Der Verschattungssprung ist im \emph{Strom} am schärfsten: am 12.08.2026 ging
+\texttt{pv2} um 08:34 von 1{,}7 auf 9{,}0\,A, während die Spannung von 544 auf
+402\,V einbrach -- das MPPT wandert vom Leerlauf auf den Lastpunkt. Nur der
+Ostring zeigt diese Kante; der Westring steigt glatt an, er sieht die
+Morgensonne bauartbedingt nicht.
+
+Gefittet wurde je String $(\beta, \psi, P)$ zusammen mit einem globalen
+Horizont-Term: liegt die Sonne unter der Horizontlinie, bleibt nur ein
+Diffusanteil der Klarhimmel-Leistung übrig.
+
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+String & Sammelmodell & Fit je String & + Horizont & Gewinn\\
+\midrule
+FoxESS \texttt{pv2} (Ost)  & 2384\,W & 1646\,W & \textbf{1525\,W} & 36 \%\\
+FoxESS \texttt{pv1} (West) &  474\,W &  254\,W & \textbf{253\,W}  & 47 \%\\
+Sofar \texttt{PV1} (West)  & 1533\,W & 1185\,W & \textbf{1185\,W} & 23 \%\\
+Sofar \texttt{PV2} (Süd)   &  532\,W &  507\,W & \textbf{456\,W}  & 14 \%\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+RMSE über 3133, 2354, 7757 bzw. 6112 Messpunkte. Die resultierenden Parameter:
+
+\begin{center}
+\begin{tabular}{llrrr}
+\toprule
+Modell & String & Neigung $\beta$ & Azimut $\psi$ & Leistung\\
+\midrule
+FoxESS & \texttt{pv2} (Ost)  & $59^\circ$ & $-29^\circ$ & 22\,036\,W\\
+FoxESS & \texttt{pv1} (West) & $67^\circ$ & $+32^\circ$ &  2\,781\,W\\
+Sofar  & \texttt{PV1} (West) & $60^\circ$ & $+33^\circ$ & 19\,430\,W\\
+Sofar  & \texttt{PV2} (Süd)  & $68^\circ$ & $-12^\circ$ &  7\,690\,W\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Summe 51{,}9\,kWp, davon 27{,}1\,kWp am Sofar (DC/AC 1{,}81) und 24{,}8\,kWp am
+FoxESS (DC/AC 1{,}24). Der Horizont-Fit liefert unabhängig von der
+Kantenmessung dieselbe Baumlinie: $23^\circ$--$24^\circ$ im Ostsektor bei einem
+Diffusanteil von 0{,}25. Die Sofar-Westfläche fittet erwartungsgemäß auf
+$0^\circ$ -- sie sieht den Ostsektor nicht.
+
+Erst mit dem Horizont-Term wird die Ost-Geometrie überhaupt bestimmbar: ohne ihn
+muss der Fit die Morgenverschattung durch eine verbogene Ausrichtung
+kompensieren, mit ihm trennen sich beide Effekte. Die Werte stammen aus
+\texttt{gen\_pv\_strings.py}; die Kantenanalyse aus \texttt{gen\_horizon.py}, der
+Summenfit aus \texttt{gen\_pv\_model.py} (alle drei auf dem Pi unter
+\texttt{/home/pi/python}, rein lesend).
+
+\paragraph{Stand der Umsetzung.} Produktiv sind bisher nur die skalierten
+\texttt{ARRAYS} aus Abschnitt~3 (fw 3.6.3) und die Monatsschranke der Ladesperre
+(fw 3.6.4). Der Horizont-Term und die Parameter dieses Abschnitts sind
+ausgewertet, aber noch nicht in \texttt{fox2db\_logic.h} bzw.
+\texttt{fox2dbEasy.py} eingesetzt -- beides würde \texttt{dc\_expected} und damit
+\texttt{ratio\_ist} verschieben und eine erneute Prüfung von
+\texttt{LADESPERRE\_RATIO} verlangen.
 
 \end{document}
