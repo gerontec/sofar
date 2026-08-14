@@ -32,7 +32,8 @@ substitutions:
   ota_password: waveshare2026
   ap_ssid: Sofar-Waveshare-AP
   open_mqtt_timeout: "300000"   # ms ohne MQTT am offenen AP -> Blacklist
-  fw_version: "3.7.1"      # toter ladesperre-Term aus der DO4-Bedingung entfernt (kein Verhaltensunterschied)
+  soyo_wp_cap: "500"       # W: Soyo-Deckel bei laufender WP, nur Okt-Apr
+  fw_version: "3.8.0"      # Soyo: WP-Boost durch Winter-Deckel 500W ersetzt
 
 esphome:
   name: ${device_name}
@@ -128,7 +129,7 @@ globals:
   # fox2db/state (relay state + soc_bat2 für soyo-Kalkulation)
   - { id: fox_relay_state, type: int,  restore_value: false, initial_value: '0' }
   - { id: fox_state_ms,    type: int,  restore_value: false, initial_value: '0' }
-  # R290 Wärmepumpe (r290/heatpump/all) → Sommer-Soyo-Boost
+  # R290 Wärmepumpe (r290/heatpump/all) → Soyo-Winterdeckel bei laufender WP
   - { id: r290_hz, type: int, restore_value: false, initial_value: '0' }   # comp_freq_actual (Hz); >0 = WP läuft
   - { id: r290_ms, type: int, restore_value: false, initial_value: '0' }   # millis() der letzten r290-Nachricht (Freshness)
   # GPIO-Scan (nicht-blockierend): Flankenzähler für alle Pins
@@ -364,7 +365,7 @@ mqtt:
             id(in_soc2)         = num(x.c_str(), "soc_bat2", id(in_soc2));
             id(fox_state_ms)    = (int) millis();
 
-    # ── R290 Wärmepumpe: comp_freq_actual (Hz) → Sommer-Soyo-Boost ───────
+    # ── R290 Wärmepumpe: comp_freq_actual (Hz) → Soyo-Deckel ────────────
     #   r290mb.py publiziert r290/heatpump/all retained, jede Minute (cron).
     - topic: r290/heatpump/all
       then:
@@ -574,16 +575,12 @@ interval:
           auto tnow = id(sntp_time).now();
           int  month = tnow.is_valid() ? tnow.month : 0;
           bool is_summer = (month >= 5 && month <= 9);
-          bool is_winter = (month >= 1 && (month <= 4 || month >= 10));   // Mai–Sep = Sommer, sonst Winter
           bool wp_fresh  = id(r290_ms) != 0
                            && ((uint32_t)millis() - (uint32_t)id(r290_ms) < 180000UL);
           bool wp_running = wp_fresh && id(r290_hz) > 0;
-          // Klarhimmel-Ertrag (reines DC-Modell, ohne Temp-Derating): nur Bat2
-          // entladen, wenn Prognose < 2kW (viel PV → Akku schonen).
+          // Klarhimmel-Ertrag: nur noch Diagnosewert im soyo/calc-JSON
           double dc_clear = tnow.is_valid()
                             ? fox::dc_now((time_t)tnow.timestamp, month) : 0.0;
-          bool dc_low = dc_clear < 2000.0;
-          bool wp_boost = wp_running && dc_low;
           if (!stale) {
             int   st   = fox::g_state.relay_st;   // lokal, kein Pi nötig
             float soc2 = id(in_soc2);
@@ -596,10 +593,6 @@ interval:
               w = 0;  // EBox aktiv → soyo nie (gemeinsamer Bat2-Ausgang)
             } else if (soc2 >= 0 && soc2 < 9.0f) {
               w = 0;  // Entladeschutz
-            } else if (is_summer && wp_boost) {
-              w = 900;  // Sommer + WP läuft + Klarhimmel<2kW → pauschal 900W (Bat2 decken)
-            } else if (is_winter && wp_boost) {
-              w = 450;  // Winter + WP läuft + Klarhimmel<2kW → pauschal 450W
             } else if (id(in_ebox) > 200.0f) {
               w = 0;  // bat2 lädt → soyo aus
             } else if (pcc > 200.0f) {
@@ -611,6 +604,9 @@ interval:
               // Ausgeglichen / Nacht
               w = is_night ? 468 : 10;
             }
+            // Okt-Apr: WP läuft → nur Hausanteil aus Bat2, nicht den WP-Netzbezug.
+            // Mai-Sep bleibt ungedeckelt (30 kWh Reserve, Bat2 darf die WP mitdecken).
+            if (!is_summer && wp_running && w > ${soyo_wp_cap}) w = ${soyo_wp_cap};
           }
           id(soyo_w)  = w;
           id(soyo_ms) = (int) millis();
