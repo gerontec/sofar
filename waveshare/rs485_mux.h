@@ -32,12 +32,16 @@ constexpr uint32_t A_BAUD      = 4800;   // fest, nicht verhandelbar
 constexpr uint32_t A_GUARD_MS  = 600;    // so lange vor A's Termin ist B tabu
 
 // ── Kanal B: FoxESS-Modbus ───────────────────────────────────────────────────
-// B_ENABLE=false: Kanal B sendet NICHTS auf den Bus — Stufe 1 der Inbetrieb-
-// nahme, in der nur Kanal A im neuen Takt geprüft wird.
-constexpr bool     B_ENABLE  = false;
+// Stufe 1 (B_ENABLE=false): nur Kanal A, Slot wird gar nicht betreten.
+// Stufe 2 (B_ENABLE=true, B_TX_ENABLE=false): der Slot wird betreten und der
+//   Baudwechsel 4800->9600->4800 durchgefuehrt und vermessen, aber es geht
+//   weiterhin KEIN Byte auf den Bus — die Modbus-Parameter sind Platzhalter.
+// Stufe 3 (beide true): echter Modbus-Request.
+constexpr bool     B_ENABLE     = true;
+constexpr bool     B_TX_ENABLE  = true;
 constexpr uint32_t B_BAUD    = 9600;  // frei wählbar; == A_BAUD schaltet das Umschalten ab
-constexpr uint8_t  B_SLAVE   = 1;     // PLATZHALTER: Slave-Adresse T20-G3 unbestätigt
-constexpr uint16_t B_START   = 0;     // PLATZHALTER: Startregister unbestätigt
+constexpr uint8_t  B_SLAVE   = 1;     // Testfahrt: Device-ID 1
+constexpr uint16_t B_START   = 0;     // Testfahrt: Read ab 0x0000
 constexpr uint16_t B_COUNT   = 4;     // Registeranzahl (Lesen ist rückwirkungsfrei)
 constexpr uint32_t B_TIMEOUT_MS = 500;  // ohne Antwort → Transaktion verworfen
 constexpr uint32_t B_GAP_MS     = 6;    // Frame-Ende: 3,5 Zeichen @9600 ≈ 3,65 ms
@@ -112,7 +116,18 @@ struct State {
   int      rx_len     = 0;
   int      last_rc    = -1;   // Ergebnis der letzten B-Transaktion (b_check)
   uint32_t n_a = 0, n_ok = 0, n_timeout = 0, n_bad = 0, n_abort = 0;
+  // Baudwechsel-Messung: Dauer von set_baud_rate()+load_settings() bis
+  // Rueckkehr, d.h. bis der Treiber wieder lese-/schreibbereit ist.
+  uint32_t t_b_us = 0, t_a_us = 0;   // letzter Wechsel nach B bzw. zurueck nach A
+  uint32_t t_max_us = 0;             // groesster je gemessener Einzelwechsel
+  uint32_t n_switch = 0;             // gezaehlte Wechselpaare
 };
+
+// Von der Lambda nach jedem Baudwechsel aufzurufen.
+inline void note_baud(State &st, bool to_b, uint32_t us) {
+  if (to_b) { st.t_b_us = us; st.n_switch++; } else { st.t_a_us = us; }
+  if (us > st.t_max_us) st.t_max_us = us;
+}
 
 // Von der Lambda für jedes empfangene Byte aufzurufen.
 inline void feed(State &st, uint8_t b, uint32_t now, uint8_t *buf, int cap) {
@@ -137,14 +152,16 @@ inline Action tick(State &st, uint32_t now, const uint8_t *buf) {
       if (now - st.last_a_ms >= A_PERIOD_MS) {
         st.last_a_ms = now;
         st.n_a++;
-        st.phase    = !B_ENABLE ? PH_IDLE : (NEEDS_SWITCH ? PH_B_BAUD : PH_B_TX);
+        st.phase    = !B_ENABLE ? PH_IDLE
+                      : (NEEDS_SWITCH ? PH_B_BAUD : (B_TX_ENABLE ? PH_B_TX : PH_IDLE));
         st.phase_ms = now;
         return ACT_A_TX;   // flush() in der Lambda: erst dann ist der Bus frei
       }
       return ACT_NONE;
 
     case PH_B_BAUD:
-      st.phase    = PH_B_TX;
+      // Stufe 2: nach dem Wechsel sofort zurueck, ohne PH_B_TX zu betreten.
+      st.phase    = B_TX_ENABLE ? PH_B_TX : PH_B_BACK;
       st.phase_ms = now;
       return ACT_BAUD_B;
 

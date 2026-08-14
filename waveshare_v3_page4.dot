@@ -1,7 +1,7 @@
 
 digraph WaveshareSoyo {
     graph [
-        label="fox2db v3.8.0 — LADESPERRE-Logik + Soyo-Entladung (RS485)"
+        label="fox2db v3.9.1 — LADESPERRE-Logik + Soyo-Entladung (RS485)"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
         bgcolor="#f8f9fa" size="11,17" ratio=fill
@@ -39,7 +39,7 @@ digraph WaveshareSoyo {
     }
 
     subgraph cluster_soyo {
-        label="Soyo-Entladung (max 900W, Rechnung alle 60s, TX über rs485_mux Kanal A alle 3,84s gemessen) — v3.8.0 mit WP-Deckel" style="filled" fillcolor="#d4edda"
+        label="Soyo-Entladung (max 900W, Rechnung alle 60s, TX über rs485_mux Kanal A alle 3,84s gemessen) — v3.9.1: WP-Deckel + Kanal B aktiv" style="filled" fillcolor="#d4edda"
         fontname="Helvetica-Bold" fontsize=10 color="#28a745"
 
         S0 [shape=oval fillcolor="#b8dfc4" label="soyo/calc"]
@@ -59,10 +59,13 @@ digraph WaveshareSoyo {
         Sw90 [shape=box fillcolor="#dddddd" label="w = 0"]
         Stx [shape=box fillcolor="#a8d0f5" label="RS485-Frame Kanal A\n[24 56 00 21 PH PL 80 CRC]\nCRC=(264-PH-PL)&0xFF\nMQTT soyo/sent {w, dt, mux:A}"]
 
-        SB0 [shape=diamond style="dashed,filled" fillcolor="#f0f0f0" label="B_ENABLE?\nconstexpr, derzeit false"]
-        SBoff [shape=box style="dashed,filled" fillcolor="#f0f0f0" label="PH_IDLE\nKanal B stumm — sendet\nNICHTS auf den Bus"]
-        SB1 [shape=box style="dashed,filled" fillcolor="#f0f0f0" label="PH_B_BAUD -> 9600, PH_B_TX\nb_build_read(slave=B_SLAVE, B_START, B_COUNT)\nB_SLAVE=1 und B_START=0 sind PLATZHALTER\n(T20-G3 unbestätigt)"]
-        SB2 [shape=box style="dashed,filled" fillcolor="#f0f0f0" label="feed() sammelt RX\nb_check(): Länge + CRC16\nb_reg() -> Register"]
+        SB1 [shape=box fillcolor="#cfe2f3" label="ACT_BAUD_B — PH_B_BAUD\nset_baud_rate(9600) + load_settings(false)\n= uart_driver_delete + _install\nGEMESSEN 1184..1228 us bis ready"]
+        SB2 [shape=box fillcolor="#cfe2f3" label="ACT_B_TX — PH_B_TX\nb_build_read(slave=1, start=0x0000, count=4)\n01 03 00 00 00 04 44 09  (CRC16)"]
+        SB3 [shape=diamond fillcolor="#cfe2f3" label="PH_B_WAIT\nvoll (13 Byte) ODER Lücke 6ms?\nsonst Timeout B_TIMEOUT_MS = 500ms"]
+        SB4 [shape=box fillcolor="#f8d7da" label="GEMESSEN: rc = -1 (timeout)\nrx_len = 0 — keine Antwort auf\nSlave 1 / 0x0000"]
+        SB5 [shape=box fillcolor="#cfe2f3" label="ACT_BAUD_A — PH_B_BACK\nzurück auf 4800\nGEMESSEN 1159..1391 us"]
+        SB6 [shape=box fillcolor="#a8d0f5" label="ACT_REPORT -> MQTT rs485/mux\n{to_b_us, to_a_us, max_us, switches, b{...}}"]
+        SBnote [shape=note fillcolor="#d4edda" label="Rückwirkung auf Kanal A: keine\nA-Takt vorher 3837..3843ms,\nmit B-Verkehr 3824..3839ms\nabort = 0, rs485/rx ohne Fremdbytes\nSoyo verwirft den Frame: falscher Header\n(24 56 00 21) und 9600 Bd auf 4800-Bd-Ohr"]
 
         S0 -> Sd1
         Sd1 -> Sw0 [label="JA" color="#888888"]
@@ -86,9 +89,13 @@ digraph WaveshareSoyo {
         Sage -> Sw90 [label="JA" color="#888888"]
         Sage -> Stx [label="NEIN" color="green"]
         Sw90 -> Stx
-        SdA -> SB0 [label="NEIN\nLücke gehört Kanal B\n3,84s - 17ms A-Frame = 3,82s\n(8 Byte @ 4800 Bd 8N1)" style=dashed color="#888888"]
-        SB0 -> SBoff [label="false (heute)" style=dashed color="#888888"]
-        SB0 -> SB1 [label="true" style=dashed color="#888888"]
-        SB1 -> SB2 [style=dashed color="#888888"]
+        SdA -> SB1 [label="NEIN\nLücke gehört Kanal B\n3,84s - 17ms A-Frame = 3,82s\n(8 Byte @ 4800 Bd 8N1)" color="#004085"]
+        SB1 -> SB2 [color="#004085"]
+        SB2 -> SB3 [color="#004085"]
+        SB3 -> SB4 [label="Timeout" color="red"]
+        SB4 -> SB5 [color="#004085"]
+        SB3 -> SB5 [label="Antwort ok:\nb_check() CRC16 + Länge\nb_reg() -> Register" color="green"]
+        SB5 -> SB6 [color="#004085"]
+        SB6 -> SBnote [style=dotted color="#28a745"]
     }
 }

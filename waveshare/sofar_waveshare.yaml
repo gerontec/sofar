@@ -33,7 +33,7 @@ substitutions:
   ap_ssid: Sofar-Waveshare-AP
   open_mqtt_timeout: "300000"   # ms ohne MQTT am offenen AP -> Blacklist
   soyo_wp_cap: "500"       # W: Soyo-Deckel bei laufender WP, nur Okt-Apr
-  fw_version: "3.8.0"      # Soyo: WP-Boost durch Winter-Deckel 500W ersetzt
+  fw_version: "3.9.1"      # rs485_mux Kanal B Stufe 3: Modbus-Read Slave 1 ab 0x0000
 
 esphome:
   name: ${device_name}
@@ -652,6 +652,7 @@ interval:
           static uint32_t last_soyo_tx = 0;
           static uint8_t buf[64];
           static int buf_len = 0;
+          static uint8_t mbuf[64];        // RX-Puffer nur fuer Kanal B
           static uint32_t last_rx_ms = 0;
           uint32_t now = millis();
 
@@ -662,7 +663,8 @@ interval:
           // "dt" im JSON = tatsächlicher Abstand zweier Sendungen — damit ist
           // am Broker prüfbar, ob der Takt gegen das 4-s-Soyo-Timeout hält.
           static rs485_mux::State mux_st;
-          if (rs485_mux::tick(mux_st, now, buf) == rs485_mux::ACT_A_TX) {
+          rs485_mux::Action act = rs485_mux::tick(mux_st, now, mbuf);
+          if (act == rs485_mux::ACT_A_TX) {
             int w = id(soyo_w);
             if (now - (uint32_t) id(soyo_ms) > 90000UL) w = 0;
             uint8_t f[8];
@@ -682,6 +684,33 @@ interval:
               (unsigned long) (now - last_soyo_tx));
             last_soyo_tx = now;
             id(mqtt_client).publish("soyo/sent", js);
+          } else if (act == rs485_mux::ACT_BAUD_B) {
+            // Kanal B, Stufe 2: nur umschalten und messen, kein TX.
+            uint32_t t0 = micros();
+            id(rs485).set_baud_rate(rs485_mux::B_BAUD);
+            id(rs485).load_settings(false);
+            rs485_mux::note_baud(mux_st, true, micros() - t0);
+          } else if (act == rs485_mux::ACT_B_TX) {
+            uint8_t req[8];
+            int n = rs485_mux::b_build_read(req, rs485_mux::B_SLAVE,
+                                            rs485_mux::B_START, rs485_mux::B_COUNT);
+            id(rs485).write_array(req, n);
+            id(rs485).flush();
+          } else if (act == rs485_mux::ACT_BAUD_A) {
+            uint32_t t0 = micros();
+            id(rs485).set_baud_rate(rs485_mux::A_BAUD);
+            id(rs485).load_settings(false);
+            rs485_mux::note_baud(mux_st, false, micros() - t0);
+          } else if (act == rs485_mux::ACT_REPORT) {
+            char js[320];
+            char sj[220];
+            rs485_mux::status_json(mux_st, mbuf, sj, sizeof(sj));
+            snprintf(js, sizeof(js),
+              "{\"to_b_us\":%lu,\"to_a_us\":%lu,\"max_us\":%lu,"
+              "\"switches\":%lu,\"b\":%s}",
+              (unsigned long) mux_st.t_b_us,   (unsigned long) mux_st.t_a_us,
+              (unsigned long) mux_st.t_max_us, (unsigned long) mux_st.n_switch, sj);
+            id(mqtt_client).publish("rs485/mux", js);
           }
 
           // RX: Frame-Empfang (25ms Gap-Erkennung)
@@ -689,8 +718,12 @@ interval:
           while (id(rs485).available() && buf_len < (int)sizeof(buf)) {
             uint8_t b;
             id(rs485).read_byte(&b);
-            buf[buf_len++] = b;
-            last_rx_ms = now;
+            if (mux_st.phase == rs485_mux::PH_B_WAIT) {
+              rs485_mux::feed(mux_st, b, now, mbuf, (int) sizeof(mbuf));
+            } else {
+              buf[buf_len++] = b;
+              last_rx_ms = now;
+            }
           }
           if (buf_len > 0 && (now - last_rx_ms) >= 25) {
             char hex[buf_len * 2 + 1];

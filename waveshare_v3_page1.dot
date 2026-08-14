@@ -1,7 +1,7 @@
 
 digraph WaveshareArch {
     graph [
-        label="fox2db v3.8.0 — Waveshare ESP32-S3 6CH — Architektur (fox2db_logic.h, autonom auf dem ESP)"
+        label="fox2db v3.9.1 — Waveshare ESP32-S3 6CH — Architektur (fox2db_logic.h, autonom auf dem ESP)"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=ortho nodesep=0.6 ranksep=0.8
         bgcolor="#f8f9fa" size="11,17" ratio=fill
