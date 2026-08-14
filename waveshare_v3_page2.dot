@@ -1,7 +1,7 @@
 
 digraph WaveshareStep {
     graph [
-        label="fox2db v3.3.31 — step() Gesamtablauf (alle 60s, fox2db_logic.h)"
+        label="fox2db v3.8.0 — step() Gesamtablauf (alle 60s, fox2db_logic.h)"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
         bgcolor="#f8f9fa" size="11,17" ratio=fill
@@ -13,17 +13,17 @@ digraph WaveshareStep {
     End [shape=oval fillcolor="#cce5ff" label="return Result"]
 
     s1 [shape=diamond fillcolor="#fff3cd" label="local_yday != last_yday?\n(Mitternacht)"]
-    s1r [shape=box fillcolor="#d4edda" label="pcc_buf reset, peak_today=false\nlast_yday = local_yday"]
-    s2 [shape=box fillcolor="#fff3cd" label="dc_expected = dc_now(now_utc, month)\nMeinel-Klarhimmel"]
-    s3 [shape=box fillcolor="#d4edda" label="pcc_buf[i]=pcc (Ringpuffer 10)\npcc_avg wenn n>=3"]
-    s4 [shape=box fillcolor="#fff3cd" label="Peak-Fenster h=5..20\nbest_w, peak_h_loc, win_end_loc\npeak_h / win_end_h -> Result"]
+    s1r [shape=box fillcolor="#d4edda" label="peak_today = false\nladesperre_latched = false\nlast_yday = local_yday"]
+    s2 [shape=box fillcolor="#fff3cd" label="dc_expected = dc_now(now_utc, month)\nMeinel-Klarhimmel + Standorthorizont\n* dc_temp_factor(elev, aussen_temp)\nnur bei gültiger Außentemp"]
+    s3 [shape=box fillcolor="#fff3cd" label="Peak-Fenster h=5..20\nbest_w, peak_h_loc, win_end_loc\npeak_h / win_end_h -> Result"]
+    s4 [shape=box fillcolor="#d4edda" label="noon_utc = solar_noon_utc(now_utc)\nnoon_h -> Result\n(harte Obergrenze der Ladesperre)"]
     s5 [shape=box fillcolor="#fce8e8" label="if pcc>20kW: peak_today=true"]
-    s6 [shape=box fillcolor="#fff3cd" label="ratio_ist = (dc_exp - (pcc_avg+ebox+bat1)) / dc_exp\nnur wenn pcc_avg gültig und dc_exp>5000\nsonst -1"]
+    s6 [shape=box fillcolor="#fff3cd" label="ratio_ist = (dc_exp - (pcc_avg5+ebox+bat1_avg5)) / dc_exp\nnur wenn dc_exp>5000, sonst -1\n(avg5 = 5-Min-Mittel aus pivot2db)"]
 
     d_en [shape=diamond fillcolor="#fce8e8" label="ladesperre_enable?"]
-    d_win [shape=diamond fillcolor="#fce8e8" label="in_window?\nhas_peak && win_end>=0\n&& !peak_today\n&& local_hour<=peak_h"]
-    d_rat [shape=diamond fillcolor="#fce8e8" label="0 <= ratio_ist\n<= ratio_th?\n(belegtes Gutwetter)"]
-    r_lock [shape=box fillcolor="#f8d7da" label="ladesperre = true"]
+    d_win [shape=diamond fillcolor="#fce8e8" label="in_window?\nin_season (Mai-Aug) && has_peak\n&& win_end>=0 && !peak_today\n&& local_hour<=peak_h\n&& now_utc < noon_utc"]
+    d_rat [shape=diamond fillcolor="#fce8e8" label="Latch mit Hysterese\nLOCK  bei ratio <= ratio_th\nRELEASE bei ratio >= ratio_th+0.25\ndazwischen / ratio<0: halten"]
+    r_lock [shape=box fillcolor="#f8d7da" label="ladesperre = in_window\n&& ladesperre_latched"]
     r_free [shape=box fillcolor="#d4edda" label="ladesperre = false"]
 
     s7 [shape=box fillcolor="#e2d9f3" label="best = decide(in, relay_st, prot, ...)\n-> best, trace, excess"]
@@ -34,7 +34,7 @@ digraph WaveshareStep {
     s10 [shape=box fillcolor="#e2d9f3" label="final = apply_blocking(best, relay_st,\n  pcc, bat1, stable, drop_rate)\n-> final, changed"]
     s11 [shape=box fillcolor="#d4edda" label="stable = changed ? 0 : stable+1"]
     s12 [shape=box fillcolor="#e2d9f3" label="Deep-Discharge-Hysterese\nsoc2<6 -> prot=true\nsoc2>=8 -> prot=false"]
-    d_do4 [shape=diamond fillcolor="#fce8e8" label="need_down?\npcc>22kW ODER\n(pcc>20kW &&\n(kein PCC_OVER_20KW\nim trace || ladesperre))"]
+    d_do4 [shape=diamond fillcolor="#fce8e8" label="need_down?\npcc>22kW ODER\n(pcc>20kW && kein\nPCC_OVER_20KW im trace)"]
     s_do4 [shape=box fillcolor="#f8d7da" label="do4_pulse = true\n(CH4 3s-Puls)"]
     s13 [shape=box fillcolor="#cce5ff" label="relay_st = final\nResult füllen: final_state, changed,\nexcess, dc_delta, ratio, peak_h, trace"]
 
@@ -47,8 +47,8 @@ digraph WaveshareStep {
     d_en -> r_free [label="NEIN" color="#888888"]
     d_win -> d_rat [label="JA" color="orange"]
     d_win -> r_free [label="NEIN" color="#888888"]
-    d_rat -> r_lock [label="JA" color="red"]
-    d_rat -> r_free [label="NEIN" color="green"]
+    d_rat -> r_lock [label="latched" color="red"]
+    d_rat -> r_free [label="nicht latched" color="green"]
     r_lock -> s7
     r_free -> s7
     s7 -> s8 -> s9 -> d_g

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ════════════════════════════════════════════════════════════════════════════
-#  Diagramm-Generator — NUR Waveshare-Version (fox2db v3.3.31, ESP32-S3 6CH)
+#  Diagramm-Generator — NUR Waveshare-Version (fox2db v3.8.0, ESP32-S3 6CH)
 #  Quelle: waveshare/fox2db_logic.h + waveshare/waveshare_6ch_esp32s3.md
 #  Mehrseitiges PDF, Mindest-Schriftgröße 10.
 # ════════════════════════════════════════════════════════════════════════════
@@ -13,7 +13,7 @@ OUT = Path(__file__).parent
 PAGE1 = """
 digraph WaveshareArch {
     graph [
-        label="fox2db v3.3.31 — Waveshare ESP32-S3 6CH — Architektur (fox2db_logic.h, autonom auf dem ESP)"
+        label="fox2db v3.8.0 — Waveshare ESP32-S3 6CH — Architektur (fox2db_logic.h, autonom auf dem ESP)"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=ortho nodesep=0.6 ranksep=0.8
         bgcolor="#f8f9fa" size="11,17" ratio=fill
@@ -102,7 +102,7 @@ digraph WaveshareArch {
 PAGE2 = """
 digraph WaveshareStep {
     graph [
-        label="fox2db v3.3.31 — step() Gesamtablauf (alle 60s, fox2db_logic.h)"
+        label="fox2db v3.8.0 — step() Gesamtablauf (alle 60s, fox2db_logic.h)"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
         bgcolor="#f8f9fa" size="11,17" ratio=fill
@@ -114,17 +114,17 @@ digraph WaveshareStep {
     End [shape=oval fillcolor="#cce5ff" label="return Result"]
 
     s1 [shape=diamond fillcolor="#fff3cd" label="local_yday != last_yday?\\n(Mitternacht)"]
-    s1r [shape=box fillcolor="#d4edda" label="pcc_buf reset, peak_today=false\\nlast_yday = local_yday"]
-    s2 [shape=box fillcolor="#fff3cd" label="dc_expected = dc_now(now_utc, month)\\nMeinel-Klarhimmel"]
-    s3 [shape=box fillcolor="#d4edda" label="pcc_buf[i]=pcc (Ringpuffer 10)\\npcc_avg wenn n>=3"]
-    s4 [shape=box fillcolor="#fff3cd" label="Peak-Fenster h=5..20\\nbest_w, peak_h_loc, win_end_loc\\npeak_h / win_end_h -> Result"]
+    s1r [shape=box fillcolor="#d4edda" label="peak_today = false\\nladesperre_latched = false\\nlast_yday = local_yday"]
+    s2 [shape=box fillcolor="#fff3cd" label="dc_expected = dc_now(now_utc, month)\\nMeinel-Klarhimmel + Standorthorizont\\n* dc_temp_factor(elev, aussen_temp)\\nnur bei gültiger Außentemp"]
+    s3 [shape=box fillcolor="#fff3cd" label="Peak-Fenster h=5..20\\nbest_w, peak_h_loc, win_end_loc\\npeak_h / win_end_h -> Result"]
+    s4 [shape=box fillcolor="#d4edda" label="noon_utc = solar_noon_utc(now_utc)\\nnoon_h -> Result\\n(harte Obergrenze der Ladesperre)"]
     s5 [shape=box fillcolor="#fce8e8" label="if pcc>20kW: peak_today=true"]
-    s6 [shape=box fillcolor="#fff3cd" label="ratio_ist = (dc_exp - (pcc_avg+ebox+bat1)) / dc_exp\\nnur wenn pcc_avg gültig und dc_exp>5000\\nsonst -1"]
+    s6 [shape=box fillcolor="#fff3cd" label="ratio_ist = (dc_exp - (pcc_avg5+ebox+bat1_avg5)) / dc_exp\\nnur wenn dc_exp>5000, sonst -1\\n(avg5 = 5-Min-Mittel aus pivot2db)"]
 
     d_en [shape=diamond fillcolor="#fce8e8" label="ladesperre_enable?"]
-    d_win [shape=diamond fillcolor="#fce8e8" label="in_window?\\nhas_peak && win_end>=0\\n&& !peak_today\\n&& local_hour<=peak_h"]
-    d_rat [shape=diamond fillcolor="#fce8e8" label="0 <= ratio_ist\\n<= ratio_th?\\n(belegtes Gutwetter)"]
-    r_lock [shape=box fillcolor="#f8d7da" label="ladesperre = true"]
+    d_win [shape=diamond fillcolor="#fce8e8" label="in_window?\\nin_season (Mai-Aug) && has_peak\\n&& win_end>=0 && !peak_today\\n&& local_hour<=peak_h\\n&& now_utc < noon_utc"]
+    d_rat [shape=diamond fillcolor="#fce8e8" label="Latch mit Hysterese\\nLOCK  bei ratio <= ratio_th\\nRELEASE bei ratio >= ratio_th+0.25\\ndazwischen / ratio<0: halten"]
+    r_lock [shape=box fillcolor="#f8d7da" label="ladesperre = in_window\\n&& ladesperre_latched"]
     r_free [shape=box fillcolor="#d4edda" label="ladesperre = false"]
 
     s7 [shape=box fillcolor="#e2d9f3" label="best = decide(in, relay_st, prot, ...)\\n-> best, trace, excess"]
@@ -135,7 +135,7 @@ digraph WaveshareStep {
     s10 [shape=box fillcolor="#e2d9f3" label="final = apply_blocking(best, relay_st,\\n  pcc, bat1, stable, drop_rate)\\n-> final, changed"]
     s11 [shape=box fillcolor="#d4edda" label="stable = changed ? 0 : stable+1"]
     s12 [shape=box fillcolor="#e2d9f3" label="Deep-Discharge-Hysterese\\nsoc2<6 -> prot=true\\nsoc2>=8 -> prot=false"]
-    d_do4 [shape=diamond fillcolor="#fce8e8" label="need_down?\\npcc>22kW ODER\\n(pcc>20kW &&\\n(kein PCC_OVER_20KW\\nim trace || ladesperre))"]
+    d_do4 [shape=diamond fillcolor="#fce8e8" label="need_down?\\npcc>22kW ODER\\n(pcc>20kW && kein\\nPCC_OVER_20KW im trace)"]
     s_do4 [shape=box fillcolor="#f8d7da" label="do4_pulse = true\\n(CH4 3s-Puls)"]
     s13 [shape=box fillcolor="#cce5ff" label="relay_st = final\\nResult füllen: final_state, changed,\\nexcess, dc_delta, ratio, peak_h, trace"]
 
@@ -148,8 +148,8 @@ digraph WaveshareStep {
     d_en -> r_free [label="NEIN" color="#888888"]
     d_win -> d_rat [label="JA" color="orange"]
     d_win -> r_free [label="NEIN" color="#888888"]
-    d_rat -> r_lock [label="JA" color="red"]
-    d_rat -> r_free [label="NEIN" color="green"]
+    d_rat -> r_lock [label="latched" color="red"]
+    d_rat -> r_free [label="nicht latched" color="green"]
     r_lock -> s7
     r_free -> s7
     s7 -> s8 -> s9 -> d_g
@@ -167,7 +167,7 @@ digraph WaveshareStep {
 PAGE3 = """
 digraph WaveshareDecision {
     graph [
-        label="fox2db v3.3.31 — decide() / apply_guards() / apply_blocking() im Detail"
+        label="fox2db v3.8.0 — decide() / apply_guards() / apply_blocking() im Detail"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
         bgcolor="#f8f9fa" size="11,17" ratio=fill
@@ -266,7 +266,7 @@ digraph WaveshareDecision {
 PAGE4 = """
 digraph WaveshareSoyo {
     graph [
-        label="fox2db v3.3.31 — LADESPERRE-Logik + Soyo-Entladung (RS485)"
+        label="fox2db v3.8.0 — LADESPERRE-Logik + Soyo-Entladung (RS485)"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
         bgcolor="#f8f9fa" size="11,17" ratio=fill
@@ -278,16 +278,19 @@ digraph WaveshareSoyo {
         label="LADESPERRE — Akku morgens leer halten für >20kW-Mittagspeak" style="filled" fillcolor="#fff3cd"
         fontname="Helvetica-Bold" fontsize=10 color="#b8860b"
 
-        L0 [shape=oval fillcolor="#ffe69c" label="step() — pro Zyklus neu bewertet\\n(zustandslos, kein DB-Event)"]
+        L0 [shape=oval fillcolor="#ffe69c" label="step() — pro Zyklus neu bewertet\\nLatch ladesperre_latched bleibt erhalten"]
+        Ls [shape=diamond fillcolor="#fce8e8" label="in_season?\\nMai bis August\\n(LADESPERRE_MONTH_FROM/TO)"]
         L1 [shape=diamond fillcolor="#fce8e8" label="has_peak?\\nbest_w > 20kW heute"]
-        L2 [shape=diamond fillcolor="#fce8e8" label="local_hour <= peak_h?"]
+        L2 [shape=diamond fillcolor="#fce8e8" label="local_hour <= peak_h\\nUND now_utc < noon_utc?\\n(astronom. Mittag = harte Grenze)"]
         L3 [shape=diamond fillcolor="#fce8e8" label="!peak_today?\\n(pcc hat 20kW\\nnoch nicht erreicht)"]
         L4 [shape=diamond fillcolor="#fff3cd" label="ratio_ist gültig\\n(>= 0)?"]
-        L5 [shape=diamond fillcolor="#fff3cd" label="ratio_ist <= ratio_th?\\n(default 0.5,\\nMQTT sofar/ratio)"]
+        L5 [shape=diamond fillcolor="#fff3cd" label="Latch: LOCK bei ratio <= ratio_th\\nRELEASE bei ratio >= ratio_th + 0.25\\n(ratio_th default 0.5, MQTT sofar/ratio)"]
         LON [shape=box fillcolor="#f8d7da" label="LADESPERRE AKTIV\\n-> Guard -> State 0\\nbelegtes Gutwetter"]
         LOFF [shape=box fillcolor="#d4edda" label="LADESPERRE OFF (Default)\\nSchlechtwetter / unbeurteilbar /\\nPeak gesehen / Stunde überschritten"]
 
-        L0 -> L1
+        L0 -> Ls
+        Ls -> L1 [label="JA" color="green"]
+        Ls -> LOFF [label="NEIN\\nSep-Apr" color="#888888"]
         L1 -> L2 [label="JA" color="green"]
         L1 -> LOFF [label="NEIN" color="#888888"]
         L2 -> L3 [label="JA" color="green"]
@@ -295,13 +298,13 @@ digraph WaveshareSoyo {
         L3 -> L4 [label="JA" color="green"]
         L3 -> LOFF [label="NEIN\\npeak_today" color="#888888"]
         L4 -> L5 [label="JA" color="green"]
-        L4 -> LOFF [label="NEIN\\nratio<0 unbeurteilbar" color="#888888"]
-        L5 -> LON [label="JA" color="red"]
-        L5 -> LOFF [label="NEIN\\nratio>th Schlechtwetter" color="orange"]
+        L4 -> L5 [label="NEIN\\nratio<0: Latch halten" style=dashed color="#888888"]
+        L5 -> LON [label="latched" color="red"]
+        L5 -> LOFF [label="released\\nratio>=th+Hyst" color="orange"]
     }
 
     subgraph cluster_soyo {
-        label="Soyo-Entladung (max 900W, alle 60s soyo/calc, RS485-TX alle 3s)" style="filled" fillcolor="#d4edda"
+        label="Soyo-Entladung (max 900W, alle 60s soyo/calc, RS485-TX alle 3s) — v3.8.0 mit WP-Deckel" style="filled" fillcolor="#d4edda"
         fontname="Helvetica-Bold" fontsize=10 color="#28a745"
 
         S0 [shape=oval fillcolor="#b8dfc4" label="soyo/calc"]
@@ -313,6 +316,8 @@ digraph WaveshareSoyo {
         Sw0 [shape=box fillcolor="#dddddd" label="w = 0"]
         Swc [shape=box fillcolor="#b8dfc4" label="w = |pcc| * 1.01\\n(+ Nacht: +468W)"]
         Sws [shape=box fillcolor="#b8dfc4" label="w = 468W (Nacht)\\noder 10W (Tag, Standby)"]
+        Swp [shape=diamond fillcolor="#fff3cd" label="Okt-Apr UND WP läuft?\\n(r290_hz > 0, Signal < 3min alt,\\nMQTT r290/heatpump/all)"]
+        Scap [shape=box fillcolor="#ffe69c" label="w = min(w, 500)\\nnur Hausanteil aus Bat2,\\nnicht der WP-Netzbezug"]
         Stx [shape=box fillcolor="#a8d0f5" label="RS485-Frame\\n[24 56 00 21 PH PL 80 CRC]\\nCRC=(264-PH-PL)&0xFF\\nimmer alle 3s (Keepalive 4s)"]
 
         S0 -> Sd1
@@ -326,9 +331,12 @@ digraph WaveshareSoyo {
         Sd4 -> Sd5 [label="NEIN" color="green"]
         Sd5 -> Swc [label="JA" color="orange"]
         Sd5 -> Sws [label="NEIN" color="green"]
-        Sw0 -> Stx
-        Swc -> Stx
-        Sws -> Stx
+        Sw0 -> Swp
+        Swc -> Swp
+        Sws -> Swp
+        Swp -> Scap [label="JA" color="orange"]
+        Swp -> Stx [label="NEIN\\nMai-Sep: Bat2 darf\\ndie WP mitdecken" color="green"]
+        Scap -> Stx
     }
 }
 """

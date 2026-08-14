@@ -1,7 +1,7 @@
 
 digraph WaveshareDecision {
     graph [
-        label="fox2db v3.3.31 — decide() / apply_guards() / apply_blocking() im Detail"
+        label="fox2db v3.8.0 — decide() / apply_guards() / apply_blocking() im Detail"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
         bgcolor="#f8f9fa" size="11,17" ratio=fill

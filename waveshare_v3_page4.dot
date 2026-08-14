@@ -1,7 +1,7 @@
 
 digraph WaveshareSoyo {
     graph [
-        label="fox2db v3.3.31 — LADESPERRE-Logik + Soyo-Entladung (RS485)"
+        label="fox2db v3.8.0 — LADESPERRE-Logik + Soyo-Entladung (RS485)"
         labelloc=t fontsize=14 fontname="Helvetica-Bold"
         rankdir=TB splines=polyline nodesep=0.4 ranksep=0.5
         bgcolor="#f8f9fa" size="11,17" ratio=fill
@@ -13,16 +13,19 @@ digraph WaveshareSoyo {
         label="LADESPERRE — Akku morgens leer halten für >20kW-Mittagspeak" style="filled" fillcolor="#fff3cd"
         fontname="Helvetica-Bold" fontsize=10 color="#b8860b"
 
-        L0 [shape=oval fillcolor="#ffe69c" label="step() — pro Zyklus neu bewertet\n(zustandslos, kein DB-Event)"]
+        L0 [shape=oval fillcolor="#ffe69c" label="step() — pro Zyklus neu bewertet\nLatch ladesperre_latched bleibt erhalten"]
+        Ls [shape=diamond fillcolor="#fce8e8" label="in_season?\nMai bis August\n(LADESPERRE_MONTH_FROM/TO)"]
         L1 [shape=diamond fillcolor="#fce8e8" label="has_peak?\nbest_w > 20kW heute"]
-        L2 [shape=diamond fillcolor="#fce8e8" label="local_hour <= peak_h?"]
+        L2 [shape=diamond fillcolor="#fce8e8" label="local_hour <= peak_h\nUND now_utc < noon_utc?\n(astronom. Mittag = harte Grenze)"]
         L3 [shape=diamond fillcolor="#fce8e8" label="!peak_today?\n(pcc hat 20kW\nnoch nicht erreicht)"]
         L4 [shape=diamond fillcolor="#fff3cd" label="ratio_ist gültig\n(>= 0)?"]
-        L5 [shape=diamond fillcolor="#fff3cd" label="ratio_ist <= ratio_th?\n(default 0.5,\nMQTT sofar/ratio)"]
+        L5 [shape=diamond fillcolor="#fff3cd" label="Latch: LOCK bei ratio <= ratio_th\nRELEASE bei ratio >= ratio_th + 0.25\n(ratio_th default 0.5, MQTT sofar/ratio)"]
         LON [shape=box fillcolor="#f8d7da" label="LADESPERRE AKTIV\n-> Guard -> State 0\nbelegtes Gutwetter"]
         LOFF [shape=box fillcolor="#d4edda" label="LADESPERRE OFF (Default)\nSchlechtwetter / unbeurteilbar /\nPeak gesehen / Stunde überschritten"]
 
-        L0 -> L1
+        L0 -> Ls
+        Ls -> L1 [label="JA" color="green"]
+        Ls -> LOFF [label="NEIN\nSep-Apr" color="#888888"]
         L1 -> L2 [label="JA" color="green"]
         L1 -> LOFF [label="NEIN" color="#888888"]
         L2 -> L3 [label="JA" color="green"]
@@ -30,13 +33,13 @@ digraph WaveshareSoyo {
         L3 -> L4 [label="JA" color="green"]
         L3 -> LOFF [label="NEIN\npeak_today" color="#888888"]
         L4 -> L5 [label="JA" color="green"]
-        L4 -> LOFF [label="NEIN\nratio<0 unbeurteilbar" color="#888888"]
-        L5 -> LON [label="JA" color="red"]
-        L5 -> LOFF [label="NEIN\nratio>th Schlechtwetter" color="orange"]
+        L4 -> L5 [label="NEIN\nratio<0: Latch halten" style=dashed color="#888888"]
+        L5 -> LON [label="latched" color="red"]
+        L5 -> LOFF [label="released\nratio>=th+Hyst" color="orange"]
     }
 
     subgraph cluster_soyo {
-        label="Soyo-Entladung (max 900W, alle 60s soyo/calc, RS485-TX alle 3s)" style="filled" fillcolor="#d4edda"
+        label="Soyo-Entladung (max 900W, alle 60s soyo/calc, RS485-TX alle 3s) — v3.8.0 mit WP-Deckel" style="filled" fillcolor="#d4edda"
         fontname="Helvetica-Bold" fontsize=10 color="#28a745"
 
         S0 [shape=oval fillcolor="#b8dfc4" label="soyo/calc"]
@@ -48,6 +51,8 @@ digraph WaveshareSoyo {
         Sw0 [shape=box fillcolor="#dddddd" label="w = 0"]
         Swc [shape=box fillcolor="#b8dfc4" label="w = |pcc| * 1.01\n(+ Nacht: +468W)"]
         Sws [shape=box fillcolor="#b8dfc4" label="w = 468W (Nacht)\noder 10W (Tag, Standby)"]
+        Swp [shape=diamond fillcolor="#fff3cd" label="Okt-Apr UND WP läuft?\n(r290_hz > 0, Signal < 3min alt,\nMQTT r290/heatpump/all)"]
+        Scap [shape=box fillcolor="#ffe69c" label="w = min(w, 500)\nnur Hausanteil aus Bat2,\nnicht der WP-Netzbezug"]
         Stx [shape=box fillcolor="#a8d0f5" label="RS485-Frame\n[24 56 00 21 PH PL 80 CRC]\nCRC=(264-PH-PL)&0xFF\nimmer alle 3s (Keepalive 4s)"]
 
         S0 -> Sd1
@@ -61,8 +66,11 @@ digraph WaveshareSoyo {
         Sd4 -> Sd5 [label="NEIN" color="green"]
         Sd5 -> Swc [label="JA" color="orange"]
         Sd5 -> Sws [label="NEIN" color="green"]
-        Sw0 -> Stx
-        Swc -> Stx
-        Sws -> Stx
+        Sw0 -> Swp
+        Swc -> Swp
+        Sws -> Swp
+        Swp -> Scap [label="JA" color="orange"]
+        Swp -> Stx [label="NEIN\nMai-Sep: Bat2 darf\ndie WP mitdecken" color="green"]
+        Scap -> Stx
     }
 }
