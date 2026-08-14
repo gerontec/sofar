@@ -31,7 +31,7 @@ digraph WaveshareArch {
         MQTT_OUT [shape=cylinder fillcolor="#dddddd" label="sofar/state · sofar/waveshare/status\\nsoyo/calc · soyo/sent (retain)"]
         Relays123 [shape=component fillcolor="#dddddd" label="CH1-CH3 (GPIO1/2/41)\\nEBox-State 0..7 binär"]
         Relay4 [shape=component fillcolor="#fce8e8" label="CH4 (GPIO42)\\nDO4 -> WR2 abregeln\\n3s-Puls"]
-        Soyo [shape=component fillcolor="#dddddd" label="Soyo-Inverter (max 900W)\\nRS485 GPIO17 TX / GPIO18 RX\\nKeepalive alle 3s"]
+        Soyo [shape=component fillcolor="#dddddd" label="Soyo-Inverter (max 900W)\\nRS485 GPIO17 TX / GPIO18 RX\\nKanal A: TX alle 3,84s gemessen\\n(Gerät fällt nach 4s aus)"]
     }
 
     subgraph cluster_input {
@@ -39,7 +39,7 @@ digraph WaveshareArch {
         fontname="Helvetica-Bold" fontsize=10 color="#28a745"
 
         in_struct [shape=box fillcolor="#b8dfc4" label="Inputs{pcc, bat1, soc1, soc2, ebox_w}\\nsoc2 < 0 = unbekannt"]
-        state_ram [shape=box fillcolor="#b8dfc4" label="State (RAM, Cron-übergreifend)\\nrelay_st, stable, last_excess, prot,\\npeak_today, pcc_buf[10]\\n(Reset um Mitternacht, weg bei Reboot)"]
+        state_ram [shape=box fillcolor="#b8dfc4" label="State (RAM, Cron-übergreifend)\\nrelay_st, stable, last_excess, prot,\\npeak_today, ladesperre_latched\\n(Reset um Mitternacht, weg bei Reboot)"]
     }
 
     subgraph cluster_forecast {
@@ -47,14 +47,14 @@ digraph WaveshareArch {
         fontname="Helvetica-Bold" fontsize=10 color="#b8860b"
 
         dc_now [shape=box fillcolor="#ffe69c" label="dc_now()  Süd+Ost-Arrays\\nNOAA-Sonnenstand, kt_month\\n47.6811N 11.5732E\\n-> dc_expected"]
-        peakwin [shape=box fillcolor="#ffe69c" label="Peak-Fenster (Stunde 5..20)\\nbest_w, peak_h, win_end_h\\nratio_ist via pcc_buf-Mittel"]
+        peakwin [shape=box fillcolor="#ffe69c" label="Peak-Fenster (Stunde 5..20)\\nbest_w, peak_h, win_end_h\\nratio_ist aus pcc_avg5 + bat1_avg5\\nsolar_noon_utc -> noon_h"]
     }
 
     subgraph cluster_decision {
         label="DECISION-PIPELINE (step())" style="filled" fillcolor="#e2d9f3"
         fontname="Helvetica-Bold" fontsize=10 color="#6f42c1"
 
-        ladesperre [shape=box fillcolor="#d4c5f0" label="LADESPERRE-Zustandsmaschine\\nin_window && 0 <= ratio_ist <= ratio_th\\n(nur bei BELEGTEM Gutwetter)"]
+        ladesperre [shape=box fillcolor="#d4c5f0" label="LADESPERRE-Zustandsmaschine\\nin_season (Mai-Aug) && in_window\\n&& Latch (Hysterese 0.25)"]
         decide_fn [shape=box fillcolor="#c9b8f0" label="decide()  dominanzgeordnet\\nSOC_UNKNOWN / PCC_OVER_20KW /\\nEMERGENCY / INSUFFICIENT /\\nPOWER_MATCHING + RAMP_LIMITED"]
         guards [shape=box fillcolor="#f8d7da" label="apply_guards() — HARD\\nLADESPERRE / BATTERY_FULL /\\nCRITICAL_SOC (feuert -> Blocking skip)"]
         blocking [shape=box fillcolor="#d4c5f0" label="apply_blocking()\\nUP: SWEET_SPOT/TREND/BAT_GUARD\\nDOWN: STABILIZING/HYSTERESIS\\nEMERGENCY_FORCE bypass"]
@@ -65,8 +65,8 @@ digraph WaveshareArch {
         fontname="Helvetica-Bold" fontsize=10 color="#004085"
 
         set_relays [shape=box fillcolor="#a8d0f5" label="CH1-CH3 setzen\\nfinal_state als Bitmask"]
-        do4_out [shape=box fillcolor="#f8d7da" label="DO4-Puls (CH4)\\npcc>22kW unbedingt ODER\\npcc>20kW kein State+ / ladesperre"]
-        soyo_calc [shape=box fillcolor="#a8d0f5" label="Soyo-Kalkulation\\nEntladung wenn State==0\\nRS485-Frame alle 3s"]
+        do4_out [shape=box fillcolor="#f8d7da" label="DO4-Puls (CH4)\\npcc>22kW unbedingt ODER\\npcc>20kW und kein PCC_OVER_20KW"]
+        soyo_calc [shape=box fillcolor="#a8d0f5" label="Soyo-Kalkulation (60s)\\nEntladung wenn State==0\\nTX über rs485_mux Kanal A"]
         publish [shape=box fillcolor="#a8d0f5" label="MQTT publish\\nsofar/state, status, soyo/*"]
     }
 
@@ -75,7 +75,7 @@ digraph WaveshareArch {
     MQTT_RATIO -> ladesperre [color="#28a745" label="ratio_th"]
 
     in_struct -> dc_now [color="#b8860b"]
-    state_ram -> peakwin [color="#b8860b" label="pcc_buf"]
+    state_ram -> peakwin [color="#b8860b" label="peak_today"]
     dc_now -> peakwin [color="#b8860b"]
 
     peakwin -> ladesperre [color="#6f42c1" label="ratio_ist\\npeak_h"]
@@ -93,7 +93,7 @@ digraph WaveshareArch {
 
     set_relays -> Relays123 [color="#004085"]
     do4_out -> Relay4 [color="#c0392b"]
-    soyo_calc -> Soyo [color="#004085" label="3s Keepalive"]
+    soyo_calc -> Soyo [color="#004085" label="Kanal A, 3,84s"]
     publish -> MQTT_OUT [color="#004085"]
 }
 """
@@ -304,7 +304,7 @@ digraph WaveshareSoyo {
     }
 
     subgraph cluster_soyo {
-        label="Soyo-Entladung (max 900W, alle 60s soyo/calc, RS485-TX alle 3s) — v3.8.0 mit WP-Deckel" style="filled" fillcolor="#d4edda"
+        label="Soyo-Entladung (max 900W, Rechnung alle 60s, TX über rs485_mux Kanal A alle 3,84s gemessen) — v3.8.0 mit WP-Deckel" style="filled" fillcolor="#d4edda"
         fontname="Helvetica-Bold" fontsize=10 color="#28a745"
 
         S0 [shape=oval fillcolor="#b8dfc4" label="soyo/calc"]
@@ -318,7 +318,16 @@ digraph WaveshareSoyo {
         Sws [shape=box fillcolor="#b8dfc4" label="w = 468W (Nacht)\\noder 10W (Tag, Standby)"]
         Swp [shape=diamond fillcolor="#fff3cd" label="Okt-Apr UND WP läuft?\\n(r290_hz > 0, Signal < 3min alt,\\nMQTT r290/heatpump/all)"]
         Scap [shape=box fillcolor="#ffe69c" label="w = min(w, 500)\\nnur Hausanteil aus Bat2,\\nnicht der WP-Netzbezug"]
-        Stx [shape=box fillcolor="#a8d0f5" label="RS485-Frame\\n[24 56 00 21 PH PL 80 CRC]\\nCRC=(264-PH-PL)&0xFF\\nimmer alle 3s (Keepalive 4s)"]
+        Smux [shape=box fillcolor="#cce5ff" label="rs485_mux::tick(st, now)\\nein Bus, zwei Kanäle im Zeitmultiplex\\nLambda-Raster 50ms"]
+        SdA [shape=diamond fillcolor="#fff3cd" label="ACT_A_TX?\\nA_PERIOD_MS = 3800ms nominal\\nIst-Takt gemessen 3837..3843ms\\n(soyo/sent dt) = 3,84s\\n3800 statt 4000, weil der Ist-Takt\\nsonst bei 4003..4047ms lag > 4s-Timeout"]
+        Sage [shape=diamond fillcolor="#fce8e8" label="soyo_ms älter als 90s?\\n(keine frische Vorgabe)"]
+        Sw90 [shape=box fillcolor="#dddddd" label="w = 0"]
+        Stx [shape=box fillcolor="#a8d0f5" label="RS485-Frame Kanal A\\n[24 56 00 21 PH PL 80 CRC]\\nCRC=(264-PH-PL)&0xFF\\nMQTT soyo/sent {w, dt, mux:A}"]
+
+        SB0 [shape=diamond style="dashed,filled" fillcolor="#f0f0f0" label="B_ENABLE?\\nconstexpr, derzeit false"]
+        SBoff [shape=box style="dashed,filled" fillcolor="#f0f0f0" label="PH_IDLE\\nKanal B stumm — sendet\\nNICHTS auf den Bus"]
+        SB1 [shape=box style="dashed,filled" fillcolor="#f0f0f0" label="PH_B_BAUD -> 9600, PH_B_TX\\nb_build_read(slave=B_SLAVE, B_START, B_COUNT)\\nB_SLAVE=1 und B_START=0 sind PLATZHALTER\\n(T20-G3 unbestätigt)"]
+        SB2 [shape=box style="dashed,filled" fillcolor="#f0f0f0" label="feed() sammelt RX\\nb_check(): Länge + CRC16\\nb_reg() -> Register"]
 
         S0 -> Sd1
         Sd1 -> Sw0 [label="JA" color="#888888"]
@@ -335,8 +344,17 @@ digraph WaveshareSoyo {
         Swc -> Swp
         Sws -> Swp
         Swp -> Scap [label="JA" color="orange"]
-        Swp -> Stx [label="NEIN\\nMai-Sep: Bat2 darf\\ndie WP mitdecken" color="green"]
-        Scap -> Stx
+        Swp -> Smux [label="NEIN\\nMai-Sep: Bat2 darf\\ndie WP mitdecken" color="green"]
+        Scap -> Smux
+        Smux -> SdA
+        SdA -> Sage [label="JA" color="green"]
+        Sage -> Sw90 [label="JA" color="#888888"]
+        Sage -> Stx [label="NEIN" color="green"]
+        Sw90 -> Stx
+        SdA -> SB0 [label="NEIN\\nLücke gehört Kanal B\\n3,84s - 17ms A-Frame = 3,82s\\n(8 Byte @ 4800 Bd 8N1)" style=dashed color="#888888"]
+        SB0 -> SBoff [label="false (heute)" style=dashed color="#888888"]
+        SB0 -> SB1 [label="true" style=dashed color="#888888"]
+        SB1 -> SB2 [style=dashed color="#888888"]
     }
 }
 """

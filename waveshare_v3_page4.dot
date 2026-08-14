@@ -39,7 +39,7 @@ digraph WaveshareSoyo {
     }
 
     subgraph cluster_soyo {
-        label="Soyo-Entladung (max 900W, alle 60s soyo/calc, RS485-TX alle 3s) — v3.8.0 mit WP-Deckel" style="filled" fillcolor="#d4edda"
+        label="Soyo-Entladung (max 900W, Rechnung alle 60s, TX über rs485_mux Kanal A alle 3,84s gemessen) — v3.8.0 mit WP-Deckel" style="filled" fillcolor="#d4edda"
         fontname="Helvetica-Bold" fontsize=10 color="#28a745"
 
         S0 [shape=oval fillcolor="#b8dfc4" label="soyo/calc"]
@@ -53,7 +53,16 @@ digraph WaveshareSoyo {
         Sws [shape=box fillcolor="#b8dfc4" label="w = 468W (Nacht)\noder 10W (Tag, Standby)"]
         Swp [shape=diamond fillcolor="#fff3cd" label="Okt-Apr UND WP läuft?\n(r290_hz > 0, Signal < 3min alt,\nMQTT r290/heatpump/all)"]
         Scap [shape=box fillcolor="#ffe69c" label="w = min(w, 500)\nnur Hausanteil aus Bat2,\nnicht der WP-Netzbezug"]
-        Stx [shape=box fillcolor="#a8d0f5" label="RS485-Frame\n[24 56 00 21 PH PL 80 CRC]\nCRC=(264-PH-PL)&0xFF\nimmer alle 3s (Keepalive 4s)"]
+        Smux [shape=box fillcolor="#cce5ff" label="rs485_mux::tick(st, now)\nein Bus, zwei Kanäle im Zeitmultiplex\nLambda-Raster 50ms"]
+        SdA [shape=diamond fillcolor="#fff3cd" label="ACT_A_TX?\nA_PERIOD_MS = 3800ms nominal\nIst-Takt gemessen 3837..3843ms\n(soyo/sent dt) = 3,84s\n3800 statt 4000, weil der Ist-Takt\nsonst bei 4003..4047ms lag > 4s-Timeout"]
+        Sage [shape=diamond fillcolor="#fce8e8" label="soyo_ms älter als 90s?\n(keine frische Vorgabe)"]
+        Sw90 [shape=box fillcolor="#dddddd" label="w = 0"]
+        Stx [shape=box fillcolor="#a8d0f5" label="RS485-Frame Kanal A\n[24 56 00 21 PH PL 80 CRC]\nCRC=(264-PH-PL)&0xFF\nMQTT soyo/sent {w, dt, mux:A}"]
+
+        SB0 [shape=diamond style="dashed,filled" fillcolor="#f0f0f0" label="B_ENABLE?\nconstexpr, derzeit false"]
+        SBoff [shape=box style="dashed,filled" fillcolor="#f0f0f0" label="PH_IDLE\nKanal B stumm — sendet\nNICHTS auf den Bus"]
+        SB1 [shape=box style="dashed,filled" fillcolor="#f0f0f0" label="PH_B_BAUD -> 9600, PH_B_TX\nb_build_read(slave=B_SLAVE, B_START, B_COUNT)\nB_SLAVE=1 und B_START=0 sind PLATZHALTER\n(T20-G3 unbestätigt)"]
+        SB2 [shape=box style="dashed,filled" fillcolor="#f0f0f0" label="feed() sammelt RX\nb_check(): Länge + CRC16\nb_reg() -> Register"]
 
         S0 -> Sd1
         Sd1 -> Sw0 [label="JA" color="#888888"]
@@ -70,7 +79,16 @@ digraph WaveshareSoyo {
         Swc -> Swp
         Sws -> Swp
         Swp -> Scap [label="JA" color="orange"]
-        Swp -> Stx [label="NEIN\nMai-Sep: Bat2 darf\ndie WP mitdecken" color="green"]
-        Scap -> Stx
+        Swp -> Smux [label="NEIN\nMai-Sep: Bat2 darf\ndie WP mitdecken" color="green"]
+        Scap -> Smux
+        Smux -> SdA
+        SdA -> Sage [label="JA" color="green"]
+        Sage -> Sw90 [label="JA" color="#888888"]
+        Sage -> Stx [label="NEIN" color="green"]
+        Sw90 -> Stx
+        SdA -> SB0 [label="NEIN\nLücke gehört Kanal B\n3,84s - 17ms A-Frame = 3,82s\n(8 Byte @ 4800 Bd 8N1)" style=dashed color="#888888"]
+        SB0 -> SBoff [label="false (heute)" style=dashed color="#888888"]
+        SB0 -> SB1 [label="true" style=dashed color="#888888"]
+        SB1 -> SB2 [style=dashed color="#888888"]
     }
 }
