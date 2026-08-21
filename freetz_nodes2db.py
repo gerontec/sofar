@@ -13,6 +13,18 @@ ob er der einzige war -- oder ob der AP alle verloren hat.
 
 Quelle: `wlanconfig ath0 list` (Atheros, nur 2,4 GHz; ath1 existiert nicht).
         RSSI ist dort SNR in dB, nicht dBm.
+
+Zum "last active": die Box selbst kennt keinen solchen Zeitstempel. Am
+21.08.2026 geprueft -- die landevices in /var/flash/ar7.cfg haben kein
+Zeitfeld (nur ip/mac/medium/type), ctlmgr_ctl kennt weder last_active noch
+last_seen, /var/flash/multid.leases ist leer (die Box ist nicht der
+DHCP-Server, das ist die 6490), und die IDLE-Spalte von wlanconfig zaehlt
+nicht hoch: sie stand in zwei Messungen 8 s auseinander unveraendert auf
+120/135/150 und ist damit der eingestellte Inaktivitaets-Timeout, nicht die
+Zeit seit dem letzten Frame.
+
+Deshalb fuehrt dieses Skript den Stempel selbst: freetz_node_last haelt je MAC
+first_seen/last_seen/seen_count fort. Aufloesung = Cron-Takt (stuendlich).
 """
 import re
 import socket
@@ -41,6 +53,19 @@ CREATE TABLE IF NOT EXISTS freetz_nodes (
   idle     INT          NULL,
   KEY idx_ts (ts),
   KEY idx_mac_ts (mac, ts)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+"""
+
+DDL_LAST = """
+CREATE TABLE IF NOT EXISTS freetz_node_last (
+  mac        VARCHAR(17)  NOT NULL PRIMARY KEY,
+  ip         VARCHAR(45)  NULL,
+  hostname   VARCHAR(64)  NULL,
+  first_seen DATETIME     NOT NULL,
+  last_seen  DATETIME     NOT NULL,   -- "zuletzt aktiv", vom Poller gefuehrt
+  last_rssi  INT          NULL,
+  seen_count INT          NOT NULL DEFAULT 1,
+  KEY idx_last_seen (last_seen)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 """
 
@@ -138,11 +163,26 @@ def main():
     try:
         with con.cursor() as cur:
             cur.execute(DDL)
+            cur.execute(DDL_LAST)
             cur.executemany(
                 "INSERT INTO freetz_nodes"
                 " (ts, iface, mac, ip, hostname, aid, chan, rate, rssi, idle)"
                 " VALUES (NOW(), %(iface)s, %(mac)s, %(ip)s, %(hostname)s,"
                 " %(aid)s, %(chan)s, %(rate)s, %(rssi)s, %(idle)s)", stations)
+            # last_seen fortschreiben. COALESCE haelt eine einmal ermittelte IP
+            # fest: sie kommt aus der ARP-Tabelle und fehlt mal, wenn gerade
+            # niemand mit dem Node gesprochen hat -- das ist kein Grund, den
+            # Namen wieder zu verlieren.
+            cur.executemany(
+                "INSERT INTO freetz_node_last"
+                " (mac, ip, hostname, first_seen, last_seen, last_rssi, seen_count)"
+                " VALUES (%(mac)s, %(ip)s, %(hostname)s, NOW(), NOW(), %(rssi)s, 1)"
+                " ON DUPLICATE KEY UPDATE"
+                "  last_seen = NOW(),"
+                "  ip = COALESCE(VALUES(ip), ip),"
+                "  hostname = COALESCE(VALUES(hostname), hostname),"
+                "  last_rssi = VALUES(last_rssi),"
+                "  seen_count = seen_count + 1", stations)
         con.commit()
     finally:
         con.close()
@@ -151,7 +191,7 @@ def main():
         for s in stations:
             print(f"{s['iface']} {s['mac']} {s['ip'] or '-':15} "
                   f"{s['hostname'] or '-':14} rssi={s['rssi']} idle={s['idle']}")
-    print(f"{len(stations)} Nodes an f7240 -> wagodb.freetz_nodes")
+    print(f"{len(stations)} Nodes an f7240 -> wagodb.freetz_nodes + freetz_node_last")
 
 
 if __name__ == "__main__":
