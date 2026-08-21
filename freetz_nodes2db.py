@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """freetz_nodes2db.py — welche WLAN-Nodes haengen noch an der Freetz 7240?
 
-Stuendlich per cron. Holt in EINEM SSH-Aufruf die Stationsliste des AP f7240
+Alle 30 min per cron (7,37). Holt in EINEM SSH-Aufruf die Stationsliste des AP f7240
 (192.168.178.26) und dessen ARP-Tabelle, und schreibt beides zusammengefuehrt
 nach wagodb.freetz_nodes. Kein MQTT dazwischen: der Pi ist Datenhalter und
 Schreiber in einem, ein Broker-Hop wuerde nur eine weitere Ausfallstelle
@@ -24,7 +24,7 @@ nicht hoch: sie stand in zwei Messungen 8 s auseinander unveraendert auf
 Zeit seit dem letzten Frame.
 
 Deshalb fuehrt dieses Skript den Stempel selbst: freetz_node_last haelt je MAC
-first_seen/last_seen/seen_count fort. Aufloesung = Cron-Takt (stuendlich).
+first_seen/last_seen/seen_count fort. Aufloesung = Cron-Takt (30 min).
 """
 import re
 import socket
