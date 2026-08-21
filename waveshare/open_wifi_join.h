@@ -2,6 +2,9 @@
 #include "esphome.h"
 #include "esphome/components/wifi/wifi_component.h"
 #include <esp_wifi.h>
+#include <esp_attr.h>
+#include "ping/ping_sock.h"
+#include "lwip/ip_addr.h"
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -29,12 +32,20 @@
 //                     Passwortloser AP -> ESPHome setzt threshold.authmode
 //                     automatisch auf WIFI_AUTH_OPEN (min_auth_mode greift
 //                     nur bei gesetztem Passwort).
-//    3. Watchdog      Hängt das Board am offenen AP ohne MQTT-Verbindung
+//    3. Netz-Check    ow_net_check(): "verbunden" ist nicht "erreichbar".
+//                     wifi.connected meldet nur Assoziation + DHCP-Lease; ein
+//                     offener AP ohne funktionierenden Uplink gilt damit als
+//                     verbunden, weshalb weder reboot_timeout noch der
+//                     Watchdog unten je greifen. Deshalb ICMP gegen den
+//                     Broker: 2 min ohne Echo -> zurück auf den Fallback.
+//    4. Watchdog      Hängt das Board am offenen AP ohne MQTT-Verbindung
 //                     (typisch: Geräte-Fallback-APs wie "ESP_xxxxxx",
 //                     Captive Portals), wird die SSID nach Timeout auf eine
 //                     Blacklist gesetzt und f24 übernimmt wieder.
 //
-//  Blacklist lebt nur im RAM -> nach Reboot wird alles neu probiert.
+//  Blacklist lebt im RAM; zusätzlich hält ow_hold die zuletzt aussortierte
+//  SSID im RTC-Speicher fest (überlebt Reboot, nicht den Strom-Aus). Ohne das
+//  landet das Board nach jedem Reboot wieder am selben toten AP.
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct OpenApResult {
@@ -81,7 +92,67 @@ inline bool ow_is_device_ap(const std::string &ssid) {
 // f7240 stärker ist. Fällt f7240 aus, wäre das Board dort gelandet.
 static const int OW_MIN_RSSI = -85;
 
+// ── Sperre über den Reboot hinweg (RTC) ─────────────────────────────────────
+//
+// Die RAM-Blacklist ist nach jedem Neustart leer. Genau das war die Falle: ein
+// AP, der eine IP vergibt aber keinen Uplink hat, wurde aussortiert — dann kam
+// aus irgendeinem Grund ein Reboot (MQTT-reboot_timeout, OTA, Watchdog), und
+// das Board hing wieder am selben toten AP. Der RTC-Speicher überlebt einen
+// Reboot (nicht Strom-Aus) und hält deshalb die zuletzt aussortierte SSID für
+// OW_HOLD_CYCLES Scan-Durchläufe fern. Danach darf sie wieder mitspielen —
+// vielleicht hat der Betreiber sein Netz ja repariert.
+struct OwHold {
+  uint32_t magic;
+  uint16_t cycles;      // verbleibende scan_open-Durchläufe mit Sperre
+  uint16_t wd_reboots;  // Neustarts durch den Loop-Watchdog (siehe unten)
+  char ssid[33];        // SSID max. 32 Zeichen + NUL
+};
+RTC_NOINIT_ATTR static OwHold ow_hold;
+// Die Zahl gehört zum Layout von OwHold: ändert sich das Struct, muss sie
+// mitwandern, sonst liest der nächste Reboot den alten Inhalt falsch aus.
+static const uint32_t OW_HOLD_MAGIC = 0x0F7240A6;
+static const uint16_t OW_HOLD_CYCLES = 24;  // 24 x 5 min = 2 h
+
+// Aus on_boot rufen: nach Strom-Aus steht im RTC-RAM Müll, den erkennt magic.
+inline void ow_hold_init() {
+  if (ow_hold.magic != OW_HOLD_MAGIC) {
+    ow_hold.magic = OW_HOLD_MAGIC;
+    ow_hold.cycles = 0;
+    ow_hold.wd_reboots = 0;
+    ow_hold.ssid[0] = '\0';
+    return;
+  }
+  if (ow_hold.cycles > 0)
+    ESP_LOGW("open_wifi", "'%s' bleibt noch %u Durchläufe gesperrt (RTC)", ow_hold.ssid,
+             (unsigned) ow_hold.cycles);
+}
+
+inline bool ow_hold_blocks(const std::string &ssid) {
+  return ow_hold.magic == OW_HOLD_MAGIC && ow_hold.cycles > 0 && !ssid.empty() &&
+         ssid == ow_hold.ssid;
+}
+
+inline void ow_hold_set(const std::string &ssid) {
+  if (ssid.empty())
+    return;
+  ow_hold.magic = OW_HOLD_MAGIC;
+  strncpy(ow_hold.ssid, ssid.c_str(), sizeof(ow_hold.ssid) - 1);
+  ow_hold.ssid[sizeof(ow_hold.ssid) - 1] = '\0';
+  ow_hold.cycles = OW_HOLD_CYCLES;
+  ESP_LOGW("open_wifi", "'%s' für %u Durchläufe gesperrt (überlebt Reboot)", ow_hold.ssid,
+           (unsigned) OW_HOLD_CYCLES);
+}
+
+// Ein Tick je Scan-Durchlauf (ow_find_open), nicht je Sekunde: so hängt die
+// Sperre am Takt der Auswahl und nicht an millis(), das der Reboot nullt.
+inline void ow_hold_tick() {
+  if (ow_hold.magic == OW_HOLD_MAGIC && ow_hold.cycles > 0)
+    ow_hold.cycles--;
+}
+
 inline bool ow_is_blacklisted(const std::string &ssid) {
+  if (ow_hold_blocks(ssid))
+    return true;
   for (const auto &b : ow_blacklist)
     if (b == ssid)
       return true;
@@ -310,6 +381,7 @@ inline OpenApResult ow_scan(const char *own_ap_ssid) {
 inline OpenApResult ow_find_open(const char *own_ap_ssid) {
   ow_cands.clear();
   ow_survey_reset();
+  ow_hold_tick();
   OpenApResult r = ow_scan(own_ap_ssid);
   if (r.count == 0)
     r = ow_from_esphome_scan(own_ap_ssid);
@@ -398,4 +470,274 @@ inline bool ow_watchdog(bool mqtt_connected, uint32_t timeout_ms, const char *fb
   ow_bad_since = 0;
   ow_prefer("", fb_ssid, fb_pass);
   return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Netz-Check: erreichbar statt nur verbunden
+// ═══════════════════════════════════════════════════════════════════════════
+//
+//  Der Kernfehler des bisherigen Aufbaus: wifi.connected (und damit ESPHomes
+//  reboot_timeout) bedeutet nur Layer-2-Assoziation + DHCP-Lease. Ein offener
+//  AP, der eine IP vergibt aber keinen Uplink hat — oder ein f7240, der nach
+//  Tagen die Station stillschweigend fallenlässt — gilt aus ESPHome-Sicht als
+//  "verbunden". Der reboot_timeout greift dann nie.
+//
+//  Deshalb hier ein eigener Beweis, dass Verkehr fließt:
+//    a) MQTT verbunden -> Netz ist ok, kein Ping nötig (bester Beweis).
+//    b) sonst ICMP gegen den Broker. Antwortet er, ist das Netz in Ordnung
+//       und nur der Broker-Dienst weg — dann wäre ein AP-Wechsel Unsinn.
+//
+//  Takt: ohne MQTT jeder Aufruf (30 s), mit MQTT nur alle OW_PING_GAP_MS
+//  (5 min) als Messwert für die Telemetrie.
+//
+//  Eskalation, sobald OW_NET_BAD_MS (2 min) ohne Beweis vergangen sind:
+//    1. am offenen AP  -> SSID sperren (RAM + RTC) und zurück auf den Fallback
+//    2. schon am Fallback -> Reconnect erzwingen (disable/enable)
+//    3. hilft beides zweimal nicht -> Rückgabe 2, der Aufrufer rebootet
+//  Nach jeder Stufe beginnt das 2-min-Fenster neu, damit die neue Verbindung
+//  Zeit zum Aufbau hat.
+
+static const uint32_t OW_PING_GAP_MS = 300000;  // 5 min Routinemessung
+static const uint8_t OW_PING_COUNT = 3;         // Pakete je Messung
+static const uint32_t OW_PING_TIMEOUT_MS = 1000;
+
+static esp_ping_handle_t ow_ping_hdl = nullptr;
+static volatile bool ow_ping_busy = false;
+static volatile bool ow_ping_done = false;
+static volatile uint32_t ow_ping_replies = 0;
+static volatile uint32_t ow_ping_rtt = 0;   // ms der letzten Antwort
+static uint32_t ow_ping_last_ms = 0;        // millis() des letzten Starts
+
+static bool ow_net_ok = true;               // letzter Befund
+static uint32_t ow_net_bad_since = 0;       // millis() seit erstem Fehlbefund
+static uint32_t ow_net_last_ok = 0;         // millis() des letzten Beweises
+static uint8_t ow_net_actions = 0;          // Eskalationsstufen ohne Erfolg
+
+inline void ow_ping_on_success(esp_ping_handle_t hdl, void *args) {
+  uint32_t t = 0;
+  esp_ping_get_profile(hdl, ESP_PING_PROF_TIMEGAP, &t, sizeof(t));
+  ow_ping_rtt = t;
+}
+
+// Läuft im Ping-Task. esp_ping_delete_session() wartet auf genau diesen Task
+// und würde von hier aus verklemmen -> nur Flagge setzen, aufgeräumt wird im
+// Hauptkontext (ow_ping_reap).
+inline void ow_ping_on_end(esp_ping_handle_t hdl, void *args) {
+  uint32_t received = 0;
+  esp_ping_get_profile(hdl, ESP_PING_PROF_REPLY, &received, sizeof(received));
+  ow_ping_replies = received;
+  ow_ping_done = true;
+}
+
+inline bool ow_ping_start(const char *host) {
+  if (ow_ping_busy || host == nullptr || host[0] == '\0')
+    return false;
+
+  ip_addr_t target;
+  if (!ipaddr_aton(host, &target)) {
+    ESP_LOGW("net", "Ping-Ziel '%s' ist keine IP", host);
+    return false;
+  }
+
+  esp_ping_config_t cfg = ESP_PING_DEFAULT_CONFIG();
+  cfg.target_addr = target;
+  cfg.count = OW_PING_COUNT;
+  cfg.timeout_ms = OW_PING_TIMEOUT_MS;
+  cfg.interval_ms = 300;
+  cfg.task_stack_size = 3072;
+
+  esp_ping_callbacks_t cbs = {};
+  cbs.cb_args = nullptr;
+  cbs.on_ping_success = ow_ping_on_success;
+  cbs.on_ping_timeout = nullptr;
+  cbs.on_ping_end = ow_ping_on_end;
+
+  ow_ping_replies = 0;
+  ow_ping_done = false;
+  if (esp_ping_new_session(&cfg, &cbs, &ow_ping_hdl) != ESP_OK) {
+    ow_ping_hdl = nullptr;
+    return false;
+  }
+  if (esp_ping_start(ow_ping_hdl) != ESP_OK) {
+    esp_ping_delete_session(ow_ping_hdl);
+    ow_ping_hdl = nullptr;
+    return false;
+  }
+  ow_ping_busy = true;
+  ow_ping_last_ms = millis();
+  return true;
+}
+
+inline void ow_ping_reap() {
+  if (ow_ping_hdl != nullptr) {
+    esp_ping_delete_session(ow_ping_hdl);
+    ow_ping_hdl = nullptr;
+  }
+  ow_ping_busy = false;
+}
+
+// Stufe wählen und ausführen. Rückgabe wie ow_net_check().
+inline int ow_net_escalate_(esphome::wifi::WiFiComponent *wc, const char *fb_ssid,
+                            const char *fb_pass) {
+  ow_net_actions++;
+
+  if (!ow_preferred.empty()) {  // wir hängen am offenen AP -> der ist verdächtig
+    const std::string dead = ow_preferred;
+    ESP_LOGE("net", "Netz seit 2 min tot an '%s' -> zurück auf %s", dead.c_str(), fb_ssid);
+    ow_blacklist_add(dead);
+    ow_hold_set(dead);
+    ow_prefer("", fb_ssid, fb_pass);
+    return 1;
+  }
+
+  if (ow_net_actions < 3) {  // schon am Fallback: Verbindung neu aufbauen
+    ESP_LOGE("net", "Netz seit 2 min tot an '%s' -> Reconnect (%u.)", fb_ssid,
+             (unsigned) ow_net_actions);
+    if (wc != nullptr) {
+      wc->disable();
+      wc->enable();
+    }
+    return 1;
+  }
+
+  ESP_LOGE("net", "Netz tot, Reconnect hat nicht geholfen -> Reboot");
+  return 2;
+}
+
+// Aus einem YAML-Interval (30 s) rufen.
+//   host          Ping-Ziel, IP-Literal (der MQTT-Broker)
+//   mqtt_connected  laufender MQTT-Verkehr zählt als Beweis
+//   bad_ms        Geduld ohne Beweis, bevor eskaliert wird (120000)
+// Rückgabe: 0 = nichts zu tun, 1 = Gegenmaßnahme lief, 2 = Aufrufer soll rebooten
+inline int ow_net_check(const char *host, bool mqtt_connected, uint32_t bad_ms,
+                        const char *fb_ssid, const char *fb_pass) {
+  auto *wc = esphome::wifi::global_wifi_component;
+  const uint32_t now = millis();
+  const bool linked = (wc != nullptr) && wc->is_connected();
+
+  // 1) Ein frisches Ping-Ergebnis ist der harte Beweis und schlägt alles andere.
+  //    Insbesondere die MQTT-Behauptung: is_connected() sagt nur, dass der
+  //    Client den Socket für offen hält. Genau so stand das Board am
+  //    21.08.2026 da — ESTABLISHED auf 1883, ICMP beantwortet, seit Stunden
+  //    keine einzige Nachricht mehr veröffentlicht.
+  bool have = false, ok = false;
+  if (ow_ping_busy && ow_ping_done) {
+    have = true;
+    ok = (ow_ping_replies > 0);
+    ESP_LOGD("net", "Ping %s: %u/%u Antworten, %u ms", host, (unsigned) ow_ping_replies,
+             (unsigned) OW_PING_COUNT, (unsigned) ow_ping_rtt);
+    ow_ping_reap();
+  } else if (mqtt_connected) {
+    // 2) Kein frisches Echo: laufender MQTT-Verkehr genügt als Beweis, dann
+    //    bleibt der Funk zwischen zwei Routinemessungen unbelastet.
+    have = true;
+    ok = true;
+  }
+  // 3) Ohne Link ist nichts erreichbar — hier zählt die Zeit ebenfalls
+  if (!linked) {
+    have = true;
+    ok = false;
+  }
+
+  int action = 0;
+  if (have) {
+    ow_net_ok = ok;
+    if (ok) {
+      ow_net_last_ok = now;
+      ow_net_bad_since = 0;
+      ow_net_actions = 0;
+    } else if (ow_net_bad_since == 0) {
+      ow_net_bad_since = now;
+    } else if (now - ow_net_bad_since >= bad_ms) {
+      ow_net_bad_since = now;  // Fenster neu starten, die Maßnahme braucht Zeit
+      action = ow_net_escalate_(wc, fb_ssid, fb_pass);
+    }
+  }
+
+  // 4) Nächste Messung anstoßen: im Fehlerfall jeden Takt, sonst alle 5 min.
+  //    Die 5-min-Routinemessung ist die Gegenprobe zur MQTT-Behauptung: länger
+  //    als 5 min (+ 2 min Geduld) kann ein toter Socket nichts vortäuschen.
+  if (linked && !ow_ping_busy) {
+    const bool due = (ow_ping_last_ms == 0) || !ow_net_ok || (now - ow_ping_last_ms >= OW_PING_GAP_MS);
+    if (due)
+      ow_ping_start(host);
+  }
+  return action;
+}
+
+// Sekunden ohne Beweis (0 = Netz ok) — für die Telemetrie.
+inline uint32_t ow_net_bad_s() {
+  return ow_net_bad_since == 0 ? 0 : (millis() - ow_net_bad_since) / 1000;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Loop-Watchdog: eigener Task, der den Stillstand der Hauptschleife überlebt
+// ═══════════════════════════════════════════════════════════════════════════
+//
+//  Befund vom 21.08.2026 am laufenden Board (192.168.178.187): WLAN an f7240
+//  assoziiert (-37 dBm), ICMP beantwortet, TCP nach 192.168.178.218:1883
+//  ESTABLISHED — aber statt der 30-s-Telemetrie kam in vier Messfenstern zu je
+//  25 s kein einziges Paket, dazwischen einmal ein Status. Die Hauptschleife
+//  steht also über Minuten still und läuft nur schubweise; ICMP und der offene
+//  Socket kommen derweil aus dem lwIP-Task und täuschen Gesundheit vor.
+//  Steht die Schleife, hilft auch kein Netz-Check: dessen Interval-Lambda ist
+//  ja selbst Teil der Schleife.
+//
+//  Deshalb ein Wächter außerhalb der Schleife: ein eigener FreeRTOS-Task
+//  zählt mit, ob ow_beat_tick() (aus dem 30-s-Interval) noch hochzählt.
+//  Bleibt der Herzschlag OW_WD_LIMIT_MS lang aus, wird neu gestartet. Die
+//  Zahl der so ausgelösten Neustarts steht im RTC-Speicher und geht in die
+//  Telemetrie — ohne sie wäre ein Watchdog-Reboot von einem Stromausfall
+//  nicht zu unterscheiden.
+
+static volatile uint32_t ow_beat = 0;  // Herzschlag der Hauptschleife
+static volatile bool ow_wd_paused = false;
+static uint32_t ow_wd_limit_ms = 180000;
+
+inline void ow_beat_tick() { ow_beat++; }
+
+// Während eines OTA läuft die Hauptschleife im Upload-Handler und kommt nicht
+// zum 30-s-Interval. Über diese wacklige Funkstrecke kann das länger dauern
+// als das Limit — der Wächter würde also ausgerechnet den Rettungsweg
+// abschießen. Deshalb aus ota: on_begin/on_error stumm- und wieder scharf
+// schalten.
+inline void ow_wd_pause(bool paused) { ow_wd_paused = paused; }
+
+inline uint16_t ow_wd_reboots() {
+  return ow_hold.magic == OW_HOLD_MAGIC ? ow_hold.wd_reboots : 0;
+}
+
+inline void ow_wd_task_fn(void *arg) {
+  uint32_t last = ow_beat;
+  uint32_t last_ms = millis();
+  for (;;) {
+    vTaskDelay(pdMS_TO_TICKS(5000));
+    if (ow_wd_paused) {
+      last_ms = millis();  // OTA läuft: Uhr mitziehen, sonst schlägt sie danach zu
+      continue;
+    }
+    if (ow_beat != last) {
+      last = ow_beat;
+      last_ms = millis();
+      continue;
+    }
+    if (millis() - last_ms < ow_wd_limit_ms)
+      continue;
+    // Kein ESP_LOGx: das ist ESPHomes Logger, der aus einem fremden Task
+    // heraus in die MQTT-Callbacks greifen würde. esp_rom_printf ist stumm
+    // (baud_rate 0), tut aber niemandem weh.
+    esp_rom_printf("[wd] Hauptschleife steht -> Neustart\n");
+    if (ow_hold.magic == OW_HOLD_MAGIC && ow_hold.wd_reboots < 0xFFFF)
+      ow_hold.wd_reboots++;
+    esp_restart();
+  }
+}
+
+// Aus on_boot rufen, nach ow_hold_init().
+inline void ow_wd_start(uint32_t limit_ms) {
+  ow_wd_limit_ms = limit_ms;
+  ow_beat = 0;
+  xTaskCreate(ow_wd_task_fn, "ow_wd", 2048, nullptr, 1, nullptr);
+  ESP_LOGI("net", "Loop-Watchdog aktiv (%u s), bisher %u Neustarts",
+           (unsigned) (limit_ms / 1000), (unsigned) ow_wd_reboots());
 }

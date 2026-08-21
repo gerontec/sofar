@@ -32,8 +32,11 @@ substitutions:
   ota_password: waveshare2026
   ap_ssid: Sofar-Waveshare-AP
   open_mqtt_timeout: "300000"   # ms ohne MQTT am offenen AP -> Blacklist
+  ping_host: 192.168.178.218    # ICMP-Ziel des Netz-Checks (= MQTT-Broker)
+  net_bad_timeout: "120000"     # ms ohne erreichbares Netz -> zurueck auf f24
+  loop_wd_timeout: "180000"     # ms ohne Herzschlag der Hauptschleife -> Neustart
   soyo_wp_cap: "500"       # W: Soyo-Deckel bei laufender WP, nur Okt-Apr
-  fw_version: "3.9.1"      # rs485_mux Kanal B Stufe 3: Modbus-Read Slave 1 ab 0x0000
+  fw_version: "3.10.0"     # Netz-Check per ICMP: 2 min ohne Netz -> f24, Sperre ueberlebt Reboot
 
 esphome:
   name: ${device_name}
@@ -45,6 +48,9 @@ esphome:
   on_boot:
     priority: -100
     then:
+      - lambda: |-
+          ow_hold_init();                    // RTC-Sperre uebernehmen/verwerfen (vor scan_open)
+          ow_wd_start(${loop_wd_timeout});   // Waechter ausserhalb der Hauptschleife
       - script.execute: pub_status
       - wait_until:
           condition:
@@ -67,6 +73,14 @@ logger:
 ota:
   - platform: esphome
     password: ${ota_password}
+    # Loop-Watchdog stumm schalten: das Flashen laeuft in der Hauptschleife,
+    # der 30-s-Herzschlag setzt so lange aus.
+    on_begin:
+      then:
+        - lambda: ow_wd_pause(true);
+    on_error:
+      then:
+        - lambda: ow_wd_pause(false);
 
 wifi:
   id: wifi_comp
@@ -247,7 +261,7 @@ script:
             else if (s.find(':') != std::string::npos && !got6) { strncpy(ip6, s.c_str(), 40); got6 = true; }
           }
           id(dev_ip) = ip4; id(dev_ip6) = ip6;
-          char json[480];
+          char json[640];
           int phys_state = (id(relay_ch1).state ? 1 : 0)
                          | (id(relay_ch2).state ? 2 : 0)
                          | (id(relay_ch3).state ? 4 : 0);
@@ -255,11 +269,16 @@ script:
             "{\"ip\":\"%s\",\"ip6\":\"%s\",\"ssid\":\"%s\",\"open_ap\":\"%s\",\"open_rssi\":%d,\"open_count\":%d,"
             "\"state\":%d,\"target_state\":%d,\"auto\":%d,\"ladesperre_en\":%d,"
             "\"ratio_th\":%.2f,\"bat1_f\":%.2f,\"ratio_ist\":%.2f,\"peak_h\":%d,\"win_end_h\":%d,"
-            "\"soyo_w\":%d,\"uptime\":%lu,\"mem_free\":%lu,\"fw\":\"%s\",\"fw_date\":\"" __DATE__ "T" __TIME__ "\"}",
+            "\"soyo_w\":%d,\"net_ok\":%d,\"net_bad_s\":%lu,\"ping_ms\":%lu,\"net_acts\":%d,\"hold\":\"%s\",\"hold_left\":%u,\"wd_reboots\":%u,"
+            "\"uptime\":%lu,\"mem_free\":%lu,\"fw\":\"%s\",\"fw_date\":\"" __DATE__ "T" __TIME__ "\"}",
             ip4, ip6, json_escape(ow_current_ssid()).c_str(),
             id(open_ap_ssid).c_str(), id(open_ap_rssi), id(open_ap_count),
             phys_state, id(fox_relay_state), id(auto_enable) ? 1 : 0,
             id(ladesperre_enable) ? 1 : 0, id(ladesperre_ratio), id(bat1_charge_factor), id(g_ratio_ist), id(g_peak_h), id(g_win_end_h), id(soyo_w),
+            ow_net_ok ? 1 : 0, (unsigned long) ow_net_bad_s(), (unsigned long) ow_ping_rtt,
+            (int) ow_net_actions, json_escape(ow_hold.ssid).c_str(),
+            (unsigned) (ow_hold.magic == OW_HOLD_MAGIC ? ow_hold.cycles : 0),
+            (unsigned) ow_wd_reboots(),
             (unsigned long)(millis() / 1000), (unsigned long)ESP.getFreeHeap(),
             "${fw_version}");
           id(mqtt_client).publish("sofar/waveshare/status", json);
@@ -459,6 +478,35 @@ interval:
   - interval: 5min
     then:
       - script.execute: scan_open
+
+  # ── Netz-Check: "verbunden" ist nicht "erreichbar" ───────────────────────
+  #
+  # wifi.connected meldet nur Assoziation + DHCP-Lease. Haengt das Board an
+  # einem AP ohne Uplink (oder laesst f7240 die Station nach Tagen still
+  # fallen), bleibt ESPHome bei "verbunden" und reboot_timeout greift nie.
+  # ow_net_check() verlangt einen Beweis: MQTT-Verbindung, sonst ICMP gegen
+  # den Broker. Der Ping laeuft asynchron im eigenen Task (kein Blockieren der
+  # Hauptschleife, der Soyo-Keepalive braucht sie alle 3 s) und bei gesundem
+  # Netz nur alle 5 min. 2 min ohne Beweis -> offener AP gesperrt und zurueck
+  # auf f24; hilft auch das nicht, Reboot.
+  - interval: 30s
+    then:
+      - lambda: |-
+          ow_beat_tick();   // Herzschlag fuer den Loop-Watchdog
+          int act = ow_net_check("${ping_host}", id(mqtt_client).is_connected(),
+                                 ${net_bad_timeout}, "${wifi_ssid}", "${wifi_password}");
+          if (act == 1 && id(mqtt_client).is_connected()) {
+            char js[192];
+            snprintf(js, sizeof(js),
+                     "{\"event\":\"netfail\",\"ssid\":\"%s\",\"bad_s\":%lu,\"acts\":%d}",
+                     json_escape(ow_current_ssid()).c_str(), (unsigned long) ow_net_bad_s(),
+                     (int) ow_net_actions);
+            id(mqtt_client).publish("sofar/waveshare/netfail", js);
+          }
+          if (act == 2) {
+            ESP_LOGE("net", "Netz dauerhaft tot -> safe_reboot");
+            App.safe_reboot();
+          }
 
   # ── Watchdog: am offenen AP ohne MQTT -> blacklisten, zurück auf f24 ─────
   - interval: 30s

@@ -41,7 +41,10 @@ substitutions:
   ota_password: waveshare2026
   ap_ssid: RS485defect-AP
   open_mqtt_timeout: "180000"   # ms ohne MQTT am offenen AP -> Blacklist
-  fw_version: "1.5"      # USB-Multiplex: Kanal 1 Steuerung, Kanal 2 Log
+  ping_host: 192.168.178.218    # ICMP-Ziel des Netz-Checks (= MQTT-Broker)
+  net_bad_timeout: "120000"     # ms ohne erreichbares Netz -> zurueck auf f24
+  loop_wd_timeout: "180000"     # ms ohne Herzschlag der Hauptschleife -> Neustart
+  fw_version: "1.8"      # 1.7 + Netz-Check per ICMP (2 min ohne Netz -> f24)
 
 esphome:
   name: ${device_name}
@@ -52,6 +55,9 @@ esphome:
   on_boot:
     priority: -100
     then:
+      - lambda: |-
+          ow_hold_init();                    // RTC-Sperre uebernehmen/verwerfen (vor scan_open)
+          ow_wd_start(${loop_wd_timeout});   // Waechter ausserhalb der Hauptschleife
       - wait_until:
           condition:
             wifi.connected:
@@ -75,6 +81,14 @@ logger:
 ota:
   - platform: esphome
     password: ${ota_password}
+    # Loop-Watchdog stumm schalten: das Flashen laeuft in der Hauptschleife,
+    # der 30-s-Herzschlag setzt so lange aus.
+    on_begin:
+      then:
+        - lambda: ow_wd_pause(true);
+    on_error:
+      then:
+        - lambda: ow_wd_pause(false);
 
 wifi:
   id: wifi_comp
@@ -87,6 +101,24 @@ wifi:
 
 web_server:
   port: 80
+
+# ── Externes RS485-TTL-Modul ─────────────────────────────────────────────────
+#  Ersatz fuer den defekten Onboard-SP3485 (dessen Zweig GPIO17/18/3 bleibt
+#  unbenutzt, der tote Chip haengt dort weiter elektrisch dran).
+#    DI -> GPIO5 | RO -> GPIO6 | DE+RE gebrueckt -> GPIO4
+#  flow_control_pin schaltet ESPHome auf UART_MODE_RS485_HALF_DUPLEX: die
+#  UART-Hardware zieht DE vor dem Startbit und laesst es nach dem Stoppbit
+#  fallen. Keine GPIO-Steuerung in Lambdas noetig, das Turnaround ist bitgenau.
+uart:
+  id: rs485
+  tx_pin: GPIO5
+  rx_pin: GPIO6
+  flow_control_pin: GPIO4
+  baud_rate: 4800
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+  rx_buffer_size: 256
 
 mqtt:
   id: mqtt_client
@@ -108,6 +140,49 @@ mqtt:
     - topic: ${device_name}/scan
       then:
         - script.execute: scan_open
+
+    # ── RS485-Test: rohe Bytes senden ──────────────────────────────────────
+    #   Payload = Hex ohne Trenner, z.B. "24560021000A80FE" (Soyo 10 W)
+    #   oder "0103000000044409" (Modbus FC03, Slave 1, Reg 0..3).
+    #   Empfangenes erscheint auf .../rs485/rx.
+    - topic: ${device_name}/rs485/tx
+      then:
+        - lambda: |-
+            auto nib = [](char c) -> int {
+              if (c >= '0' && c <= '9') return c - '0';
+              if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+              if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+              return -1;
+            };
+            const char* s = x.c_str();
+            uint8_t out[64];
+            int n = 0;
+            for (int i = 0; s[i] && s[i + 1] && n < (int) sizeof(out); ) {
+              int hi = nib(s[i]), lo = nib(s[i + 1]);
+              if (hi < 0 || lo < 0) { i++; continue; }   // Trenner ueberspringen
+              out[n++] = (uint8_t) ((hi << 4) | lo);
+              i += 2;
+            }
+            if (n == 0) { id(mqtt_client).publish("${device_name}/rs485/rx", "{\"err\":\"kein hex\"}"); return; }
+            id(rs485).write_array(out, n);
+            id(rs485).flush();
+            char js[160];
+            snprintf(js, sizeof(js), "{\"tx_len\":%d,\"baud\":%u}", n, (unsigned) id(rs485).get_baud_rate());
+            id(mqtt_client).publish("${device_name}/rs485/tx_ack", js);
+
+    # ── RS485-Test: Baudrate zur Laufzeit umstellen ────────────────────────
+    #   Payload = nackte Zahl, z.B. "9600". load_settings() baut den Treiber
+    #   neu auf und setzt Pins und RS485-Modus dabei erneut.
+    - topic: ${device_name}/rs485/baud
+      then:
+        - lambda: |-
+            int b = atoi(x.c_str());
+            if (b < 1200 || b > 115200) return;
+            id(rs485).set_baud_rate((uint32_t) b);
+            id(rs485).load_settings();
+            char js[80];
+            snprintf(js, sizeof(js), "{\"baud\":%d}", b);
+            id(mqtt_client).publish("${device_name}/rs485/baud_ack", js);
 
     # Offenes WLAN an/aus: {"ENABLE":0} holt das Board zurück auf f24
     # (nötig für OTA, weil 192.168.4.x von außen nicht erreichbar ist)
@@ -303,12 +378,48 @@ interval:
     then:
       - script.execute: scan_open
 
+  # Netz-Check: "verbunden" ist nicht "erreichbar". wifi.connected meldet nur
+  # Assoziation + DHCP-Lease; ein AP ohne Uplink bleibt damit unentdeckt.
+  # ow_net_check() verlangt einen Beweis (MQTT oder ICMP zum Broker) und holt
+  # das Board nach 2 min ohne Beweis auf f24 zurueck.
+  - interval: 30s
+    then:
+      - lambda: |-
+          ow_beat_tick();   // Herzschlag fuer den Loop-Watchdog
+          int act = ow_net_check("${ping_host}", id(mqtt_client).is_connected(),
+                                 ${net_bad_timeout}, "${wifi_ssid}", "${wifi_password}");
+          if (act == 2) {
+            ESP_LOGE("net", "Netz dauerhaft tot -> safe_reboot");
+            App.safe_reboot();
+          }
+
   # Watchdog: am offenen AP ohne MQTT -> blacklisten, zurück auf f24
   - interval: 30s
     then:
       - lambda: |-
           ow_watchdog(id(mqtt_client).is_connected(), ${open_mqtt_timeout},
                       "${wifi_ssid}", "${wifi_password}");
+
+  # Aufnahme nachmelden, sobald der Broker wieder da ist.
+  #
+  # Der Scan laeuft oft ohne Verbindung — beim Boot, nach einem Wechsel, waehrend
+  # der Watchdog gerade zurueckschaltet. Genau dann ist die interessanteste
+  # Aufnahme fertig und niemand kann sie sehen. Sie steht deshalb im RAM
+  # (ow_survey_pending) und geht hier raus, sobald MQTT steht.
+  #
+  # RETAINED, damit ein spaeter dazukommender Abonnent sie sofort bekommt; das
+  # age_ms im JSON macht eine alte Aufnahme als alt erkennbar. Beide Argumente
+  # ausdruecklich als std::string: mit (topic, char*, 0, true) greift die
+  # Ueberladung publish(topic, payload, payload_length, qos) — dann landet die 0
+  # in payload_length, true in qos, und retain bliebe still auf false.
+  - interval: 10s
+    then:
+      - lambda: |-
+          if (!ow_survey_pending || !id(mqtt_client).is_connected())
+            return;
+          if (id(mqtt_client).publish(std::string("${device_name}/survey"),
+                                      ow_survey_json(), 0, true))
+            ow_survey_pending = false;   // nur bei Erfolg, sonst beim naechsten Takt
 
   # Board-Telemetrie: Name, IP, RSSI, offener AP, Relaiszustände — retain=false
   - interval: 30s
@@ -322,6 +433,31 @@ interval:
   # Nicht blockierend (usb_serial_jtag_read_bytes mit Timeout 0). Kanal 2
   # (Log) läuft unverändert über denselben stdout, getrennt wird über das
   # Präfix "#K1# " auf jeder Antwortzeile — siehe usb_mux.h.
+  # ── RS485-Empfang: Frame-Ende ueber 25ms Zeichenluecke ───────────────────
+  - interval: 20ms
+    then:
+      - lambda: |-
+          static uint8_t buf[64];
+          static int len = 0;
+          static uint32_t last_ms = 0;
+          uint32_t now = millis();
+          while (id(rs485).available() && len < (int) sizeof(buf)) {
+            uint8_t b;
+            id(rs485).read_byte(&b);
+            buf[len++] = b;
+            last_ms = now;
+          }
+          if (len > 0 && (now - last_ms) >= 25) {
+            char hex[2 * sizeof(buf) + 1];
+            for (int i = 0; i < len; i++) sprintf(hex + 2 * i, "%02X", buf[i]);
+            hex[2 * len] = 0;
+            char js[200];
+            snprintf(js, sizeof(js), "{\"len\":%d,\"hex\":\"%s\",\"baud\":%u}",
+                     len, hex, (unsigned) id(rs485).get_baud_rate());
+            id(mqtt_client).publish("${device_name}/rs485/rx", js);
+            len = 0;
+          }
+
   - interval: 50ms
     then:
       - lambda: |-
@@ -340,6 +476,7 @@ interval:
               um_reply("  relay <1-6|all> <0|1>     Relais schalten");
               um_reply("  openwifi <0|1>            offenes WLAN an/aus (0 = fest auf f24)");
               um_reply("  scan                      offene APs jetzt neu scannen");
+              um_reply("  survey                    Aufnahme des letzten Scans (alle Netze)");
               um_reply("  wifi                      SSID/IP/RSSI/offener AP");
               um_reply("  loglevel <NONE|ERROR|WARN|INFO|DEBUG|VERBOSE>   Kanal 2 lauter/leiser");
               um_reply("  reboot                    Neustart");
@@ -393,6 +530,21 @@ interval:
             } else if (c == "scan") {
               id(scan_open).execute();
               um_reply("Scan angestossen (blockiert ~1,3 s), Ergebnis in 'status'");
+              um_ok();
+
+            } else if (c == "survey") {
+              // Zeilenweise statt als JSON: um_reply schneidet bei 448 B ab,
+              // die Aufnahme ist am Stueck deutlich groesser. Das JSON gibt es
+              // ueber MQTT (${device_name}/survey).
+              um_reply("survey age=%us scanned=%d recorded=%u pending=%d verbunden=%s",
+                       (unsigned) ((millis() - ow_survey_ms) / 1000), ow_survey_scanned,
+                       (unsigned) ow_survey.size(), ow_survey_pending ? 1 : 0,
+                       ow_current_ssid().empty() ? "-" : ow_current_ssid().c_str());
+              for (const auto *e : ow_survey_sorted())
+                um_reply("  %4d dBm  ch %2d  %-4s %s", e->rssi, e->channel,
+                         e->open ? "OPEN" : "enc", e->ssid.c_str());
+              if (ow_survey.empty())
+                um_reply("  (leer - erst 'scan' oder den 5-min-Takt abwarten)");
               um_ok();
 
             } else if (c == "wifi") {
