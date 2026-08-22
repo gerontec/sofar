@@ -146,6 +146,20 @@ inline double dc_temp_factor(double elev_deg, double ambient) {
   return fmax(0.85, fmin(1.0, f));                          // defensiv geklemmt
 }
 
+// ── ETA bis SOC 100 % (Port von expectsoc100.py, gleiche Formeln) ───────────
+// Trend statt Modell: SOC-Steigung und Ladeleistung kommen aus dem Messfenster,
+// der Restertrag aus dc_now() mal Bewoelkung. Teuer ist allein die Integration,
+// deshalb laeuft sie nur jeden ETA_EVERY-ten Zyklus, dazwischen zaehlt der Cache.
+constexpr float ETA_LOAD_W = 800.0f;    // Grundlast, die vor der EBox bedient wird
+constexpr float ETA_K_DEF  = 0.32f;     // kWh(AC) je SOC-Prozent (30-kWh-EBox)
+constexpr float ETA_K_MIN  = 0.20f;     // Plausibilitaetsfenster fuer den gemessenen
+constexpr float ETA_K_MAX  = 0.50f;     // kWh/%-Wert; ausserhalb gilt ETA_K_DEF
+constexpr int   ETA_WIN     = 30;       // Messfenster [min] = Ringpuffergroesse
+constexpr int   ETA_MIN_N   = 10;       // Trend erst ab so vielen Stuetzstellen
+constexpr int   ETA_STEP_S  = 300;      // Integrationsschritt [s]
+constexpr int   ETA_END_H   = 21;       // Rechenhorizont (lokale Stunde)
+constexpr int   ETA_EVERY   = 5;        // Neuberechnung nur jeden n-ten Zyklus
+
 // ── Zustand (im RAM, über Cron-Zyklen hinweg) ────────────────────────────────
 struct State {
   int   relay_st = 0;
@@ -155,6 +169,14 @@ struct State {
   bool  peak_today = false;         // pcc hat heute PCC_PEAK_TH überschritten → Laden vor DO4
   bool  ladesperre_latched = false; // Ladesperre-Latch (Hysterese gegen Flattern)
   int   last_yday = -1;
+  // ETA-Trendfenster (siehe eta_soc100_h)
+  float soc_hist[ETA_WIN] = {0};    // SOC-Ringpuffer, ein Wert je Zyklus
+  int   soc_n = 0, soc_i = 0;
+  float ebox_ema  = -1.0f;          // Ladeleistung, EMA ueber ETA_WIN
+  float clear_ema = -1.0f;          // Bewoelkung (1-ratio), EMA ueber ETA_WIN
+  float ebox_max_today = 0;         // Ladedeckel = Tagesmaximum der Ladeleistung
+  int   eta_tick  = 0;
+  float eta_cache = 0.0f;
 };
 
 // pcc_avg5 + bat1_avg5: 5-Min-Mittel aus pivot2db/MariaDB, nur für die Wetter-Ratio.
@@ -172,6 +194,7 @@ struct Result {
   int   peak_h = -1;    // lokale Stunde des DC-Peaks (-1 = kein Peak heute)
   int   win_end_h = -1; // letzte lokale Stunde mit dc > PCC_PEAK_TH
   float noon_h = -1.0f; // astronomischer lokaler Mittag (Dezimalstunde, Reporting)
+  float eta_h  = 0.0f;  // Prognose SOC 100 % (lokale Dezimalstunde; 0 = heute nicht erreichbar)
   char  trace[160] = "";
 };
 
@@ -245,6 +268,66 @@ inline int apply_blocking(int best, int relay_st, float pcc, float bat1, int sta
   *changed = true; return best;
 }
 
+// ── ETA: wann ist die EBox voll? (1:1 wie expectsoc100.py) ───────────────────
+// Ablauf je Zyklus: Fenster fortschreiben (ein Ringpuffer-Schreibzugriff und
+// zwei EMA-Schritte). Nur jeden ETA_EVERY-ten Zyklus wird integriert:
+//   need   = (100 - soc2) * kWh_pro_Prozent      kWh_pro_Prozent aus dem Fenster
+//   P(t)   = clamp(dc_now(t) * Bewoelkung - Grundlast, 0, Ladedeckel)
+//   ETA    = erster Zeitpunkt, an dem das Integral need erreicht
+// Rueckgabe: lokale Dezimalstunde; 0.00 (= 0:00 Uhr) heisst "heute nicht mehr
+// erreichbar oder nicht beurteilbar" — als echte Prognose kann 0:00 nie auftreten,
+// weil nur von jetzt bis ETA_END_H integriert wird.
+inline float eta_soc100_h(State &st, const Inputs &in, const Result &r,
+                          time_t now_utc, int local_sec_day, int month) {
+  // Fenster fortschreiben — billig, laeuft jeden Zyklus.
+  st.soc_hist[st.soc_i] = in.soc2;
+  st.soc_i = (st.soc_i + 1) % ETA_WIN;
+  if (st.soc_n < ETA_WIN) st.soc_n++;
+  const float a = 1.0f / (float)ETA_WIN;
+  st.ebox_ema = (st.ebox_ema < 0) ? in.ebox_w
+                                  : st.ebox_ema + a * (in.ebox_w - st.ebox_ema);
+  if (r.ratio >= 0.0f) {                       // Bewoelkung = 1 - Wetter-Ratio
+    float cl = fmaxf(0.0f, fminf(1.0f, 1.0f - r.ratio));
+    st.clear_ema = (st.clear_ema < 0) ? cl : st.clear_ema + a * (cl - st.clear_ema);
+  }
+  if (in.ebox_w > st.ebox_max_today) st.ebox_max_today = in.ebox_w;
+
+  if (--st.eta_tick > 0) return st.eta_cache;  // dazwischen: Cache, keine Rechnung
+  st.eta_tick = ETA_EVERY;
+  st.eta_cache = 0.0f;                         // 0:00 = nicht erreichbar
+
+  if (in.soc2 < 0 || in.soc2 >= MAX_SOC) return st.eta_cache;   // unbekannt/voll
+  if (r.dc_expected <= 0 || st.clear_ema <= 0.02f) return st.eta_cache;  // Nacht
+
+  // kWh je Prozent aus dem Messfenster; nur uebernehmen wenn plausibel.
+  float k = ETA_K_DEF;
+  if (st.soc_n >= ETA_MIN_N) {
+    int oldest = (st.soc_i + ETA_WIN - st.soc_n) % ETA_WIN;
+    float d_soc_h = (in.soc2 - st.soc_hist[oldest]) * 60.0f / (float)(st.soc_n - 1);
+    if (d_soc_h > 0.5f && st.ebox_ema > 200.0f) {
+      float k_meas = (st.ebox_ema / 1000.0f) / d_soc_h;
+      if (k_meas >= ETA_K_MIN && k_meas <= ETA_K_MAX) k = k_meas;
+    }
+  }
+  float need = (MAX_SOC - in.soc2) * k;                                  // kWh
+  float pmax = (st.ebox_max_today > 1000.0f) ? st.ebox_max_today
+                                             : (float)state_power(7);    // Deckel
+
+  // Restertrag in ETA_STEP_S-Schritten aufintegrieren.
+  int    sec = local_sec_day;
+  time_t t   = now_utc;
+  float  e   = 0.0f;
+  const int end_sec = ETA_END_H * 3600;
+  while (sec < end_sec) {
+    float p = (float)dc_now(t, month) * st.clear_ema - ETA_LOAD_W;
+    p = fmaxf(0.0f, fminf(pmax, p));
+    e += p * ((float)ETA_STEP_S / 3600.0f) / 1000.0f;
+    if (e >= need) { st.eta_cache = (float)sec / 3600.0f; break; }
+    sec += ETA_STEP_S; t += ETA_STEP_S;
+  }
+  return st.eta_cache;
+}
+
 // ── Gesamt-Pipeline (entspricht main()) ──────────────────────────────────────
 //  now_utc:        unix-UTC der ESPHome-Zeit
 //  local_sec_day:  Sekunden seit lokaler Mitternacht (hour*3600+min*60+sec)
@@ -257,6 +340,10 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
     st.peak_today = false;
     st.ladesperre_latched = false;
     st.last_yday = local_yday;
+    st.ebox_max_today = 0;                     // ETA-Trend faengt taeglich neu an
+    st.soc_n = 0; st.soc_i = 0;
+    st.ebox_ema = -1.0f; st.clear_ema = -1.0f;
+    st.eta_tick = 0; st.eta_cache = 0.0f;
   }
   r.dc_expected = dc_now(now_utc, month);
   // Temperatur-Derating nur bei gültiger, plausibler Außentemp; sonst unverändert.
@@ -349,6 +436,7 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
   r.final_state = final_state; r.changed = changed; r.excess = excess;
   r.dc_delta = r.dc_expected - (in.pcc + in.ebox_w + in.bat1);
   strncpy(r.trace, trace, 159); r.trace[159] = 0;
+  r.eta_h = eta_soc100_h(st, in, r, now_utc, local_sec_day, month);
   return r;
 }
 
