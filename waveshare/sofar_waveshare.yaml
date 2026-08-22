@@ -590,20 +590,22 @@ interval:
                      | (id(relay_ch3).state ? 4 : 0);
           int conflict = (!auto_on && r.final_state != ext_st) ? 1 : 0;
 
-          char js[576];
+          char js[600];
           snprintf(js, sizeof(js),
             "{\"ip\":\"%s\",\"state\":%d,\"changed\":%d,\"pcc\":%.0f,\"bat1\":%.0f,"
             "\"soc2\":%.1f,\"soc1\":%.1f,\"ebox\":%.0f,\"excess\":%.0f,"
             "\"dc_expected\":%.0f,\"dc_delta\":%.0f,\"ratio_ist\":%.2f,\"ratio_th\":%.2f,"
             "\"ladesperre\":%d,\"do4\":%d,"
-            "\"peak_h\":%d,\"win_end_h\":%d,\"noon_h\":%.2f,\"eta_h\":%.2f,"
+            "\"peak_h\":%d,\"win_end_h\":%d,\"noon_h\":%.2f,"
+            "\"exp_max\":%.1f,\"exp_max_h\":%.2f,"
             "\"auto\":%d,\"ext_st\":%d,\"conflict\":%d,"
             "\"trace\":\"%s\"}",
             id(dev_ip).c_str(), r.final_state, r.changed ? 1 : 0, in.pcc, in.bat1,
             in.soc2, in.soc1, in.ebox_w, r.excess, r.dc_expected, r.dc_delta,
             r.ratio, id(ladesperre_ratio),
             r.ladesperre ? 1 : 0, r.do4_pulse ? 1 : 0,
-            r.peak_h, r.win_end_h, r.noon_h, r.eta_h, auto_on ? 1 : 0, ext_st, conflict, r.trace);
+            r.peak_h, r.win_end_h, r.noon_h, r.exp_max, r.exp_max_h,
+            auto_on ? 1 : 0, ext_st, conflict, r.trace);
           id(mqtt_client).publish("sofar/state", js);
       - if:
           condition:

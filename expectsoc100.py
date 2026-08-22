@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # ═══════════════════════════════════════════════════════════════════════════
-# expectsoc100.py — Prognose, wann die EBox (30 kWh) heute 100 % SOC erreicht.
+# expectsoc100.py — Prognose des hoechsten heute erreichbaren EBox-SOC (30 kWh)
+# und der Uhrzeit dazu: "expect max xx % at hh:mm".
 #
 # Datenbasis (alles Trend, nichts geraten):
 #   - SOC + Ladeleistung: wagodb.pv_decision_log (version='waveshare', 60s-Takt,
@@ -95,23 +96,29 @@ def slope_per_h(rows):
 
 
 # ── Prognose ────────────────────────────────────────────────────────────────
-def eta(dc, now, need_kwh, clearness, pmax_w):
-    """Minutenweise Integration bis need_kwh geladen sind.
-    Rueckgabe (Zeitpunkt|None, geladene kWh bis END_HOUR)."""
-    e = 0.0
-    t = now
-    end = now.replace(hour=END_HOUR, minute=0)
+def predict_max(dc, now, soc, target, k, clearness, pmax_w):
+    """Minutenweise Integration bis Tagesende (bzw. bis target erreicht ist).
+    Rueckgabe (exp_max in %, Uhrzeit dazu, geladene kWh).
+    Wird target erreicht, ist die Uhrzeit der Zeitpunkt dafuer; sonst der
+    letzte Zeitpunkt mit Ertrag — danach steigt der SOC heute nicht mehr."""
+    need = max(0.0, target - soc) * k
+    e    = 0.0
+    t    = now
+    last = now                      # letzter Zeitpunkt mit Ertrag
+    end  = now.replace(hour=END_HOUR, minute=0)
     while t < end:
         p = max(0.0, min(pmax_w, clearsky_w(dc, t) * clearness - LOAD_W))
-        e += p / 60 / 1000
-        if e >= need_kwh:
-            return t, e
         t += dt.timedelta(minutes=1)
-    return None, e
+        if p > 0:
+            e += p / 60 / 1000
+            last = t
+        if e >= need:
+            return target, t, e
+    return min(target, soc + e / k), last, e
 
 
 def main():
-    ap = argparse.ArgumentParser(description='Prognose EBox-SOC 100 %')
+    ap = argparse.ArgumentParser(description='Prognose: hoechster heute erwarteter EBox-SOC')
     ap.add_argument('--window', type=int, default=20, help='Messfenster in Minuten (Default 20)')
     ap.add_argument('--target', type=float, default=100.0, help='Ziel-SOC in %% (Default 100)')
     ap.add_argument('--pmax',   type=float, default=None, help='Ladedeckel in W (Default: Tagesmaximum)')
@@ -154,15 +161,15 @@ def main():
            'fenster_min': args.window}
 
     if need <= 0:
-        res['eta'] = 'bereits erreicht'
+        res['exp_max'], res['exp_max_h'] = soc, now.strftime('%H:%M')
+        res['erreichbar'] = True
         szenarien = []
     else:
-        t_now, e_now = eta(dc, now, need, clearness, pmax)
-        # 0:00 = heute nicht erreichbar — gleiche Konvention wie eta_h im ESP-JSON
-        res['eta'] = t_now.strftime('%H:%M') if t_now else '00:00'
-        res['erreichbar'] = bool(t_now)
-        res['rest_kwh_bis_21h'] = round(e_now, 1)
-        res['soc_bis_21h'] = round(min(args.target, soc + e_now / k), 1)
+        m_now, t_now, e_now = predict_max(dc, now, soc, args.target, k, clearness, pmax)
+        res['exp_max']   = round(m_now, 1)
+        res['exp_max_h'] = t_now.strftime('%H:%M')
+        res['erreichbar'] = m_now >= args.target
+        res['rest_kwh'] = round(e_now, 1)
         # Bandbreite: nicht nur das Wetter, auch die tatsaechlich ankommende
         # Ladeleistung variieren — bei klarem Himmel deckelt sonst allein pmax
         # und alle Szenarien fallen auf dieselbe Uhrzeit zusammen.
@@ -170,11 +177,10 @@ def main():
         for cl, pm, lab in ((min(1.0, clearness * 1.2), PMAX_W,       'optimistisch (Stufe 7 voll)'),
                             (clearness,                 pmax,          'Trend haelt'),
                             (clearness * 0.5,           ebox_avg * 0.7, 'Wolken wie am Vormittag')):
-            t_s, e_s = eta(dc, now, need, cl, pm)
+            m_s, t_s, _ = predict_max(dc, now, soc, args.target, k, cl, pm)
             szenarien.append({'fall': lab, 'clearness': round(cl, 2),
-                              'pmax_w': round(pm),
-                              'eta': t_s.strftime('%H:%M') if t_s else '00:00',
-                              'soc_bis_21h': round(min(args.target, soc + e_s / k), 1)})
+                              'pmax_w': round(pm), 'exp_max': round(m_s, 1),
+                              'exp_max_h': t_s.strftime('%H:%M')})
         res['szenarien'] = szenarien
 
     if args.json:
@@ -189,16 +195,12 @@ def main():
     if need <= 0:
         print("Ziel-SOC bereits erreicht.")
         return
-    if res.get('erreichbar'):
-        print(f"\n→ {args.target:.0f} % voraussichtlich um {res['eta']} Uhr")
-    else:
-        print(f"\n→ heute nicht mehr voll — bis {END_HOUR}:00 nur +{res['rest_kwh_bis_21h']:.1f} kWh "
-              f"→ ~{res['soc_bis_21h']:.0f} %")
+    print(f"\n→ erwartetes Maximum {res['exp_max']:.0f} % um {res['exp_max_h']} Uhr"
+          + ("" if res['erreichbar'] else "  (Ziel heute nicht erreichbar)"))
     print("\nBandbreite:")
     for s in szenarien:
-        ziel = f"{s['eta']} Uhr" if s['eta'] != '00:00' else f"nicht voll (~{s['soc_bis_21h']:.0f} %)"
         print(f"  {s['fall']:27s} clearness {s['clearness']:.2f}, "
-              f"{s['pmax_w']/1000:4.1f} kW → {ziel}")
+              f"{s['pmax_w']/1000:4.1f} kW → {s['exp_max']:5.1f} % um {s['exp_max_h']}")
 
 
 if __name__ == '__main__':

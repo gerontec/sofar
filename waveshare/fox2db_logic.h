@@ -175,8 +175,9 @@ struct State {
   float ebox_ema  = -1.0f;          // Ladeleistung, EMA ueber ETA_WIN
   float clear_ema = -1.0f;          // Bewoelkung (1-ratio), EMA ueber ETA_WIN
   float ebox_max_today = 0;         // Ladedeckel = Tagesmaximum der Ladeleistung
-  int   eta_tick  = 0;
-  float eta_cache = 0.0f;
+  int   eta_tick = 0;
+  float exp_max_cache   = -1.0f;    // Prognose-Cache zwischen den Neuberechnungen
+  float exp_max_h_cache = 0.0f;
 };
 
 // pcc_avg5 + bat1_avg5: 5-Min-Mittel aus pivot2db/MariaDB, nur für die Wetter-Ratio.
@@ -194,7 +195,8 @@ struct Result {
   int   peak_h = -1;    // lokale Stunde des DC-Peaks (-1 = kein Peak heute)
   int   win_end_h = -1; // letzte lokale Stunde mit dc > PCC_PEAK_TH
   float noon_h = -1.0f; // astronomischer lokaler Mittag (Dezimalstunde, Reporting)
-  float eta_h  = 0.0f;  // Prognose SOC 100 % (lokale Dezimalstunde; 0 = heute nicht erreichbar)
+  float exp_max   = -1.0f; // hoechster heute erwarteter SOC in % (-1 = nicht beurteilbar)
+  float exp_max_h = 0.0f;  // Uhrzeit dazu (lokale Dezimalstunde)
   char  trace[160] = "";
 };
 
@@ -268,17 +270,18 @@ inline int apply_blocking(int best, int relay_st, float pcc, float bat1, int sta
   *changed = true; return best;
 }
 
-// ── ETA: wann ist die EBox voll? (1:1 wie expectsoc100.py) ───────────────────
+// ── Prognose: hoechster heute erreichbarer SOC und wann (1:1 wie expectsoc100.py)
 // Ablauf je Zyklus: Fenster fortschreiben (ein Ringpuffer-Schreibzugriff und
 // zwei EMA-Schritte). Nur jeden ETA_EVERY-ten Zyklus wird integriert:
-//   need   = (100 - soc2) * kWh_pro_Prozent      kWh_pro_Prozent aus dem Fenster
-//   P(t)   = clamp(dc_now(t) * Bewoelkung - Grundlast, 0, Ladedeckel)
-//   ETA    = erster Zeitpunkt, an dem das Integral need erreicht
-// Rueckgabe: lokale Dezimalstunde; 0.00 (= 0:00 Uhr) heisst "heute nicht mehr
-// erreichbar oder nicht beurteilbar" — als echte Prognose kann 0:00 nie auftreten,
-// weil nur von jetzt bis ETA_END_H integriert wird.
-inline float eta_soc100_h(State &st, const Inputs &in, const Result &r,
-                          time_t now_utc, int local_sec_day, int month) {
+//   P(t)     = clamp(dc_now(t) * Bewoelkung - Grundlast, 0, Ladedeckel)
+//   soc(t)   = soc2 + Integral(P) / kWh_pro_Prozent   (aus dem Messfenster)
+//   exp_max  = min(100, soc(Tagesende)),  exp_max_h = wann dieses Maximum steht
+// Wird 100 % erreicht, ist exp_max_h die Uhrzeit dafuer; sonst die Uhrzeit, zu
+// der der letzte Ertrag hereinkommt (Baumlinie/Sonnenuntergang) — danach steigt
+// der SOC heute nicht mehr. exp_max = -1 heisst "nicht beurteilbar" (Nacht,
+// SOC unbekannt, noch keine Bewoelkungsschaetzung).
+inline void predict_max_soc(State &st, const Inputs &in, Result &r,
+                            time_t now_utc, int local_sec_day, int month) {
   // Fenster fortschreiben — billig, laeuft jeden Zyklus.
   st.soc_hist[st.soc_i] = in.soc2;
   st.soc_i = (st.soc_i + 1) % ETA_WIN;
@@ -292,40 +295,55 @@ inline float eta_soc100_h(State &st, const Inputs &in, const Result &r,
   }
   if (in.ebox_w > st.ebox_max_today) st.ebox_max_today = in.ebox_w;
 
-  if (--st.eta_tick > 0) return st.eta_cache;  // dazwischen: Cache, keine Rechnung
+  if (--st.eta_tick > 0) {                     // dazwischen: Cache, keine Rechnung
+    r.exp_max = st.exp_max_cache; r.exp_max_h = st.exp_max_h_cache; return;
+  }
   st.eta_tick = ETA_EVERY;
-  st.eta_cache = 0.0f;                         // 0:00 = nicht erreichbar
+  st.exp_max_cache = -1.0f; st.exp_max_h_cache = 0.0f;   // -1 = nicht beurteilbar
+  const float now_h = (float)local_sec_day / 3600.0f;
 
-  if (in.soc2 < 0 || in.soc2 >= MAX_SOC) return st.eta_cache;   // unbekannt/voll
-  if (r.dc_expected <= 0 || st.clear_ema <= 0.02f) return st.eta_cache;  // Nacht
+  if (in.soc2 >= MAX_SOC) {                    // schon voll: Maximum steht jetzt
+    st.exp_max_cache = MAX_SOC; st.exp_max_h_cache = now_h;
+  } else if (in.soc2 >= 0 && r.dc_expected > 0 && st.clear_ema > 0.02f) {
+    // kWh je Prozent aus dem Messfenster; nur uebernehmen wenn plausibel.
+    float k = ETA_K_DEF;
+    if (st.soc_n >= ETA_MIN_N) {
+      int oldest = (st.soc_i + ETA_WIN - st.soc_n) % ETA_WIN;
+      float d_soc_h = (in.soc2 - st.soc_hist[oldest]) * 60.0f / (float)(st.soc_n - 1);
+      if (d_soc_h > 0.5f && st.ebox_ema > 200.0f) {
+        float k_meas = (st.ebox_ema / 1000.0f) / d_soc_h;
+        if (k_meas >= ETA_K_MIN && k_meas <= ETA_K_MAX) k = k_meas;
+      }
+    }
+    float need = (MAX_SOC - in.soc2) * k;                                // kWh
+    float pmax = (st.ebox_max_today > 1000.0f) ? st.ebox_max_today
+                                               : (float)state_power(7);  // Deckel
 
-  // kWh je Prozent aus dem Messfenster; nur uebernehmen wenn plausibel.
-  float k = ETA_K_DEF;
-  if (st.soc_n >= ETA_MIN_N) {
-    int oldest = (st.soc_i + ETA_WIN - st.soc_n) % ETA_WIN;
-    float d_soc_h = (in.soc2 - st.soc_hist[oldest]) * 60.0f / (float)(st.soc_n - 1);
-    if (d_soc_h > 0.5f && st.ebox_ema > 200.0f) {
-      float k_meas = (st.ebox_ema / 1000.0f) / d_soc_h;
-      if (k_meas >= ETA_K_MIN && k_meas <= ETA_K_MAX) k = k_meas;
+    // Restertrag in ETA_STEP_S-Schritten aufintegrieren.
+    int    sec  = local_sec_day;
+    time_t t    = now_utc;
+    float  e    = 0.0f;
+    float  last = now_h;                       // letzter Zeitpunkt mit Ertrag
+    const int end_sec = ETA_END_H * 3600;
+    while (sec < end_sec) {
+      float p = (float)dc_now(t, month) * st.clear_ema - ETA_LOAD_W;
+      p = fmaxf(0.0f, fminf(pmax, p));
+      sec += ETA_STEP_S; t += ETA_STEP_S;
+      if (p > 0.0f) {
+        e += p * ((float)ETA_STEP_S / 3600.0f) / 1000.0f;
+        last = (float)sec / 3600.0f;
+      }
+      if (e >= need) {                         // 100 % erreicht → Uhrzeit dafuer
+        st.exp_max_cache = MAX_SOC; st.exp_max_h_cache = (float)sec / 3600.0f;
+        break;
+      }
+    }
+    if (st.exp_max_cache < 0) {                // 100 % heute nicht erreichbar
+      st.exp_max_cache   = fminf(MAX_SOC, in.soc2 + e / k);
+      st.exp_max_h_cache = last;
     }
   }
-  float need = (MAX_SOC - in.soc2) * k;                                  // kWh
-  float pmax = (st.ebox_max_today > 1000.0f) ? st.ebox_max_today
-                                             : (float)state_power(7);    // Deckel
-
-  // Restertrag in ETA_STEP_S-Schritten aufintegrieren.
-  int    sec = local_sec_day;
-  time_t t   = now_utc;
-  float  e   = 0.0f;
-  const int end_sec = ETA_END_H * 3600;
-  while (sec < end_sec) {
-    float p = (float)dc_now(t, month) * st.clear_ema - ETA_LOAD_W;
-    p = fmaxf(0.0f, fminf(pmax, p));
-    e += p * ((float)ETA_STEP_S / 3600.0f) / 1000.0f;
-    if (e >= need) { st.eta_cache = (float)sec / 3600.0f; break; }
-    sec += ETA_STEP_S; t += ETA_STEP_S;
-  }
-  return st.eta_cache;
+  r.exp_max = st.exp_max_cache; r.exp_max_h = st.exp_max_h_cache;
 }
 
 // ── Gesamt-Pipeline (entspricht main()) ──────────────────────────────────────
@@ -343,7 +361,7 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
     st.ebox_max_today = 0;                     // ETA-Trend faengt taeglich neu an
     st.soc_n = 0; st.soc_i = 0;
     st.ebox_ema = -1.0f; st.clear_ema = -1.0f;
-    st.eta_tick = 0; st.eta_cache = 0.0f;
+    st.eta_tick = 0; st.exp_max_cache = -1.0f; st.exp_max_h_cache = 0.0f;
   }
   r.dc_expected = dc_now(now_utc, month);
   // Temperatur-Derating nur bei gültiger, plausibler Außentemp; sonst unverändert.
@@ -436,7 +454,7 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
   r.final_state = final_state; r.changed = changed; r.excess = excess;
   r.dc_delta = r.dc_expected - (in.pcc + in.ebox_w + in.bat1);
   strncpy(r.trace, trace, 159); r.trace[159] = 0;
-  r.eta_h = eta_soc100_h(st, in, r, now_utc, local_sec_day, month);
+  predict_max_soc(st, in, r, now_utc, local_sec_day, month);
   return r;
 }
 
