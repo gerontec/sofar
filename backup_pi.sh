@@ -19,6 +19,14 @@
 # KEEP_DAYS heraus. Ein versehentliches rm auf dem Pi ist damit noch heilbar.
 set -u
 
+# Compiler-Ausgabe wird nicht gesichert: sie ist aus den Quellen wieder
+# herstellbar und machte auf .218 allein 1,9 GB der 2,3 GB aus (ESP-IDF/matter).
+# managed_components sind nachgeladene Fremdkomponenten (idf.py reconfigure
+# holt sie zurueck). Ohne --delete-excluded, damit rsync nichts ins Attic
+# schaufelt -- Altbestand wird einmalig von Hand entfernt.
+EXCLUDES=(--exclude=build/ --exclude=.pio/ --exclude=managed_components/
+          --exclude=__pycache__/ --exclude='*.pyc')
+
 LABEL=${1:?Aufruf: backup_pi.sh <label> <host> [fallback-host ...]}
 shift
 HOSTS="$@"
@@ -54,6 +62,7 @@ rc_all=0
 for d in $DIRS; do
     echo "=== $(date '+%F %T') $SRC_USER@$HOST:/home/pi/$d" >>"$LOG"
     rsync -a --delete --numeric-ids --human-readable --stats \
+          "${EXCLUDES[@]}" \
           --backup --backup-dir="$ATTIC/$d" \
           -e "$SSH" \
           "$SRC_USER@$HOST:/home/pi/$d/" "$DEST/$d/" >>"$LOG" 2>&1
