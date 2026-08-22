@@ -122,6 +122,7 @@ globals:
   - { id: in_bat1_avg5, type: float, restore_value: false, initial_value: '0' }  # 5-Min-Mittel bat1 (pivot2db) → nur Wetter-Ratio
   - { id: in_pcc_avg5,  type: float, restore_value: false, initial_value: '0' }  # 5-Min-Mittel pcc  (pivot2db) → nur Wetter-Ratio
   - { id: in_soc1,  type: float, restore_value: false, initial_value: '0' }
+  - { id: in_pcc_valid, type: bool, restore_value: false, initial_value: 'true' } # false = PCC kam als null
   - { id: in_soc2,  type: float, restore_value: false, initial_value: '-1' }   # -1 = unbekannt -> HOLD
   - { id: in_ebox,  type: float, restore_value: false, initial_value: '0' }
   - { id: in_pv,    type: float, restore_value: false, initial_value: '0' }   # gemessene Sofar-PV (Power_PV1+PV2, W) → Soyo is_night
@@ -132,6 +133,7 @@ globals:
   - { id: auto_enable,       type: bool, restore_value: false, initial_value: 'true' }
   - { id: ladesperre_enable, type: bool, restore_value: false, initial_value: 'true' }
   - { id: ladesperre_ratio,  type: float, restore_value: false, initial_value: '0.50' } # Gutwetter-Erkennung, Ratio mit geglättetem bat1_avg5 (MQTT: sofar/ratio)
+  - { id: do4_full_w,        type: float, restore_value: false, initial_value: '11000' } # DO4 erst ab dieser gemessenen EBox-Ladeleistung (MQTT: sofar/do4_full)
   - { id: bat1_charge_factor, type: float, restore_value: false, initial_value: '0.5' } # Anteil der Sofar-Ladung, der als EBox-Überschuss zählt (MQTT: sofar/bat1_factor, 0..1)
   - { id: do4_req,           type: bool, restore_value: false, initial_value: 'false' }
   - { id: g_peak_h,    type: int, restore_value: false, initial_value: '-1' }
@@ -351,8 +353,19 @@ mqtt:
               const char* p = strstr(s, k); if (!p) return d;
               p = strchr(p, ':'); if (!p) return d; return atof(p + 1);
             };
+            // null erkennen: atof("null") waere 0 und damit nicht von einem echten
+            // 0-W-PCC unterscheidbar. Der nackte Key steht laut pivot2db.py vor den
+            // avg-Keys, strstr trifft also den richtigen.
+            auto isnull = [](const char* s, const char* k) -> bool {
+              const char* p = strstr(s, k); if (!p) return true;
+              p = strchr(p, ':'); if (!p) return true;
+              p++; while (*p == ' ') p++;
+              return (*p == 'n' || *p == 'N');
+            };
             const char* raw = x.c_str();
-            // PCC-Lesefehler (null) → num() liefert 0 → neutraler PCC (kein Z2-Fallback mehr)
+            // PCC-Lesefehler (null) → in_pcc_valid=false → fox::step nimmt das
+            // 3-Min-Mittel der letzten gueltigen Werte statt der 0
+            id(in_pcc_valid) = !isnull(raw, "ActivePower_PCC_Total");
             id(in_pcc)  = num(raw, "ActivePower_PCC_Total", 0) * 1000.0f;
             id(in_bat1) = num(raw, "Power_Bat1", 0) * 1000.0f;
             id(in_bat1_avg5) = num(raw, "Power_Bat1_avg5", num(raw, "Power_Bat1", 0)) * 1000.0f;
@@ -419,6 +432,16 @@ mqtt:
             if (!p) p = x.c_str(); else { p = strchr(p, ':'); if (!p) return; p++; }
             float v = atof(p);
             if (v > 0.0f && v <= 1.0f) id(ladesperre_ratio) = v;
+
+    # ── DO4-Schwelle: gemessene EBox-Ladeleistung, ab der abgeregelt werden ──
+    #    darf (W). Darunter laeuft die Rampe noch, DO4 bleibt still.
+    - topic: sofar/do4_full
+      then:
+        - lambda: |-
+            const char* p = strstr(x.c_str(), "WATT"); if (!p) p = strchr(x.c_str(), ':');
+            if (!p) p = x.c_str(); else { p = strchr(p, ':'); if (!p) return; p++; }
+            float v = atof(p);
+            if (v >= 3000.0f && v <= 12000.0f) id(do4_full_w) = v;
 
     # ── Anteil der Sofar-Ladung als EBox-Überschuss (0..1), default 0.5 ──────
     - topic: sofar/bat1_factor
@@ -560,6 +583,7 @@ interval:
           // PCC: Inverter-Wert (Lesefehler null → 0 → neutral; kein Z2-Fallback mehr)
           in.pcc = id(in_pcc); in.bat1 = id(in_bat1); in.soc1 = id(in_soc1);
           in.soc2 = id(in_soc2); in.ebox_w = id(in_ebox);
+          in.pcc_valid = id(in_pcc_valid);
           in.bat1_avg5 = id(in_bat1_avg5); in.pcc_avg5 = id(in_pcc_avg5);
           // Außentemp nur durchreichen, wenn frisch (<15 min); sonst Fallback: ohne Temp
           if (id(in_aussen_ms) != 0 && (millis() - (uint32_t) id(in_aussen_ms)) < 900000UL) {
@@ -569,7 +593,8 @@ interval:
           int local_sec = t.hour * 3600 + t.minute * 60 + t.second;
           fox::Result r = fox::step(in, fox::g_state, (time_t) t.timestamp, local_sec,
                                     t.month, t.hour, t.day_of_year, id(ladesperre_enable),
-                                    id(ladesperre_ratio), id(bat1_charge_factor));
+                                    id(ladesperre_ratio), id(bat1_charge_factor),
+                                    id(do4_full_w));
 
           bool auto_on = id(auto_enable);
           if (auto_on) {

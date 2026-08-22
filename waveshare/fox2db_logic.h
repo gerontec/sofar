@@ -24,6 +24,8 @@ constexpr float MAX_GRID_DRAW    = 900.0f;
 constexpr float MAX_SOC          = 100.0f;
 constexpr float HYSTERESIS       = 505.0f;
 constexpr int   STABILIZATION    = 2;
+constexpr int   PCC_AVG_N        = 3;         // Ringpuffer fuer den PCC-Ersatzwert (3 Min)
+constexpr float RAMP_FREE_FACTOR = 1.3f;      // Ueberschuss >= Zielstufe * Faktor -> Rampe entfaellt
 constexpr float EMERGENCY_MARGIN = 120.0f;                          // harter Abwurf erst bei G + Margin
 constexpr float EMERGENCY_IMPORT = MAX_GRID_DRAW + EMERGENCY_MARGIN; // = 1020 W (an G gekoppelt)
 constexpr float BAT_DISCHARGE_TH = -110.0f;
@@ -34,7 +36,9 @@ constexpr int   DD_LOWER         = 6;
 constexpr int   DD_UPPER         = 8;
 constexpr int   DD_CHARGE_TARGET = 7;
 constexpr float PCC_PEAK_TH      = 20000.0f;
-constexpr float PCC_HARD_TH      = 22000.0f;  // bedingungsloser DO4-Trigger
+constexpr float PCC_HARD_TH      = 22000.0f;  // (nicht mehr im DO4-Pfad, s. need_down)
+constexpr float DO4_EBOX_FULL_W  = 11000.0f;  // ab hier laedt die EBox wirklich voll
+                                              // (Default; per MQTT sofar/do4_full setzbar)
 // Ladesperre nur im Sommerhalbjahr. Ausserhalb wird ausschliesslich ueber DO4
 // abgeregelt (>20 kW), der Akku laedt sofort. Harte Schranke, damit die Sperre
 // nicht ueber geaenderte Feldleistungen wieder in Fruehjahr/Herbst rutscht.
@@ -175,6 +179,8 @@ struct State {
   float ebox_ema  = -1.0f;          // Ladeleistung, EMA ueber ETA_WIN
   float clear_ema = -1.0f;          // Bewoelkung (1-ratio), EMA ueber ETA_WIN
   float ebox_max_today = 0;         // Ladedeckel = Tagesmaximum der Ladeleistung
+  float pcc3_buf[PCC_AVG_N] = {0};  // PCC-Ringpuffer fuer das 3-Min-Mittel
+  int   pcc3_n = 0, pcc3_i = 0;
   int   eta_tick = 0;
   float exp_max_cache   = -1.0f;    // Prognose-Cache zwischen den Neuberechnungen
   float exp_max_h_cache = 0.0f;
@@ -183,7 +189,8 @@ struct State {
 // pcc_avg5 + bat1_avg5: 5-Min-Mittel aus pivot2db/MariaDB, nur für die Wetter-Ratio.
 // Beide über dasselbe Fenster gemittelt → Akku-voll-Sprung (bat1→pcc) ist neutral.
 struct Inputs { float pcc, bat1, soc1, soc2, ebox_w, bat1_avg5, pcc_avg5;
-                float aussen_temp = 0; bool aussen_valid = false; };
+                float aussen_temp = 0; bool aussen_valid = false;
+                bool  pcc_valid = true; };   // false = PCC kam als null (Lesefehler)
 
 struct Result {
   int   final_state = 0;
@@ -203,19 +210,29 @@ struct Result {
 inline void tcat(char *t, const char *s) { strncat(t, s, 159 - strlen(t)); }
 
 // ── decide() ─────────────────────────────────────────────────────────────────
-inline int decide(const Inputs &in, int relay_st, bool prot, float bat1_factor, char *trace, float *excess_out) {
+// pcc_excess = normalerweise der gueltige Minutenwert der Sofar (in.pcc). Nur
+// wenn der PCC als null hereinkommt (Lesefehler, in.pcc_valid == false), tritt
+// das 3-Min-Mittel der letzten gueltigen Werte an seine Stelle — statt der 0,
+// die num() aus einem null macht. Gemittelt wird also nicht geglaettet: ein
+// echter Einbruch schlaegt weiter sofort durch, sonst wird waehrend einer Wolke
+// aus dem Netz geladen.
+inline int decide(const Inputs &in, int relay_st, bool prot, float bat1_factor,
+                  float pcc_excess, char *trace, float *excess_out) {
   float ebox_eff = (relay_st > 0) ? fmaxf(in.ebox_w, (float)state_power(relay_st)) : 0.0f;
   // Sofar-Entladung (bat1<0) zählt voll; von der Sofar-Ladung (bat1>0) nur der Anteil bat1_factor.
   float bat1_eff = (in.bat1 < 0.0f) ? in.bat1 : in.bat1 * bat1_factor;
-  float excess = in.pcc + ebox_eff + bat1_eff;
+  float excess = pcc_excess + ebox_eff + bat1_eff;
   if (in.soc2 < 0) {
     float ea = (relay_st > 0) ? in.ebox_w : 0.0f;
-    *excess_out = in.pcc + ea + bat1_eff;
+    *excess_out = pcc_excess + ea + bat1_eff;
     strcpy(trace, "EBOX_SOC_UNKNOWN_HOLD");
     return relay_st;
   }
+  // DO4-Gefahr: sofort auf Stufe 7. Stufenweises Hochrampen kostet Minuten, in
+  // denen die Einspeisung ueber 20 kW bleibt und DO4 den WR2 abwirft — die volle
+  // Aufnahme ist immer billiger als die Abregelung.
   if (in.pcc > PCC_PEAK_TH && in.soc2 < MAX_SOC) {
-    int next_st = relay_st + 1; if (next_st == 2) next_st = 3; if (next_st > 7) next_st = 7;
+    int next_st = 7;
     if (next_st > relay_st) {
       snprintf(trace, 80, "PCC_OVER_20KW (SOC=%.0f%% State%d->%d)", in.soc2, relay_st, next_st);
       *excess_out = excess; return next_st;
@@ -233,7 +250,13 @@ inline int decide(const Inputs &in, int relay_st, bool prot, float bat1_factor, 
   int best = 0, best_pow = -1;
   for (int s = 0; s <= 7; s++) { if (s == 2) continue; int p = state_power(s); if (p <= budget && p > best_pow) { best = s; best_pow = p; } }
   snprintf(trace, 120, "POWER_MATCHING (Excess: %.0fW, Budget: %.0fW)", excess, budget);
-  if (best > relay_st) {                       // Ramp-Limiting (State-Nr.-Vergleich, wie Python)
+  // Rampe nur, wenn der Ueberschuss die Zielstufe nicht klar traegt. Sie schuetzt
+  // vor Netzbezug bei knappem Ueberschuss — bei 19 kW Sonne und 11,4 kW Zielstufe
+  // gibt es nichts abzutasten, dann kostet jeder Zwischenschritt nur Ertrag.
+  if (best > relay_st && excess >= (float)state_power(best) * RAMP_FREE_FACTOR) {
+    char tmp[56]; snprintf(tmp, sizeof(tmp), " | RAMP_FREE (%.0fW traegt State%d)", excess, best);
+    tcat(trace, tmp);
+  } else if (best > relay_st) {                // Ramp-Limiting (State-Nr.-Vergleich, wie Python)
     int idx = sorted_index(relay_st);
     int next_st = SORTED_STATES[(idx + 1 < N_SORTED) ? idx + 1 : N_SORTED - 1];
     if (best > next_st) {
@@ -245,9 +268,18 @@ inline int decide(const Inputs &in, int relay_st, bool prot, float bat1_factor, 
 }
 
 // ── apply_guards() — feuert -> Blocking wird übersprungen ────────────────────
-inline int apply_guards(int best, float soc2, bool ladesperre, char *trace, bool *guard_fired) {
-  if (ladesperre) { if (best != 0) tcat(trace, " | GUARD:CHARGE_BLOCK_UNTIL_PCC_20KW"); *guard_fired = true; return 0; }
+inline int apply_guards(int best, float soc2, float pcc, bool ladesperre, char *trace, bool *guard_fired) {
+  // Reihenfolge: volle Batterie schlaegt alles (sie kann nichts mehr aufnehmen,
+  // dann muss DO4 ran). Danach die DO4-Gefahr — sie schlaegt Ladesperre und
+  // Tiefentladeschutz, weil beide durch Laden erfuellt statt verletzt werden,
+  // und sie muss am Ramp-/Stabilize-Blocking vorbei: genau das hat bisher den
+  // Hochlauf verzoegert (Trace "PCC_OVER_20KW ... | STABILIZING").
   if (soc2 >= MAX_SOC) { if (best != 0) tcat(trace, " | GUARD:BATTERY_FULL_STOP"); *guard_fired = true; return 0; }
+  if (soc2 >= 0 && pcc > PCC_PEAK_TH) {
+    if (best != 7) tcat(trace, " | GUARD:DO4_RISK_FORCE_STATE7");
+    *guard_fired = true; return 7;
+  }
+  if (ladesperre) { if (best != 0) tcat(trace, " | GUARD:CHARGE_BLOCK_UNTIL_PCC_20KW"); *guard_fired = true; return 0; }
   if (soc2 >= 0 && soc2 < DD_LOWER) { if (best != 1) tcat(trace, " | GUARD:CRITICAL_SOC_PROTECTION_ACTIVATE"); *guard_fired = true; return 1; }
   *guard_fired = false; return best;
 }
@@ -265,7 +297,10 @@ inline int apply_blocking(int best, int relay_st, float pcc, float bat1, int sta
   if (up && fabsf(pcc) < SWEET_SPOT_PCC)                        { tcat(trace, " | SWEET_SPOT_HOLD"); *changed = false; return relay_st; }
   if (up && drop_rate < MAX_DROP_RATE && drop_rate != 0)         { tcat(trace, " | TREND_BLOCK");     *changed = false; return relay_st; }
   if (up && bat1 < BAT_DISCHARGE_TH)                            { tcat(trace, " | BAT_GUARD_BLOCK"); *changed = false; return relay_st; }
-  if (stable < STABILIZATION)                                  { tcat(trace, " | STABILIZING");     *changed = false; return relay_st; }
+  // STABILIZING daempft Pendeln zwischen Nachbarstufen und gilt nur abwaerts —
+  // aufwaerts haelt es sonst 11 kW zurueck, waehrend 19 kW Ueberschuss anstehen.
+  // (fox2dbEasy.py hatte hier schon immer "not up"; der Header war strenger.)
+  if (!up && stable < STABILIZATION)                           { tcat(trace, " | STABILIZING");     *changed = false; return relay_st; }
   if (!up && pwr_diff < HYSTERESIS)                            { tcat(trace, " | HYSTERESIS");      *changed = false; return relay_st; }
   *changed = true; return best;
 }
@@ -298,7 +333,6 @@ inline void predict_max_soc(State &st, const Inputs &in, Result &r,
   if (--st.eta_tick > 0) {                     // dazwischen: Cache, keine Rechnung
     r.exp_max = st.exp_max_cache; r.exp_max_h = st.exp_max_h_cache; return;
   }
-  st.eta_tick = ETA_EVERY;
   st.exp_max_cache = -1.0f; st.exp_max_h_cache = 0.0f;   // -1 = nicht beurteilbar
   const float now_h = (float)local_sec_day / 3600.0f;
 
@@ -343,6 +377,10 @@ inline void predict_max_soc(State &st, const Inputs &in, Result &r,
       st.exp_max_h_cache = last;
     }
   }
+  // Ein "nicht beurteilbar" nicht ueber ETA_EVERY Zyklen festhalten: direkt nach
+  // Boot/OTA steht in_soc2 noch auf -1, der Cache wuerde die Prognose sonst fuenf
+  // Minuten blockieren. Der -1-Pfad bricht vor der Integration ab, kostet also nichts.
+  st.eta_tick = (st.exp_max_cache < 0.0f) ? 1 : ETA_EVERY;
   r.exp_max = st.exp_max_cache; r.exp_max_h = st.exp_max_h_cache;
 }
 
@@ -352,12 +390,14 @@ inline void predict_max_soc(State &st, const Inputs &in, Result &r,
 //  month, hour, yday: lokale Zeitfelder
 inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_day,
                    int month, int local_hour, int local_yday, bool ladesperre_enable,
-                   float ladesperre_ratio = 0.62f, float bat1_charge_factor = 0.5f) {
+                   float ladesperre_ratio = 0.62f, float bat1_charge_factor = 0.5f,
+                   float do4_ebox_full_w = DO4_EBOX_FULL_W) {
   Result r;
   if (local_yday != st.last_yday) {            // Mitternachts-Reset
     st.peak_today = false;
     st.ladesperre_latched = false;
     st.last_yday = local_yday;
+    st.pcc3_n = 0; st.pcc3_i = 0;              // PCC-Mittel faengt taeglich neu an
     st.ebox_max_today = 0;                     // ETA-Trend faengt taeglich neu an
     st.soc_n = 0; st.soc_i = 0;
     st.ebox_ema = -1.0f; st.clear_ema = -1.0f;
@@ -424,16 +464,34 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
   r.ladesperre = ladesperre;
 
   char trace[160]; float excess;
-  int best = decide(in, st.relay_st, st.prot, bat1_charge_factor, trace, &excess);
+  // Ringpuffer nur mit GUELTIGEN PCC-Werten fuellen — ein null darf den
+  // Ersatzwert nicht mit einer 0 verwaessern.
+  float pcc_use = in.pcc;
+  if (in.pcc_valid) {
+    st.pcc3_buf[st.pcc3_i] = in.pcc;
+    st.pcc3_i = (st.pcc3_i + 1) % PCC_AVG_N;
+    if (st.pcc3_n < PCC_AVG_N) st.pcc3_n++;
+  } else if (st.pcc3_n > 0) {                  // null → Mittel der letzten gueltigen
+    float sum = 0.0f;
+    for (int i = 0; i < st.pcc3_n; i++) sum += st.pcc3_buf[i];
+    pcc_use = sum / (float)st.pcc3_n;
+  }
+
+  int best = decide(in, st.relay_st, st.prot, bat1_charge_factor, pcc_use, trace, &excess);
+  if (!in.pcc_valid) {                         // im Trace sichtbar machen
+    char t[40]; snprintf(t, sizeof(t), " | PCC_NULL_AVG3 (%.0fW)", pcc_use);
+    tcat(trace, t);
+  }
   bool guard_fired = false;
-  best = apply_guards(best, in.soc2, ladesperre, trace, &guard_fired);
+  best = apply_guards(best, in.soc2, in.pcc, ladesperre, trace, &guard_fired);
 
   float drop_rate = (st.last_excess > 0) ? (excess - st.last_excess) / 30.0f : 0.0f;
   st.last_excess = excess;
 
   int final_state; bool changed;
   if (guard_fired) { final_state = best; changed = (best != st.relay_st); }   // Schutz unbypassbar
-  else final_state = apply_blocking(best, st.relay_st, in.pcc, in.bat1, st.stable, drop_rate, trace, &changed);
+  else final_state = apply_blocking(best, st.relay_st, in.pcc, in.bat1, st.stable,
+                                    drop_rate, trace, &changed);
 
   st.stable = changed ? 0 : st.stable + 1;
 
@@ -442,12 +500,18 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
     else if (in.soc2 >= DD_UPPER) st.prot = false;
   }
 
-  // DO4: ueber 22 kW bedingungslos. Zwischen 20 und 22 kW nur, wenn die EBox die
-  // Leistung nicht aufnehmen konnte (Speicher voll oder schon Stufe 7) -- Laden
-  // hat Vorrang. Kein ladesperre-Term noetig: ueber 20 kW hat peak_today oben
-  // bereits gegriffen, die Sperre ist in derselben Minute aufgehoben.
-  bool need_down = (in.pcc > PCC_HARD_TH) ||
-                   ((in.pcc > PCC_PEAK_TH) && strncmp(trace, "PCC_OVER_20KW", 13) != 0);
+  // DO4 haengt an der GEMESSENEN Aufnahme, nicht mehr am Trace-Text und nicht an
+  // der 22-kW-Schwelle: abgeregelt wird nur, wenn die EBox nachweislich nichts
+  // mehr aufnehmen kann. Solange die Laderampe die volle Last noch nicht erreicht
+  // hat, waere der Puls verfrueht — die Aufnahme ist im Anmarsch, und WR2
+  // abzuwerfen kostet echten Ertrag.
+  //   ebox_w >= do4_ebox_full_w -> Stufe 7 steht wirklich an, mehr geht nicht
+  //   soc2 >= MAX_SOC           -> Speicher voll, die EBox kann grundsaetzlich nicht
+  // Alles dazwischen (Rampe laeuft, Relais gerade zu, Messung noch niedrig) haelt
+  // DO4 zurueck.
+  bool ebox_at_max = (in.ebox_w >= do4_ebox_full_w);
+  bool ebox_dead   = (in.soc2 >= MAX_SOC);
+  bool need_down   = (in.pcc > PCC_PEAK_TH) && (ebox_at_max || ebox_dead);
   r.do4_pulse = need_down;
 
   st.relay_st = final_state;

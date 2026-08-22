@@ -40,6 +40,8 @@ MAX_GRID_DRAW    = 900.0
 MAX_SOC          = 100.0
 HYSTERESIS       = 505.0
 STABILIZATION    = 2
+PCC_AVG_N        = 3           # Ueberschuss auf 3-Min-Mittel (60-s-Zyklus)
+RAMP_FREE_FACTOR = 1.3         # Ueberschuss >= Zielstufe * Faktor -> Rampe entfaellt
 EMERGENCY_MARGIN = 120.0                          # harter Abwurf erst bei G + Margin
 EMERGENCY_IMPORT = MAX_GRID_DRAW + EMERGENCY_MARGIN   # = 1020.0 (an G gekoppelt)
 BAT_DISCHARGE_TH = -110.0
@@ -51,7 +53,8 @@ DD_LOWER         = 6
 DD_UPPER         = 8
 DD_CHARGE_TARGET = 7
 PCC_PEAK_TH      = 20000.0
-PCC_HARD_TH      = 22000.0     # bedingungsloser DO4-Trigger
+PCC_HARD_TH      = 22000.0     # (nicht mehr im DO4-Pfad, s. need_down)
+DO4_EBOX_FULL_W  = 11000.0     # ab hier laedt die EBox wirklich voll
 LADESPERRE_MONTH_FROM = 5      # Mai; ausserhalb Mai-August keine
 LADESPERRE_MONTH_TO   = 8      # August; Ladesperre, nur DO4 >20 kW
 
@@ -173,6 +176,9 @@ class State:
         self.peak_today  = False          # pcc hat heute PCC_PEAK_TH überschritten
         self.ladesperre_latched = False   # Ladesperre-Latch (Hysterese gegen Flattern)
         self.last_yday   = -1
+        self.pcc3_buf    = [0.0] * PCC_AVG_N   # PCC-Ringpuffer fuer das 3-Min-Mittel
+        self.pcc3_n      = 0
+        self.pcc3_i      = 0
         self.pcc_buf     = [0.0] * 10
         self.pcc_n       = 0
         self.pcc_i       = 0
@@ -194,6 +200,10 @@ def load_state() -> State:
     st.pcc_buf     = (buf + [0.0] * 10)[:10]
     st.pcc_n       = int(d.get('pcc_n', 0))
     st.pcc_i       = int(d.get('pcc_i', 0))
+    buf3           = [float(x) for x in d.get('pcc3_buf', [])]
+    st.pcc3_buf    = (buf3 + [0.0] * PCC_AVG_N)[:PCC_AVG_N]
+    st.pcc3_n      = int(d.get('pcc3_n', 0))
+    st.pcc3_i      = int(d.get('pcc3_i', 0))
     return st
 
 def save_state(st: State):
@@ -202,11 +212,13 @@ def save_state(st: State):
         'prot': st.prot, 'peak_today': st.peak_today, 'last_yday': st.last_yday,
         'ladesperre_latched': st.ladesperre_latched,
         'pcc_buf': st.pcc_buf, 'pcc_n': st.pcc_n, 'pcc_i': st.pcc_i,
+        'pcc3_buf': st.pcc3_buf, 'pcc3_n': st.pcc3_n, 'pcc3_i': st.pcc3_i,
     }))
 
 class Inputs:
-    def __init__(self, pcc, bat1, soc1, soc2, ebox_w):
+    def __init__(self, pcc, bat1, soc1, soc2, ebox_w, pcc_valid=True):
         self.pcc, self.bat1, self.soc1, self.soc2, self.ebox_w = pcc, bat1, soc1, soc2, ebox_w
+        self.pcc_valid = pcc_valid            # False = PCC kam als null (Lesefehler)
 
 class Result:
     def __init__(self):
@@ -344,20 +356,27 @@ def fetch_ebox() -> Tuple[float, float]:
 #                         ENTSCHEIDUNGSLOGIK (1:1 aus fox2db_logic.h)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def decide(in_: Inputs, relay_st: int, prot: bool) -> Tuple[int, str, float]:
+# pcc_excess = normalerweise der gueltige Minutenwert der Sofar (in_.pcc). Nur
+# wenn der PCC als null hereinkommt (Lesefehler, in_.pcc_valid == False), tritt
+# das 3-Min-Mittel der letzten gueltigen Werte an seine Stelle — statt der 0.
+# Gemittelt wird also nicht geglaettet: ein echter Einbruch schlaegt weiter
+# sofort durch, sonst wird waehrend einer Wolke aus dem Netz geladen.
+def decide(in_: Inputs, relay_st: int, prot: bool,
+           pcc_excess: float) -> Tuple[int, str, float]:
     ebox_eff = max(in_.ebox_w, float(state_power(relay_st))) if relay_st > 0 else 0.0
     # Sofar-Entladung (bat1<0) voll; von der Sofar-Ladung (bat1>0) nur der Anteil BAT1_CHARGE_FACTOR
     bat1_eff = in_.bat1 if in_.bat1 < 0 else in_.bat1 * BAT1_CHARGE_FACTOR
-    excess = in_.pcc + ebox_eff + bat1_eff
+    excess = pcc_excess + ebox_eff + bat1_eff
 
     if in_.soc2 < 0:
         ea = in_.ebox_w if relay_st > 0 else 0.0
-        return relay_st, "EBOX_SOC_UNKNOWN_HOLD", in_.pcc + ea + bat1_eff
+        return relay_st, "EBOX_SOC_UNKNOWN_HOLD", pcc_excess + ea + bat1_eff
 
+    # DO4-Gefahr: sofort auf Stufe 7. Stufenweises Hochrampen kostet Minuten, in
+    # denen die Einspeisung ueber 20 kW bleibt und DO4 den WR2 abwirft — die volle
+    # Aufnahme ist immer billiger als die Abregelung.
     if in_.pcc > PCC_PEAK_TH and in_.soc2 < MAX_SOC:
-        next_st = min(relay_st + 1, 7)
-        if next_st == 2:
-            next_st = 3
+        next_st = 7
         if next_st > relay_st:
             return next_st, f"PCC_OVER_20KW (SOC={in_.soc2:.0f}% State{relay_st}->{next_st})", excess
 
@@ -378,7 +397,12 @@ def decide(in_: Inputs, relay_st: int, prot: bool) -> Tuple[int, str, float]:
             best, best_pow = s, p
     trace = f"POWER_MATCHING (Excess: {excess:.0f}W, Budget: {budget:.0f}W)"
 
-    if best > relay_st:                       # Ramp-Limiting (State-Nr.-Vergleich)
+    # Rampe nur, wenn der Ueberschuss die Zielstufe nicht klar traegt. Sie schuetzt
+    # vor Netzbezug bei knappem Ueberschuss — bei 19 kW Sonne und 11,4 kW Zielstufe
+    # gibt es nichts abzutasten, dann kostet jeder Zwischenschritt nur Ertrag.
+    if best > relay_st and excess >= state_power(best) * RAMP_FREE_FACTOR:
+        trace += f" | RAMP_FREE ({excess:.0f}W traegt State{best})"
+    elif best > relay_st:                     # Ramp-Limiting (State-Nr.-Vergleich)
         idx = sorted_index(relay_st)
         next_st = SORTED_STATES[idx + 1 if idx + 1 < len(SORTED_STATES) else len(SORTED_STATES) - 1]
         if best > next_st:
@@ -388,14 +412,24 @@ def decide(in_: Inputs, relay_st: int, prot: bool) -> Tuple[int, str, float]:
     return best, trace, excess
 
 
-def apply_guards(best: int, soc2: float, ladesperre: bool, trace: str) -> Tuple[int, bool, str]:
-    if ladesperre:
-        if best != 0:
-            trace += " | GUARD:LADESPERRE_BIS_PCC_20KW"
-        return 0, True, trace
+def apply_guards(best: int, soc2: float, pcc: float, ladesperre: bool,
+                 trace: str) -> Tuple[int, bool, str]:
+    # Reihenfolge: volle Batterie schlaegt alles (sie kann nichts mehr aufnehmen,
+    # dann muss DO4 ran). Danach die DO4-Gefahr — sie schlaegt Ladesperre und
+    # Tiefentladeschutz, weil beide durch Laden erfuellt statt verletzt werden,
+    # und sie muss am Ramp-/Stabilize-Blocking vorbei: genau das hat bisher den
+    # Hochlauf verzoegert (Trace "PCC_OVER_20KW ... | STABILIZING").
     if soc2 >= MAX_SOC:
         if best != 0:
             trace += " | GUARD:BATTERY_FULL_STOP"
+        return 0, True, trace
+    if soc2 >= 0 and pcc > PCC_PEAK_TH:
+        if best != 7:
+            trace += " | GUARD:DO4_RISK_FORCE_STATE7"
+        return 7, True, trace
+    if ladesperre:
+        if best != 0:
+            trace += " | GUARD:LADESPERRE_BIS_PCC_20KW"
         return 0, True, trace
     if 0 <= soc2 < DD_LOWER:
         if best != 1:
@@ -437,6 +471,8 @@ def step(in_: Inputs, st: State, now_local: dt.datetime,
     if local_yday != st.last_yday:            # Mitternachts-Reset
         st.pcc_n = 0
         st.pcc_i = 0
+        st.pcc3_n = 0
+        st.pcc3_i = 0
         st.peak_today = False
         st.ladesperre_latched = False
         st.last_yday  = local_yday
@@ -489,8 +525,21 @@ def step(in_: Inputs, st: State, now_local: dt.datetime,
         ladesperre = in_window and st.ladesperre_latched
     r.ladesperre = ladesperre
 
-    best, trace, excess = decide(in_, st.relay_st, st.prot)
-    best, guard_fired, trace = apply_guards(best, in_.soc2, ladesperre, trace)
+    # Ringpuffer nur mit GUELTIGEN PCC-Werten fuellen — ein null darf den
+    # Ersatzwert nicht mit einer 0 verwaessern.
+    pcc_use = in_.pcc
+    if in_.pcc_valid:
+        st.pcc3_buf[st.pcc3_i] = in_.pcc
+        st.pcc3_i = (st.pcc3_i + 1) % PCC_AVG_N
+        if st.pcc3_n < PCC_AVG_N:
+            st.pcc3_n += 1
+    elif st.pcc3_n > 0:                        # null → Mittel der letzten gueltigen
+        pcc_use = sum(st.pcc3_buf[:st.pcc3_n]) / st.pcc3_n
+
+    best, trace, excess = decide(in_, st.relay_st, st.prot, pcc_use)
+    if not in_.pcc_valid:                      # im Trace sichtbar machen
+        trace += f" | PCC_NULL_AVG3 ({pcc_use:.0f}W)"
+    best, guard_fired, trace = apply_guards(best, in_.soc2, in_.pcc, ladesperre, trace)
 
     drop_rate = (excess - st.last_excess) / 30.0 if st.last_excess > 0 else 0.0
     st.last_excess = excess
@@ -510,12 +559,18 @@ def step(in_: Inputs, st: State, now_local: dt.datetime,
         elif in_.soc2 >= DD_UPPER:
             st.prot = False
 
-    # DO4: ueber 22 kW bedingungslos. Zwischen 20 und 22 kW nur, wenn die EBox die
-    # Leistung nicht aufnehmen konnte (Speicher voll oder schon Stufe 7) -- Laden
-    # hat Vorrang. Kein ladesperre-Term noetig: ueber 20 kW hat peak_today oben
-    # bereits gegriffen, die Sperre ist in derselben Minute aufgehoben.
-    need_down = (in_.pcc > PCC_HARD_TH) or \
-                ((in_.pcc > PCC_PEAK_TH) and not trace.startswith("PCC_OVER_20KW"))
+    # DO4 haengt an der GEMESSENEN Aufnahme, nicht mehr am Trace-Text und nicht an
+    # der 22-kW-Schwelle: abgeregelt wird nur, wenn die EBox nachweislich nichts
+    # mehr aufnehmen kann. Solange die Laderampe die volle Last noch nicht erreicht
+    # hat, waere der Puls verfrueht — die Aufnahme ist im Anmarsch, und WR2
+    # abzuwerfen kostet echten Ertrag.
+    #   ebox_w >= DO4_EBOX_FULL_W -> Stufe 7 steht wirklich an, mehr geht nicht
+    #   soc2 >= MAX_SOC           -> Speicher voll, die EBox kann grundsaetzlich nicht
+    # Alles dazwischen (Rampe laeuft, Relais gerade zu, Messung noch niedrig) haelt
+    # DO4 zurueck.
+    ebox_at_max = in_.ebox_w >= DO4_EBOX_FULL_W
+    ebox_dead   = in_.soc2 >= MAX_SOC
+    need_down   = (in_.pcc > PCC_PEAK_TH) and (ebox_at_max or ebox_dead)
     r.do4_pulse = need_down
 
     st.relay_st  = final_state
@@ -612,7 +667,8 @@ def main():
         _log(f"PCC=null → Z2-Fallback PCC={pcc:.0f}W")
 
     st = load_state()
-    in_ = Inputs(pcc=pcc, bat1=bat1, soc1=soc1, soc2=soc2, ebox_w=ebox_w)
+    in_ = Inputs(pcc=pcc, bat1=bat1, soc1=soc1, soc2=soc2, ebox_w=ebox_w,
+                 pcc_valid=not mqtt_data['pcc_null'] or z2 != 0.0)
 
     _log(f"Data: PCC={pcc:.0f}W  Bat1={bat1:.0f}W  SOC1={soc1:.1f}%  SOC2={soc2:.1f}%  "
          f"EBox={ebox_w:.0f}W  State={st.relay_st}  Stable={st.stable}  Prot={st.prot}")
