@@ -23,9 +23,19 @@ nicht hoch: sie stand in zwei Messungen 8 s auseinander unveraendert auf
 120/135/150 und ist damit der eingestellte Inaktivitaets-Timeout, nicht die
 Zeit seit dem letzten Frame.
 
+Zur IPv6-Spalte: die Freetz kennt keinen Nachbar-Cache im Dateisystem (kein
+/proc/net/ndisc_cache, kein `ip`-Binary), und die ARP-Tabelle ist reines IPv4.
+Die Adressen kommen deshalb vom Pi selbst: ein Ping auf ff02::1 holt die
+Link-Local-Adressen aller Nodes im Segment, und zu jedem globalen Praefix des
+LAN-Interfaces wird zusaetzlich die EUI-64-Adresse der MAC angepingt -- nicht
+wegen der Antwort, sondern weil die Neighbor Solicitation den Cache fuellt.
+Gespeichert wird die beste Adresse je Node: globale EUI-64 vor sonstiger
+globaler vor ULA vor Link-Local.
+
 Deshalb fuehrt dieses Skript den Stempel selbst: freetz_node_last haelt je MAC
 first_seen/last_seen/seen_count fort. Aufloesung = Cron-Takt (30 min).
 """
+import ipaddress
 import re
 import socket
 import subprocess
@@ -45,6 +55,7 @@ CREATE TABLE IF NOT EXISTS freetz_nodes (
   iface    VARCHAR(8)   NOT NULL,
   mac      VARCHAR(17)  NOT NULL,
   ip       VARCHAR(45)  NULL,
+  ipv6     VARCHAR(45)  NULL,
   hostname VARCHAR(64)  NULL,
   aid      INT          NULL,
   chan     INT          NULL,
@@ -60,6 +71,7 @@ DDL_LAST = """
 CREATE TABLE IF NOT EXISTS freetz_node_last (
   mac        VARCHAR(17)  NOT NULL PRIMARY KEY,
   ip         VARCHAR(45)  NULL,
+  ipv6       VARCHAR(45)  NULL,
   hostname   VARCHAR(64)  NULL,
   first_seen DATETIME     NOT NULL,
   last_seen  DATETIME     NOT NULL,   -- "zuletzt aktiv", vom Poller gefuehrt
@@ -240,6 +252,121 @@ def local_arp():
     return arp
 
 
+LAN_PROBE = "192.168.178.26"      # die Freetz selbst -- nur, um das LAN-Interface zu finden
+
+
+def lan_iface():
+    """Interface, ueber das der Pi das Heimsegment sieht (nicht tun0)."""
+    try:
+        out = subprocess.run(["ip", "-o", "route", "get", LAN_PROBE],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"\bdev\s+(\S+)", out)
+    return m.group(1) if m else None
+
+
+def eui64(mac):
+    """MAC -> Interface-ID nach RFC 4291 (Bit 7 des ersten Bytes kippen)."""
+    try:
+        b = [int(x, 16) for x in mac.split(":")]
+    except ValueError:
+        return None
+    if len(b) != 6:
+        return None
+    return "%02x%02x:%02xff:fe%02x:%02x%02x" % (b[0] ^ 0x02, b[1], b[2],
+                                                b[3], b[4], b[5])
+
+
+def prefixes(iface):
+    """Globale /64-Praefixe (GUA und ULA) des LAN-Interfaces."""
+    out = subprocess.run(["ip", "-o", "-6", "addr", "show", "dev", iface],
+                         capture_output=True, text=True, timeout=5).stdout
+    nets = []
+    for m in re.finditer(r"inet6\s+(\S+/\d+)", out):
+        try:
+            net = ipaddress.ip_network(m.group(1), strict=False)
+        except ValueError:
+            continue
+        if net.prefixlen == 64 and not net.network_address.is_link_local \
+                and not net.network_address.is_loopback and net not in nets:
+            nets.append(net)
+    return nets
+
+
+def neigh(iface):
+    """MAC -> Liste bekannter IPv6-Adressen aus dem Neighbor-Cache."""
+    out = subprocess.run(["ip", "-6", "neigh", "show", "dev", iface],
+                         capture_output=True, text=True, timeout=5).stdout
+    found = {}
+    for line in out.splitlines():
+        f = line.split()
+        if len(f) < 3 or "lladdr" not in f:
+            continue          # INCOMPLETE/FAILED: Adresse hat nicht geantwortet
+        if "FAILED" in f or "INCOMPLETE" in f:
+            continue
+        mac = f[f.index("lladdr") + 1].lower()
+        found.setdefault(mac, []).append(f[0])
+    return found
+
+
+def rank(addr, mac):
+    """Kleiner ist besser: globale EUI-64 < globale < ULA < Link-Local."""
+    try:
+        a = ipaddress.IPv6Address(addr)
+    except ValueError:
+        return 9
+    if a.is_link_local:
+        return 3
+    if a in ipaddress.ip_network("fc00::/7"):
+        return 2
+    iid = eui64(mac)
+    return 0 if iid and addr.lower().endswith(iid) else 1
+
+
+def ipv6_map(macs):
+    """Nachbarn anstupsen und je MAC die beste IPv6 zurueckgeben.
+
+    Der Ping ist Mittel zum Zweck: uns interessiert nicht die Antwort, sondern
+    dass die Neighbor Solicitation den Cache fuellt. Deshalb laufen alle Pings
+    parallel und mit kurzem Timeout -- ein stiller Node kostet keine Zeit.
+    """
+    iface = lan_iface()
+    if not iface:
+        return {}
+    targets = ["ff02::1%" + iface]
+    for net in prefixes(iface):
+        for mac in macs:
+            iid = eui64(mac)
+            if iid:
+                targets.append(str(ipaddress.IPv6Address(
+                    int(net.network_address) | int(ipaddress.IPv6Address("::" + iid)))))
+    procs = [subprocess.Popen(["ping6", "-c", "2", "-W", "1", "-i", "0.3", t],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+             for t in targets]
+    for pr in procs:
+        try:
+            pr.wait(timeout=4)
+        except subprocess.TimeoutExpired:
+            pr.kill()
+    table = neigh(iface)
+    best = {}
+    for mac in macs:
+        addrs = table.get(mac.lower())
+        if addrs:
+            best[mac] = sorted(set(addrs), key=lambda a: (rank(a, mac), a))[0][:45]
+    return best
+
+
+def ensure_column(cur, table, col, spec):
+    """CREATE TABLE IF NOT EXISTS ruehrt bestehende Tabellen nicht an."""
+    cur.execute("SELECT COUNT(*) FROM information_schema.columns"
+                " WHERE table_schema = DATABASE() AND table_name = %s"
+                " AND column_name = %s", (table, col))
+    if not cur.fetchone()[0]:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {spec}")
+
+
 def hostname(ip):
     """Best effort ueber den DNS der Fritzbox; ein Node ohne Namen ist kein Fehler."""
     if not ip:
@@ -255,8 +382,10 @@ def main():
     quiet = "--quiet" in sys.argv
     stations, arp, health = parse(remote())
     here = local_arp()
+    v6 = ipv6_map([s["mac"] for s in stations])
     for s in stations:
         s["ip"] = arp.get(s["mac"]) or here.get(s["mac"])
+        s["ipv6"] = v6.get(s["mac"])
         s["hostname"] = hostname(s["ip"])
 
     con = pymysql.connect(**DB)
@@ -265,10 +394,12 @@ def main():
             cur.execute(DDL)
             cur.execute(DDL_LAST)
             cur.execute(DDL_HEALTH)
+            ensure_column(cur, "freetz_nodes", "ipv6", "VARCHAR(45) NULL AFTER ip")
+            ensure_column(cur, "freetz_node_last", "ipv6", "VARCHAR(45) NULL AFTER ip")
             cur.executemany(
                 "INSERT INTO freetz_nodes"
-                " (ts, iface, mac, ip, hostname, aid, chan, rate, rssi, idle)"
-                " VALUES (NOW(), %(iface)s, %(mac)s, %(ip)s, %(hostname)s,"
+                " (ts, iface, mac, ip, ipv6, hostname, aid, chan, rate, rssi, idle)"
+                " VALUES (NOW(), %(iface)s, %(mac)s, %(ip)s, %(ipv6)s, %(hostname)s,"
                 " %(aid)s, %(chan)s, %(rate)s, %(rssi)s, %(idle)s)", stations)
             # last_seen fortschreiben. COALESCE haelt eine einmal ermittelte IP
             # fest: sie kommt aus der ARP-Tabelle und fehlt mal, wenn gerade
@@ -276,11 +407,14 @@ def main():
             # Namen wieder zu verlieren.
             cur.executemany(
                 "INSERT INTO freetz_node_last"
-                " (mac, ip, hostname, first_seen, last_seen, last_rssi, seen_count)"
-                " VALUES (%(mac)s, %(ip)s, %(hostname)s, NOW(), NOW(), %(rssi)s, 1)"
+                " (mac, ip, ipv6, hostname, first_seen, last_seen, last_rssi,"
+                " seen_count)"
+                " VALUES (%(mac)s, %(ip)s, %(ipv6)s, %(hostname)s, NOW(), NOW(),"
+                " %(rssi)s, 1)"
                 " ON DUPLICATE KEY UPDATE"
                 "  last_seen = NOW(),"
                 "  ip = COALESCE(VALUES(ip), ip),"
+                "  ipv6 = COALESCE(VALUES(ipv6), ipv6),"
                 "  hostname = COALESCE(VALUES(hostname), hostname),"
                 "  last_rssi = VALUES(last_rssi),"
                 "  seen_count = seen_count + 1", stations)
@@ -296,6 +430,7 @@ def main():
     if not quiet:
         for s in stations:
             print(f"{s['iface']} {s['mac']} {s['ip'] or '-':15} "
+                  f"{s['ipv6'] or '-':39} "
                   f"{s['hostname'] or '-':14} rssi={s['rssi']} idle={s['idle']}")
     if not quiet:
         print(f"health: up={health['uptime_s']}s free={health['mem_free']}kB "
