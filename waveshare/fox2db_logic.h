@@ -32,6 +32,7 @@ constexpr float BAT_DISCHARGE_TH = -110.0f;
 constexpr float SWEET_SPOT_PCC   = 160.0f;
 constexpr float MAX_DROP_RATE    = -20.0f;
 constexpr float LADESPERRE_HYST  = 0.25f;   // Hysterese-Band für Ladesperre-Ratio (Latch gegen Flattern); breit genug gegen rohes pcc-Rauschen (Release 0.62+0.25=0.87)
+constexpr float LADESPERRE_NOW_RATIO = 0.20f;  // Momentan-Ratio, ab der Bewoelkung als belegt gilt
 constexpr int   DD_LOWER         = 6;
 constexpr int   DD_UPPER         = 8;
 constexpr int   DD_CHARGE_TARGET = 7;
@@ -44,6 +45,12 @@ constexpr float DO4_EBOX_FULL_W  = 11000.0f;  // ab hier laedt die EBox wirklich
 // nicht ueber geaenderte Feldleistungen wieder in Fruehjahr/Herbst rutscht.
 constexpr int LADESPERRE_MONTH_FROM = 5;   // Mai
 constexpr int LADESPERRE_MONTH_TO   = 8;   // August
+// SOC1-Tor: Der Sofar-Hausakku hat Vorrang. Solange er heute nicht einmal
+// ueber SOC1_FULL_TH stand, darf die EBox hoechstens SOC1_GATE_MAX_W ziehen —
+// erst danach sind die grossen Stufen frei. Tages-Latch wie peak_today: einmal
+// gesehen genuegt, ein spaeterer Abfall schliesst das Tor nicht wieder.
+constexpr float SOC1_FULL_TH     = 99.0f;    // "einmal >99 %" gesehen
+constexpr float SOC1_GATE_MAX_W  = 5000.0f;  // Deckel bis dahin
 constexpr float NIGHT_DC_TH      = 100.0f;    // gemessene PV (Power_PV1+PV2) < 100W → "Nacht" (Soyo-Baseline 468W). PV-String statt pcc: batterieunabhängig & ehrlich
 
 // STATE_TO_POWER {0:0,1:3000,2:3650,3:6650,4:3900,5:7100,6:7800,7:11400}
@@ -57,6 +64,17 @@ static const int SORTED_STATES[N_SORTED] = {0, 1, 4, 3, 5, 6, 7};
 inline int sorted_index(int s) {
   for (int i = 0; i < N_SORTED; i++) if (SORTED_STATES[i] == s) return i;
   return 0;
+}
+// Hoechste Stufe, die den Leistungsdeckel nicht reisst. Gesucht wird in
+// SORTED_STATES, damit State 2 auch hier aussen vor bleibt (wie in decide()).
+inline int state_capped(int s, float max_w) {
+  if ((float)state_power(s) <= max_w) return s;
+  int best = 0, best_pow = -1;
+  for (int i = 0; i < N_SORTED; i++) {
+    int p = state_power(SORTED_STATES[i]);
+    if ((float)p <= max_w && p > best_pow) { best = SORTED_STATES[i]; best_pow = p; }
+  }
+  return best;
 }
 
 // ── DC-Klarhimmel-Forecast (Meinel-Modell wie _DcForecast) ───────────────────
@@ -172,6 +190,8 @@ struct State {
   bool  prot = false;               // Tiefentladeschutz (Hysterese)
   bool  peak_today = false;         // pcc hat heute PCC_PEAK_TH überschritten → Laden vor DO4
   bool  ladesperre_latched = false; // Ladesperre-Latch (Hysterese gegen Flattern)
+  bool  badweather_today = false;   // Momentanleistung lag heute >= LADESPERRE_NOW_RATIO unter Klarhimmel
+  bool  soc1_full_today = false;    // SOC1 stand heute einmal ueber SOC1_FULL_TH -> Deckel faellt
   int   last_yday = -1;
   // ETA-Trendfenster (siehe eta_soc100_h)
   float soc_hist[ETA_WIN] = {0};    // SOC-Ringpuffer, ein Wert je Zyklus
@@ -199,11 +219,13 @@ struct Result {
   bool  ladesperre = false;
   float excess = 0, dc_expected = 0, dc_delta = 0;
   float ratio = -1.0f;  // Ist-Wetter-Ratio (Anteil fehlender Klarhimmel-Leistung; -1 = nicht berechenbar)
+  float ratio_now = -1.0f; // dieselbe Groesse aus UNGEMITTELTEN Werten (Wolkenluecken)
   int   peak_h = -1;    // lokale Stunde des DC-Peaks (-1 = kein Peak heute)
   int   win_end_h = -1; // letzte lokale Stunde mit dc > PCC_PEAK_TH
   float noon_h = -1.0f; // astronomischer lokaler Mittag (Dezimalstunde, Reporting)
   float exp_max   = -1.0f; // hoechster heute erwarteter SOC in % (-1 = nicht beurteilbar)
   float exp_max_h = 0.0f;  // Uhrzeit dazu (lokale Dezimalstunde)
+  bool  soc1_gate = false; // true = SOC1-Deckel aktiv (SOC1 heute noch nie >99 %)
   char  trace[160] = "";
 };
 
@@ -268,7 +290,8 @@ inline int decide(const Inputs &in, int relay_st, bool prot, float bat1_factor,
 }
 
 // ── apply_guards() — feuert -> Blocking wird übersprungen ────────────────────
-inline int apply_guards(int best, float soc2, float pcc, bool ladesperre, char *trace, bool *guard_fired) {
+inline int apply_guards(int best, float soc2, float pcc, bool ladesperre, bool soc1_gate,
+                        char *trace, bool *guard_fired) {
   // Reihenfolge: volle Batterie schlaegt alles (sie kann nichts mehr aufnehmen,
   // dann muss DO4 ran). Danach die DO4-Gefahr — sie schlaegt Ladesperre und
   // Tiefentladeschutz, weil beide durch Laden erfuellt statt verletzt werden,
@@ -281,6 +304,24 @@ inline int apply_guards(int best, float soc2, float pcc, bool ladesperre, char *
   }
   if (ladesperre) { if (best != 0) tcat(trace, " | GUARD:CHARGE_BLOCK_UNTIL_PCC_20KW"); *guard_fired = true; return 0; }
   if (soc2 >= 0 && soc2 < DD_LOWER) { if (best != 1) tcat(trace, " | GUARD:CRITICAL_SOC_PROTECTION_ACTIVATE"); *guard_fired = true; return 1; }
+  // SOC1-Tor: Der Sofar-Akku hat Vorrang — mehr als SOC1_GATE_MAX_W erst, wenn
+  // er heute einmal ueber SOC1_FULL_TH stand. Anders als die vier Regeln darueber
+  // waehlt das Tor keine Stufe aus, es begrenzt nur die schon gewaehlte; deshalb
+  // steht es am Ende und setzt guard_fired NICHT. Zwei Folgen, beide gewollt:
+  // die vorherigen Guards kehren vorher zurueck, ihr erzwungener State bleibt
+  // also unangetastet (bei pcc > 20 kW gewinnt Stufe 7 und DO4 bleibt intakt),
+  // und apply_blocking() laeuft weiter — Rampe, Sweet-Spot- und Bat-Guard-Schutz
+  // gelten auch fuer den gedeckelten Hochlauf.
+  if (soc1_gate) {
+    int capped = state_capped(best, SOC1_GATE_MAX_W);
+    if (capped != best) {
+      char t[64];
+      snprintf(t, sizeof(t), " | SOC1_GATE (max %.0fW) State%d->%d",
+               SOC1_GATE_MAX_W, best, capped);
+      tcat(trace, t);
+      best = capped;
+    }
+  }
   *guard_fired = false; return best;
 }
 
@@ -396,6 +437,8 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
   if (local_yday != st.last_yday) {            // Mitternachts-Reset
     st.peak_today = false;
     st.ladesperre_latched = false;
+    st.badweather_today = false;
+    st.soc1_full_today = false;                // SOC1-Tor faellt taeglich neu zu
     st.last_yday = local_yday;
     st.pcc3_n = 0; st.pcc3_i = 0;              // PCC-Mittel faengt taeglich neu an
     st.ebox_max_today = 0;                     // ETA-Trend faengt taeglich neu an
@@ -431,12 +474,24 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
   // peak_today verhindert Oszillation nach Freigabe durch pcc-Abfall beim Laden.
   if (in.pcc > PCC_PEAK_TH) st.peak_today = true;
 
+  // SOC1-Tor: einmal ueber der Schwelle gesehen reicht fuer den ganzen Tag.
+  // Ein fehlender MQTT-Wert kommt als 0 herein (num(..., "SOC_Bat1", 0)) und
+  // kann das Tor darum nie versehentlich oeffnen — bei stummem Broker bleibt
+  // der Deckel liegen, was die sichere Richtung ist.
+  if (in.soc1 > SOC1_FULL_TH) st.soc1_full_today = true;
+  r.soc1_gate = !st.soc1_full_today;
+
   // Ist-Wetter-Ratio immer berechnen (für Reporting), -1 wenn DC ungültig.
   // ratio > ladesperre_ratio ⇒ Schlechtwetter. Proxy = pcc_avg5 + ebox + bat1_avg5
   // (beide 5-Min-Mittel aus pivot2db): bringt das Gutwetter-Signal der Akkuladung
   // ohne 0↔2500W-Flattern, und der Akku-voll-Sprung (bat1→pcc) hebt sich auf.
   if (r.dc_expected > 5000)
     r.ratio = (r.dc_expected - (in.pcc_avg5 + in.ebox_w + in.bat1_avg5)) / r.dc_expected;
+  // Momentan-Ratio aus den UNGEMITTELTEN Werten. pcc_avg5 verschleift Wolken-
+  // luecken zu Sonnenschein; der Rohwert zeigt die Wolke sofort. Nur mit
+  // gueltigem PCC — ein null wuerde als volle Verschattung missdeutet.
+  if (r.dc_expected > 5000 && in.pcc_valid)
+    r.ratio_now = (r.dc_expected - (in.pcc + in.ebox_w + in.bat1)) / r.dc_expected;
 
   bool ladesperre = false;
   if (ladesperre_enable) {
@@ -447,6 +502,12 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
     bool in_season = (month >= LADESPERRE_MONTH_FROM && month <= LADESPERRE_MONTH_TO);
     bool in_window = in_season && has_peak && win_end_loc >= 0 && !st.peak_today
                      && (local_hour <= peak_h_loc) && (now_utc < noon_utc);
+    // Momentan-Wolkenerkennung: liegt die AKTUELLE Leistung >= 20 % unter dem
+    // Klarhimmel-Modell, ist das Gutwetter fuer heute widerlegt -> sofort laden.
+    // Tages-Latch wie peak_today, sonst schnappt die Sperre bei der naechsten
+    // Wolkenluecke wieder zu und die Ladung flattert im Minutentakt.
+    if (in_window && r.ratio_now >= LADESPERRE_NOW_RATIO)
+      st.badweather_today = true;
     // LATCH mit Hysterese gegen Flattern an der Ratio-Schwelle:
     //   LOCK   bei belegtem Gutwetter (ratio <= ladesperre_ratio)
     //   RELEASE erst bei klarem Schlechtwetter (ratio >= ladesperre_ratio + LADESPERRE_HYST)
@@ -459,7 +520,7 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
       else if (st.ladesperre_latched && r.ratio >= ladesperre_ratio + LADESPERRE_HYST)
         st.ladesperre_latched = false;
     }
-    ladesperre = in_window && st.ladesperre_latched;
+    ladesperre = in_window && st.ladesperre_latched && !st.badweather_today;
   }
   r.ladesperre = ladesperre;
 
@@ -483,7 +544,7 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
     tcat(trace, t);
   }
   bool guard_fired = false;
-  best = apply_guards(best, in.soc2, in.pcc, ladesperre, trace, &guard_fired);
+  best = apply_guards(best, in.soc2, in.pcc, ladesperre, r.soc1_gate, trace, &guard_fired);
 
   float drop_rate = (st.last_excess > 0) ? (excess - st.last_excess) / 30.0f : 0.0f;
   st.last_excess = excess;

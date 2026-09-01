@@ -47,7 +47,7 @@ EMERGENCY_IMPORT = MAX_GRID_DRAW + EMERGENCY_MARGIN   # = 1020.0 (an G gekoppelt
 BAT_DISCHARGE_TH = -110.0
 SWEET_SPOT_PCC   = 160.0
 MAX_DROP_RATE    = -20.0
-LADESPERRE_HYST  = 0.15                           # Hysterese-Band für Ladesperre-Ratio (Latch)
+LADESPERRE_HYST  = 0.25                           # Hysterese-Band für Ladesperre-Ratio (Latch) — identisch zu fox2db_logic.h
 BAT1_CHARGE_FACTOR = 0.5                           # Anteil der Sofar-Ladung (bat1>0), der als EBox-Überschuss zählt
 DD_LOWER         = 6
 DD_UPPER         = 8
@@ -55,11 +55,18 @@ DD_CHARGE_TARGET = 7
 PCC_PEAK_TH      = 20000.0
 PCC_HARD_TH      = 22000.0     # (nicht mehr im DO4-Pfad, s. need_down)
 DO4_EBOX_FULL_W  = 11000.0     # ab hier laedt die EBox wirklich voll
+# SOC1-Tor: Der Sofar-Hausakku hat Vorrang. Solange er heute nicht einmal
+# ueber SOC1_FULL_TH stand, darf die EBox hoechstens SOC1_GATE_MAX_W ziehen —
+# erst danach sind die grossen Stufen frei. Tages-Latch wie peak_today: einmal
+# gesehen genuegt, ein spaeterer Abfall schliesst das Tor nicht wieder.
+SOC1_FULL_TH     = 99.0        # "einmal >99 %" gesehen
+SOC1_GATE_MAX_W  = 5000.0      # Deckel bis dahin
 LADESPERRE_MONTH_FROM = 5      # Mai; ausserhalb Mai-August keine
 LADESPERRE_MONTH_TO   = 8      # August; Ladesperre, nur DO4 >20 kW
 
 LADESPERRE_ENABLE = True       # YAML default
 LADESPERRE_RATIO  = 0.5        # YAML default (sofar/ratio)
+LADESPERRE_NOW_RATIO = 0.20    # Momentan-Ratio, ab der Bewölkung als belegt gilt
 
 # STATE_TO_POWER {0:0,1:3000,2:3650,3:6650,4:3900,5:7100,6:7800,7:11400}
 _STATE_POWER  = [0, 3000, 3650, 6650, 3900, 7100, 7800, 11400]
@@ -74,6 +81,21 @@ def sorted_index(s: int) -> int:
         if SORTED_STATES[i] == s:
             return i
     return 0
+
+def state_capped(s: int, max_w: float) -> int:
+    """Hoechste Stufe, die den Leistungsdeckel nicht reisst.
+
+    Gesucht wird in SORTED_STATES, damit State 2 auch hier aussen vor bleibt
+    (wie in decide()).
+    """
+    if state_power(s) <= max_w:
+        return s
+    best, best_pow = 0, -1
+    for st in SORTED_STATES:
+        p = state_power(st)
+        if p <= max_w and p > best_pow:
+            best, best_pow = st, p
+    return best
 
 PATHS = {
     'log':         '/tmp/fox2dbEasy.log',
@@ -175,6 +197,8 @@ class State:
         self.prot        = False          # Tiefentladeschutz (Hysterese)
         self.peak_today  = False          # pcc hat heute PCC_PEAK_TH überschritten
         self.ladesperre_latched = False   # Ladesperre-Latch (Hysterese gegen Flattern)
+        self.badweather_today = False     # Momentanleistung lag heute >= LADESPERRE_NOW_RATIO unter Klarhimmel
+        self.soc1_full_today = False      # SOC1 stand heute einmal ueber SOC1_FULL_TH -> Deckel faellt
         self.last_yday   = -1
         self.pcc3_buf    = [0.0] * PCC_AVG_N   # PCC-Ringpuffer fuer das 3-Min-Mittel
         self.pcc3_n      = 0
@@ -195,6 +219,8 @@ def load_state() -> State:
     st.prot        = bool(d.get('prot', False))
     st.peak_today  = bool(d.get('peak_today', False))
     st.ladesperre_latched = bool(d.get('ladesperre_latched', False))
+    st.badweather_today = bool(d.get('badweather_today', False))
+    st.soc1_full_today = bool(d.get('soc1_full_today', False))
     st.last_yday   = int(d.get('last_yday', -1))
     buf            = [float(x) for x in d.get('pcc_buf', [])]
     st.pcc_buf     = (buf + [0.0] * 10)[:10]
@@ -211,6 +237,8 @@ def save_state(st: State):
         'relay_st': st.relay_st, 'stable': st.stable, 'last_excess': st.last_excess,
         'prot': st.prot, 'peak_today': st.peak_today, 'last_yday': st.last_yday,
         'ladesperre_latched': st.ladesperre_latched,
+        'badweather_today': st.badweather_today,
+        'soc1_full_today': st.soc1_full_today,
         'pcc_buf': st.pcc_buf, 'pcc_n': st.pcc_n, 'pcc_i': st.pcc_i,
         'pcc3_buf': st.pcc3_buf, 'pcc3_n': st.pcc3_n, 'pcc3_i': st.pcc3_i,
     }))
@@ -230,8 +258,10 @@ class Result:
         self.dc_expected = 0.0
         self.dc_delta = 0.0
         self.ratio = -1.0
+        self.ratio_now = -1.0
         self.peak_h = -1
         self.win_end_h = -1
+        self.soc1_gate = False   # True = SOC1-Deckel aktiv (SOC1 heute noch nie >99 %)
         self.trace = ""
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -413,7 +443,7 @@ def decide(in_: Inputs, relay_st: int, prot: bool,
 
 
 def apply_guards(best: int, soc2: float, pcc: float, ladesperre: bool,
-                 trace: str) -> Tuple[int, bool, str]:
+                 soc1_gate: bool, trace: str) -> Tuple[int, bool, str]:
     # Reihenfolge: volle Batterie schlaegt alles (sie kann nichts mehr aufnehmen,
     # dann muss DO4 ran). Danach die DO4-Gefahr — sie schlaegt Ladesperre und
     # Tiefentladeschutz, weil beide durch Laden erfuellt statt verletzt werden,
@@ -435,6 +465,19 @@ def apply_guards(best: int, soc2: float, pcc: float, ladesperre: bool,
         if best != 1:
             trace += " | GUARD:CRITICAL_SOC_PROTECTION_ACTIVATE"
         return 1, True, trace
+    # SOC1-Tor: Der Sofar-Akku hat Vorrang — mehr als SOC1_GATE_MAX_W erst, wenn
+    # er heute einmal ueber SOC1_FULL_TH stand. Anders als die vier Regeln darueber
+    # waehlt das Tor keine Stufe aus, es begrenzt nur die schon gewaehlte; deshalb
+    # steht es am Ende und setzt guard_fired NICHT. Zwei Folgen, beide gewollt:
+    # die vorherigen Guards kehren vorher zurueck, ihr erzwungener State bleibt
+    # also unangetastet (bei pcc > 20 kW gewinnt Stufe 7 und DO4 bleibt intakt),
+    # und apply_blocking() laeuft weiter — Rampe, Sweet-Spot- und Bat-Guard-Schutz
+    # gelten auch fuer den gedeckelten Hochlauf.
+    if soc1_gate:
+        capped = state_capped(best, SOC1_GATE_MAX_W)
+        if capped != best:
+            trace += f" | SOC1_GATE (max {SOC1_GATE_MAX_W:.0f}W) State{best}->{capped}"
+            best = capped
     return best, False, trace
 
 
@@ -475,6 +518,8 @@ def step(in_: Inputs, st: State, now_local: dt.datetime,
         st.pcc3_i = 0
         st.peak_today = False
         st.ladesperre_latched = False
+        st.badweather_today = False
+        st.soc1_full_today = False             # SOC1-Tor faellt taeglich neu zu
         st.last_yday  = local_yday
 
     r.dc_expected = dc_now(now_utc, month)
@@ -502,9 +547,22 @@ def step(in_: Inputs, st: State, now_local: dt.datetime,
     if in_.pcc > PCC_PEAK_TH:
         st.peak_today = True
 
+    # SOC1-Tor: einmal ueber der Schwelle gesehen reicht fuer den ganzen Tag.
+    # Ein fehlender MQTT-Wert kommt als 0 herein und kann das Tor darum nie
+    # versehentlich oeffnen — bei stummem Broker bleibt der Deckel liegen, was
+    # die sichere Richtung ist.
+    if in_.soc1 > SOC1_FULL_TH:
+        st.soc1_full_today = True
+    r.soc1_gate = not st.soc1_full_today
+
     # Ist-Wetter-Ratio (ratio > Schwelle ⇒ Schlechtwetter); -1 = nicht berechenbar
     if pcc_avg_valid and r.dc_expected > 5000:
         r.ratio = (r.dc_expected - (pcc_avg + in_.ebox_w + in_.bat1)) / r.dc_expected
+    # Momentan-Ratio aus den UNGEMITTELTEN Werten: pcc_avg verschleift Wolken-
+    # lücken zu Sonnenschein, der Rohwert zeigt die Wolke sofort. Nur mit
+    # gültigem PCC — ein null würde als volle Verschattung missdeutet.
+    if r.dc_expected > 5000 and in_.pcc_valid:
+        r.ratio_now = (r.dc_expected - (in_.pcc + in_.ebox_w + in_.bat1)) / r.dc_expected
 
     ladesperre = False
     if ladesperre_enable:
@@ -514,6 +572,12 @@ def step(in_: Inputs, st: State, now_local: dt.datetime,
         in_season = LADESPERRE_MONTH_FROM <= now_local.month <= LADESPERRE_MONTH_TO
         in_window = (in_season and has_peak and win_end_loc >= 0 and not st.peak_today
                      and local_hour <= peak_h_loc)
+        # Momentan-Wolkenerkennung: liegt die AKTUELLE Leistung >= 20 % unter dem
+        # Klarhimmel-Modell, ist das Gutwetter für heute widerlegt -> sofort laden.
+        # Tages-Latch wie peak_today, sonst schnappt die Sperre bei der nächsten
+        # Wolkenlücke wieder zu und die Ladung flattert im Minutentakt.
+        if in_window and r.ratio_now >= LADESPERRE_NOW_RATIO:
+            st.badweather_today = True
         # LATCH mit Hysterese gegen Flattern an der Ratio-Schwelle:
         if not in_window:
             st.ladesperre_latched = False
@@ -522,7 +586,7 @@ def step(in_: Inputs, st: State, now_local: dt.datetime,
                 st.ladesperre_latched = True          # LOCK: belegtes Gutwetter
             elif st.ladesperre_latched and r.ratio >= ladesperre_ratio + LADESPERRE_HYST:
                 st.ladesperre_latched = False         # RELEASE: klar Schlechtwetter
-        ladesperre = in_window and st.ladesperre_latched
+        ladesperre = in_window and st.ladesperre_latched and not st.badweather_today
     r.ladesperre = ladesperre
 
     # Ringpuffer nur mit GUELTIGEN PCC-Werten fuellen — ein null darf den
@@ -539,7 +603,8 @@ def step(in_: Inputs, st: State, now_local: dt.datetime,
     best, trace, excess = decide(in_, st.relay_st, st.prot, pcc_use)
     if not in_.pcc_valid:                      # im Trace sichtbar machen
         trace += f" | PCC_NULL_AVG3 ({pcc_use:.0f}W)"
-    best, guard_fired, trace = apply_guards(best, in_.soc2, in_.pcc, ladesperre, trace)
+    best, guard_fired, trace = apply_guards(best, in_.soc2, in_.pcc, ladesperre,
+                                            r.soc1_gate, trace)
 
     drop_rate = (excess - st.last_excess) / 30.0 if st.last_excess > 0 else 0.0
     st.last_excess = excess
@@ -614,14 +679,16 @@ def set_relay(state: int, do4_pulse: bool, reason: str = ""):
     _log(f"Relay: State→{state} (do4={do4_pulse}) | {reason}")
 
 
-def publish_state(r: Result, in_: Inputs):
+def publish_state(r: Result, in_: Inputs, st: State):
     payload = json.dumps({
         "version": VERSION, "state": r.final_state, "changed": r.changed,
         "pcc": round(in_.pcc), "bat1": round(in_.bat1),
         "soc1": round(in_.soc1, 1), "soc2": round(in_.soc2, 1),
         "ebox": round(in_.ebox_w), "excess": round(r.excess),
         "dc_expected": round(r.dc_expected), "dc_delta": round(r.dc_delta),
-        "ratio": round(r.ratio, 2), "ladesperre": r.ladesperre, "do4": r.do4_pulse,
+        "ratio": round(r.ratio, 2), "ratio_now": round(r.ratio_now, 2),
+        "badwx": st.badweather_today, "soc1_gate": r.soc1_gate,
+        "ladesperre": r.ladesperre, "do4": r.do4_pulse,
         "peak_h": r.peak_h, "win_end_h": r.win_end_h,
         "trace": r.trace,                      # Gründe — Debug-Feature
         "ts": dt.datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
@@ -684,7 +751,7 @@ def main():
 
     _write(PATHS['result'], r.final_state)
     set_relay(r.final_state, r.do4_pulse, r.trace)
-    publish_state(r, in_)
+    publish_state(r, in_, st)
 
 
 if __name__ == '__main__':
