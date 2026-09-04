@@ -58,6 +58,18 @@ FORKDIR   = "/home/gh/TTN/devices/trackerd_stock148"   # die Quelle der Wahrheit
 HOST      = "gh@192.168.5.23"
 BAUDIR    = "~/trackerd_build"
 FORK      = "forkstock"
+# Welcher Upstream-Stand die Grundlage ist. Draginos Tags sind unbrauchbar:
+# v1.4.6, v1.4.7, v1.4.8 und V1.4.9 zeigen alle auf dasselbe Commit a66935bc7
+# vom 03.08.2023, dessen Quelltext sich als v1.4.6 meldet. Das ausgelieferte
+# app0 ist dagegen aus 496b91718 vom 18.06.2024 (Commit-Text "v1.4.9", als Tag
+# V1.5.0/v1.5.1 abgelegt) -- nachgewiesen am 04.09.2026 ueber drei
+# Fingerabdruecke, die app0 hat und der 2023er Stand nicht: `Fix Time:%dms` in
+# GPS.cpp, `AT+CHS` und `AT+GF` in at.h. Genau dort stehen auch die Pad-Holds
+# `gpio_hold_en((gpio_num_t)12)` / `gpio_deep_sleep_hold_en()`, die dem 2023er
+# Stand fehlen.
+#   repo148 = a66935bc7 (2023, meldet v1.4.6)
+#   repo149 = 496b91718 (2024, meldet v1.4.9)  <- Grundlage von app0
+BASIS     = "repo149"
 BINARY    = ".pio/build/trackerdstock/firmware.bin"
 PIO       = "~/.platformio/penv/bin/pio"
 SWITCH    = "/home/gh/python/lora/trackerd/switch_app.py"
@@ -83,7 +95,7 @@ def lauf(cmd, **kw):
     return subprocess.run(cmd, shell=isinstance(cmd, str), check=True, **kw)
 
 
-def bauen(ohne=()):
+def bauen(ohne=(), basis=BASIS):
     """Fork aus dem Repo auf den dell spiegeln, Quellen auslegen, patchen, bauen.
 
     Gespiegelt wird bei jedem Lauf. Frueher lagen Patches und platformio.ini
@@ -107,6 +119,7 @@ def bauen(ohne=()):
     sketch.sort(key=lambda n: (n != "fix_holds.py", n))
     if PATCH_LIB not in namen:
         sys.exit(f"{PATCH_LIB} fehlt in {FORKDIR}/patches")
+    print("Grundlage:", basis)
     print("Patches:", ", ".join(sketch + [PATCH_LIB]))
     if ohne:
         print("weggelassen:", ", ".join(ohne))
@@ -115,8 +128,8 @@ def bauen(ohne=()):
         f"cd {BAUDIR}",
         f"rm -rf {FORK}",
         f"mkdir -p {FORK}/src {FORK}/lib",
-        f"cp -a repo148/Example/LoRaWAN/examples/TrackerD/. {FORK}/src/",
-        f"cp -a repo148/Library/arduino-lmic/arduino-lmic {FORK}/lib/arduino-lmic",
+        f"cp -a {basis}/Example/LoRaWAN/examples/TrackerD/. {FORK}/src/",
+        f"cp -a {basis}/Library/arduino-lmic/arduino-lmic {FORK}/lib/arduino-lmic",
         f"cp fork_repo/platformio.ini fork_repo/partitions_trackerd.csv {FORK}/",
         f"cp -a fork_repo/variants {FORK}/variants",
     ]
@@ -239,6 +252,9 @@ def main():
     p.add_argument("--ohne", action="append", default=[], metavar="PATCH",
                    help="diesen Patch nicht anwenden (mehrfach moeglich) -- fuer A/B-Tests,"
                         " ohne ihn aus dem Fork zu loeschen")
+    p.add_argument("--basis", default=BASIS, metavar="REPO",
+                   help=f"Upstream-Stand auf dem dell (Vorgabe {BASIS}: 496b91718 vom"
+                        " 18.06.2024, die Grundlage von app0; repo148 = a66935bc7 von 2023)")
     p.add_argument("--nur-fdr", action="store_true",
                    help="nur AT+FDR schicken, nicht bauen und nicht flashen")
     a = p.parse_args()
@@ -258,7 +274,7 @@ def main():
         image = a.bin
     else:
         if not a.nur_flash:
-            bauen(a.ohne)
+            bauen(a.ohne, a.basis)
         if a.nur_bauen:
             print("gebaut, nicht geflasht.")
             return
