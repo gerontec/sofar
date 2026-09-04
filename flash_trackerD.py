@@ -12,6 +12,7 @@ anwenden, bauen, das Binary holen und mit `switch_app.py` nach app1 schreiben.
     ./flash_trackerD.py --app0        # zurueck auf die Werksfirmware, ohne Flash
     ./flash_trackerD.py --kein-fdr    # flashen, aber Puffer/Config nicht zuruecksetzen
     ./flash_trackerD.py --nur-fdr     # nur zuruecksetzen, nicht flashen
+    ./flash_trackerD.py --ohne fix_alarm_gpsfix_stop.py   # Patch weglassen (A/B-Test)
 
 **Nie `pio run -t upload`.** Das schriebe nach app0 und wuerde die
 Werksfirmware ueberschreiben -- die ist der Rueckfallweg, wenn ein Eigenbau
@@ -53,6 +54,7 @@ import os
 import subprocess
 import sys
 
+FORKDIR   = "/home/gh/TTN/devices/trackerd_stock148"   # die Quelle der Wahrheit
 HOST      = "gh@192.168.5.23"
 BAUDIR    = "~/trackerd_build"
 FORK      = "forkstock"
@@ -70,9 +72,9 @@ IMGDIR    = "/home/gh/python/lora/trackerd"
 ZIEL      = IMGDIR + "/firmware_stock148.bin"        # Zeiger auf den letzten Bau
 LOG       = IMGDIR + "/deploy.log"
 
-# Reihenfolge zaehlt: fix_holds zuerst, sonst patchen die anderen in eine
-# Datei, die spaeter ohnehin neu ausgelegt wird.
-PATCHES_SRC = ["fix_holds_stock.py", "fix_defaults_on.py", "fix_alarm_gpsfix_stop.py"]
+# Welche Patches es gibt, steht im Repo -- hier nur, welcher auf die Bibliothek
+# geht statt auf den Sketch. Alles andere wird gefunden, damit ein neuer Patch
+# im Fork nicht vergessen wird.
 PATCH_LIB   = "fix_aes_len.py"
 
 
@@ -81,19 +83,45 @@ def lauf(cmd, **kw):
     return subprocess.run(cmd, shell=isinstance(cmd, str), check=True, **kw)
 
 
-def bauen():
-    """Quellen frisch auslegen, patchen, bauen -- alles auf dem dell."""
+def bauen(ohne=()):
+    """Fork aus dem Repo auf den dell spiegeln, Quellen auslegen, patchen, bauen.
+
+    Gespiegelt wird bei jedem Lauf. Frueher lagen Patches und platformio.ini
+    als Kopien auf dem dell und wurden von Hand nachgezogen -- am 01.09.2026
+    baute das Skript deshalb stillschweigend mit einer Fassung von gestern.
+    Die Quelle der Wahrheit ist das Repo, sonst nichts.
+    """
+    lauf(["ssh", HOST, f"rm -rf {BAUDIR}/fork_repo && mkdir -p {BAUDIR}/fork_repo"])
+    lauf(["scp", "-rq", f"{FORKDIR}/patches", f"{FORKDIR}/variants",
+          f"{FORKDIR}/platformio.ini", f"{FORKDIR}/partitions_trackerd.csv",
+          f"{HOST}:{BAUDIR}/fork_repo/"])
+
+    # Reihenfolge: fix_holds zuerst (Bauvoraussetzung), danach die uebrigen
+    # Sketch-Patches alphabetisch, zuletzt der Bibliothekspatch.
+    namen = sorted(os.listdir(f"{FORKDIR}/patches"))
+    for w in ohne:
+        if w not in namen:
+            sys.exit(f"--ohne {w}: gibt es nicht in {FORKDIR}/patches")
+    namen = [n for n in namen if n not in ohne]
+    sketch = [n for n in namen if n.endswith(".py") and n != PATCH_LIB]
+    sketch.sort(key=lambda n: (n != "fix_holds.py", n))
+    if PATCH_LIB not in namen:
+        sys.exit(f"{PATCH_LIB} fehlt in {FORKDIR}/patches")
+    print("Patches:", ", ".join(sketch + [PATCH_LIB]))
+    if ohne:
+        print("weggelassen:", ", ".join(ohne))
+
     schritte = [
         f"cd {BAUDIR}",
         f"rm -rf {FORK}",
         f"mkdir -p {FORK}/src {FORK}/lib",
         f"cp -a repo148/Example/LoRaWAN/examples/TrackerD/. {FORK}/src/",
         f"cp -a repo148/Library/arduino-lmic/arduino-lmic {FORK}/lib/arduino-lmic",
-        f"cp platformio.ini partitions_trackerd.csv {FORK}/",
-        f"cp -a variants_stock {FORK}/variants",
+        f"cp fork_repo/platformio.ini fork_repo/partitions_trackerd.csv {FORK}/",
+        f"cp -a fork_repo/variants {FORK}/variants",
     ]
-    schritte += [f"python3 {p} {FORK}/src" for p in PATCHES_SRC]
-    schritte.append(f"python3 {PATCH_LIB} {FORK}/lib/arduino-lmic")
+    schritte += [f"python3 fork_repo/patches/{p} {FORK}/src" for p in sketch]
+    schritte.append(f"python3 fork_repo/patches/{PATCH_LIB} {FORK}/lib/arduino-lmic")
     schritte.append(f"cd {FORK} && {PIO} run")
     lauf(["ssh", HOST, " && ".join(schritte)])
 
@@ -208,6 +236,9 @@ def main():
                    help="nur die Bootpartition auf app0 (Werksfirmware) stellen")
     p.add_argument("--kein-fdr", action="store_true",
                    help="nach dem Flashen KEIN AT+FDR schicken (Puffer bleibt, wie er ist)")
+    p.add_argument("--ohne", action="append", default=[], metavar="PATCH",
+                   help="diesen Patch nicht anwenden (mehrfach moeglich) -- fuer A/B-Tests,"
+                        " ohne ihn aus dem Fork zu loeschen")
     p.add_argument("--nur-fdr", action="store_true",
                    help="nur AT+FDR schicken, nicht bauen und nicht flashen")
     a = p.parse_args()
@@ -227,7 +258,7 @@ def main():
         image = a.bin
     else:
         if not a.nur_flash:
-            bauen()
+            bauen(a.ohne)
         if a.nur_bauen:
             print("gebaut, nicht geflasht.")
             return
@@ -247,7 +278,10 @@ def main():
         print("Geflasht, aber NICHT zurueckgesetzt -- der Spurpuffer kann noch"
               " Altlasten tragen.", file=sys.stderr)
         sys.exit(2)
-    print("Geflasht und zurueckgesetzt: Spurpuffer leer, Sport und Datalog an.")
+    print("Geflasht und zurueckgesetzt: Spurpuffer leer, Vorgaben aus"
+          " fix_defaults_on.py gesetzt.")
+    print("Was tatsaechlich gilt, sagt der naechste fPort-5-Rahmen:"
+          " FLAG Bit0 = Intwk, Bit2 = PNACKmd.")
 
 
 if __name__ == "__main__":
