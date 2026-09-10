@@ -49,8 +49,21 @@ constexpr int LADESPERRE_MONTH_TO   = 8;   // August
 // ueber SOC1_FULL_TH stand, darf die EBox hoechstens SOC1_GATE_MAX_W ziehen —
 // erst danach sind die grossen Stufen frei. Tages-Latch wie peak_today: einmal
 // gesehen genuegt, ein spaeterer Abfall schliesst das Tor nicht wieder.
+// Der Deckel ist dabei kein fester Wert mehr, sondern das Maximum aus
+// SOC1_GATE_MAX_W und dem AKKU-NEUTRALEN Budget (pcc + ebox_eff): so viel kann
+// die EBox ziehen, ohne dem Akku ein Watt wegzunehmen. Grund: der Sofar-Akku
+// laedt hart mit hoechstens 2,5 kW (gemessen: MAX(Power_Bat1) = 2.5 kW ueber
+// alle Tage). Wer 14 kW einspeist, kann die EBox voll laufen lassen und der
+// Akku bekommt trotzdem seine volle Ladeleistung — der Vorrang ist dann
+// gegenstandslos, der alte Fixdeckel hat nur Einspeisung verschenkt.
+// Warum pcc + ebox_eff und nicht der Ueberschuss: die Summe ist gegen den
+// eigenen Hochlauf invariant. Zieht die EBox mehr, faellt pcc um genau denselben
+// Betrag, um den ebox_eff steigt — der Deckel bleibt stehen, statt zuzuschnappen,
+// sobald die Einspeisung aufgezehrt ist. Ein Latch gegen Flattern braucht es
+// deshalb nicht. SOC1_GATE_MAX_W bleibt als Untergrenze stehen, damit die
+// Freigabe den Deckel nur lockern und nie verschaerfen kann.
 constexpr float SOC1_FULL_TH     = 99.0f;    // "einmal >99 %" gesehen
-constexpr float SOC1_GATE_MAX_W  = 5000.0f;  // Deckel bis dahin
+constexpr float SOC1_GATE_MAX_W  = 5000.0f;  // Mindestdeckel bis dahin
 constexpr float NIGHT_DC_TH      = 100.0f;    // gemessene PV (Power_PV1+PV2) < 100W → "Nacht" (Soyo-Baseline 468W). PV-String statt pcc: batterieunabhängig & ehrlich
 
 // STATE_TO_POWER {0:0,1:3000,2:3650,3:6650,4:3900,5:7100,6:7800,7:11400}
@@ -226,6 +239,7 @@ struct Result {
   float exp_max   = -1.0f; // hoechster heute erwarteter SOC in % (-1 = nicht beurteilbar)
   float exp_max_h = 0.0f;  // Uhrzeit dazu (lokale Dezimalstunde)
   bool  soc1_gate = false; // true = SOC1-Deckel aktiv (SOC1 heute noch nie >99 %)
+  float soc1_gate_w = 0.0f; // wirksamer Deckel dieses Zyklus (Reporting)
   char  trace[160] = "";
 };
 
@@ -291,7 +305,7 @@ inline int decide(const Inputs &in, int relay_st, bool prot, float bat1_factor,
 
 // ── apply_guards() — feuert -> Blocking wird übersprungen ────────────────────
 inline int apply_guards(int best, float soc2, float pcc, bool ladesperre, bool soc1_gate,
-                        char *trace, bool *guard_fired) {
+                        float soc1_gate_max_w, char *trace, bool *guard_fired) {
   // Reihenfolge: volle Batterie schlaegt alles (sie kann nichts mehr aufnehmen,
   // dann muss DO4 ran). Danach die DO4-Gefahr — sie schlaegt Ladesperre und
   // Tiefentladeschutz, weil beide durch Laden erfuellt statt verletzt werden,
@@ -313,11 +327,11 @@ inline int apply_guards(int best, float soc2, float pcc, bool ladesperre, bool s
   // und apply_blocking() laeuft weiter — Rampe, Sweet-Spot- und Bat-Guard-Schutz
   // gelten auch fuer den gedeckelten Hochlauf.
   if (soc1_gate) {
-    int capped = state_capped(best, SOC1_GATE_MAX_W);
+    int capped = state_capped(best, soc1_gate_max_w);
     if (capped != best) {
       char t[64];
       snprintf(t, sizeof(t), " | SOC1_GATE (max %.0fW) State%d->%d",
-               SOC1_GATE_MAX_W, best, capped);
+               soc1_gate_max_w, best, capped);
       tcat(trace, t);
       best = capped;
     }
@@ -538,13 +552,20 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
     pcc_use = sum / (float)st.pcc3_n;
   }
 
+  // Akku-neutrales Budget: Einspeisung + was die EBox schon zieht. Bis hierhin
+  // kann sie hochlaufen, ohne dem Sofar-Akku Ladeleistung zu entziehen.
+  // ebox_eff wortgleich zu decide(), damit beide Seiten dieselbe Groesse meinen.
+  float ebox_eff_gate = (st.relay_st > 0) ? fmaxf(in.ebox_w, (float)state_power(st.relay_st)) : 0.0f;
+  r.soc1_gate_w = fmaxf(SOC1_GATE_MAX_W, fmaxf(0.0f, pcc_use) + ebox_eff_gate);
+
   int best = decide(in, st.relay_st, st.prot, bat1_charge_factor, pcc_use, trace, &excess);
   if (!in.pcc_valid) {                         // im Trace sichtbar machen
     char t[40]; snprintf(t, sizeof(t), " | PCC_NULL_AVG3 (%.0fW)", pcc_use);
     tcat(trace, t);
   }
   bool guard_fired = false;
-  best = apply_guards(best, in.soc2, in.pcc, ladesperre, r.soc1_gate, trace, &guard_fired);
+  best = apply_guards(best, in.soc2, in.pcc, ladesperre, r.soc1_gate, r.soc1_gate_w,
+                      trace, &guard_fired);
 
   float drop_rate = (st.last_excess > 0) ? (excess - st.last_excess) / 30.0f : 0.0f;
   st.last_excess = excess;

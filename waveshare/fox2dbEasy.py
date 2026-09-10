@@ -59,8 +59,21 @@ DO4_EBOX_FULL_W  = 11000.0     # ab hier laedt die EBox wirklich voll
 # ueber SOC1_FULL_TH stand, darf die EBox hoechstens SOC1_GATE_MAX_W ziehen —
 # erst danach sind die grossen Stufen frei. Tages-Latch wie peak_today: einmal
 # gesehen genuegt, ein spaeterer Abfall schliesst das Tor nicht wieder.
+# Der Deckel ist dabei kein fester Wert mehr, sondern das Maximum aus
+# SOC1_GATE_MAX_W und dem AKKU-NEUTRALEN Budget (pcc + ebox_eff): so viel kann
+# die EBox ziehen, ohne dem Akku ein Watt wegzunehmen. Grund: der Sofar-Akku
+# laedt hart mit hoechstens 2,5 kW (gemessen: MAX(Power_Bat1) = 2.5 kW ueber
+# alle Tage). Wer 14 kW einspeist, kann die EBox voll laufen lassen und der
+# Akku bekommt trotzdem seine volle Ladeleistung — der Vorrang ist dann
+# gegenstandslos, der alte Fixdeckel hat nur Einspeisung verschenkt.
+# Warum pcc + ebox_eff und nicht der Ueberschuss: die Summe ist gegen den
+# eigenen Hochlauf invariant. Zieht die EBox mehr, faellt pcc um genau denselben
+# Betrag, um den ebox_eff steigt — der Deckel bleibt stehen, statt zuzuschnappen,
+# sobald die Einspeisung aufgezehrt ist. Ein Latch gegen Flattern braucht es
+# deshalb nicht. SOC1_GATE_MAX_W bleibt als Untergrenze stehen, damit die
+# Freigabe den Deckel nur lockern und nie verschaerfen kann.
 SOC1_FULL_TH     = 99.0        # "einmal >99 %" gesehen
-SOC1_GATE_MAX_W  = 5000.0      # Deckel bis dahin
+SOC1_GATE_MAX_W  = 5000.0      # Mindestdeckel bis dahin
 LADESPERRE_MONTH_FROM = 5      # Mai; ausserhalb Mai-August keine
 LADESPERRE_MONTH_TO   = 8      # August; Ladesperre, nur DO4 >20 kW
 
@@ -262,6 +275,7 @@ class Result:
         self.peak_h = -1
         self.win_end_h = -1
         self.soc1_gate = False   # True = SOC1-Deckel aktiv (SOC1 heute noch nie >99 %)
+        self.soc1_gate_w = 0.0   # wirksamer Deckel dieses Zyklus (Reporting)
         self.trace = ""
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -443,7 +457,8 @@ def decide(in_: Inputs, relay_st: int, prot: bool,
 
 
 def apply_guards(best: int, soc2: float, pcc: float, ladesperre: bool,
-                 soc1_gate: bool, trace: str) -> Tuple[int, bool, str]:
+                 soc1_gate: bool, soc1_gate_max_w: float,
+                 trace: str) -> Tuple[int, bool, str]:
     # Reihenfolge: volle Batterie schlaegt alles (sie kann nichts mehr aufnehmen,
     # dann muss DO4 ran). Danach die DO4-Gefahr — sie schlaegt Ladesperre und
     # Tiefentladeschutz, weil beide durch Laden erfuellt statt verletzt werden,
@@ -474,9 +489,9 @@ def apply_guards(best: int, soc2: float, pcc: float, ladesperre: bool,
     # und apply_blocking() laeuft weiter — Rampe, Sweet-Spot- und Bat-Guard-Schutz
     # gelten auch fuer den gedeckelten Hochlauf.
     if soc1_gate:
-        capped = state_capped(best, SOC1_GATE_MAX_W)
+        capped = state_capped(best, soc1_gate_max_w)
         if capped != best:
-            trace += f" | SOC1_GATE (max {SOC1_GATE_MAX_W:.0f}W) State{best}->{capped}"
+            trace += f" | SOC1_GATE (max {soc1_gate_max_w:.0f}W) State{best}->{capped}"
             best = capped
     return best, False, trace
 
@@ -600,11 +615,17 @@ def step(in_: Inputs, st: State, now_local: dt.datetime,
     elif st.pcc3_n > 0:                        # null → Mittel der letzten gueltigen
         pcc_use = sum(st.pcc3_buf[:st.pcc3_n]) / st.pcc3_n
 
+    # Akku-neutrales Budget: Einspeisung + was die EBox schon zieht. Bis hierhin
+    # kann sie hochlaufen, ohne dem Sofar-Akku Ladeleistung zu entziehen.
+    # ebox_eff wortgleich zu decide(), damit beide Seiten dieselbe Größe meinen.
+    ebox_eff_gate = max(in_.ebox_w, float(state_power(st.relay_st))) if st.relay_st > 0 else 0.0
+    r.soc1_gate_w = max(SOC1_GATE_MAX_W, max(0.0, pcc_use) + ebox_eff_gate)
+
     best, trace, excess = decide(in_, st.relay_st, st.prot, pcc_use)
     if not in_.pcc_valid:                      # im Trace sichtbar machen
         trace += f" | PCC_NULL_AVG3 ({pcc_use:.0f}W)"
     best, guard_fired, trace = apply_guards(best, in_.soc2, in_.pcc, ladesperre,
-                                            r.soc1_gate, trace)
+                                            r.soc1_gate, r.soc1_gate_w, trace)
 
     drop_rate = (excess - st.last_excess) / 30.0 if st.last_excess > 0 else 0.0
     st.last_excess = excess
@@ -688,6 +709,7 @@ def publish_state(r: Result, in_: Inputs, st: State):
         "dc_expected": round(r.dc_expected), "dc_delta": round(r.dc_delta),
         "ratio": round(r.ratio, 2), "ratio_now": round(r.ratio_now, 2),
         "badwx": st.badweather_today, "soc1_gate": r.soc1_gate,
+        "soc1_gate_w": round(r.soc1_gate_w),
         "ladesperre": r.ladesperre, "do4": r.do4_pulse,
         "peak_h": r.peak_h, "win_end_h": r.win_end_h,
         "trace": r.trace,                      # Gründe — Debug-Feature
