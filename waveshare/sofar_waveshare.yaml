@@ -18,6 +18,7 @@
 #
 #  MQTT IN:   inverter/power_grid_exchange/json  (PCC, Bat1, SOC1)
 #             ebox/status   {"soc":..,"power":..} (SOC2, EBox-Leistung)  <-- Pi muss publizieren
+#             wetter/lenggries/heute (retained, wetter_prognose_mqtt.py) -> Wetter-Tagesprognose
 #  MQTT OUT:  sofar/state   (Entscheidung -> Pi schreibt in DB)
 #  CONTROL:   sofar/auto       {"ENABLE":1}
 #             sofar/ladesperre {"ENABLE":1}
@@ -36,7 +37,7 @@ substitutions:
   net_bad_timeout: "120000"     # ms ohne erreichbares Netz -> zurueck auf f24
   loop_wd_timeout: "180000"     # ms ohne Herzschlag der Hauptschleife -> Neustart
   soyo_wp_cap: "500"       # W: Soyo-Deckel bei laufender WP, nur Okt-Apr
-  fw_version: "3.12.0"     # SOC1-Tor deckelt nur noch auf das akku-neutrale Budget (pcc+ebox), nicht mehr fix auf 5 kW
+  fw_version: "3.13.0"     # Wetter-Tagesprognose (wetter/lenggries/heute -> wx_kt/wx_kwh/dc_wx), nur Reporting
 
 esphome:
   name: ${device_name}
@@ -129,6 +130,15 @@ globals:
   - { id: last_inv_ms, type: int, restore_value: false, initial_value: '0' }
   - { id: in_aussen,    type: float, restore_value: false, initial_value: '0' }   # Außentemp °C (MQTT aussen/temp) → DC-Temp-Derating
   - { id: in_aussen_ms, type: int,   restore_value: false, initial_value: '0' }   # millis() der letzten Außentemp (Freshness, 0 = nie)
+  # Wetter-Tagesprognose Lenggries (MQTT wetter/lenggries/heute, retained) → fox::wx_kt
+  - { id: in_wx_yday,  type: int,   restore_value: false, initial_value: '-1' }   # Tag der Prognose (1..366), -1 = keine
+  - { id: in_wx_cloud, type: float, restore_value: false, initial_value: '0' }
+  - { id: in_wx_rain,  type: float, restore_value: false, initial_value: '0' }
+  - { id: in_wx_pop,   type: float, restore_value: false, initial_value: '0' }
+  - { id: in_wx_temp,  type: float, restore_value: false, initial_value: '0' }
+  - { id: in_wx_hum,   type: float, restore_value: false, initial_value: '0' }
+  - { id: in_wx_vis,   type: float, restore_value: false, initial_value: '10000' }
+  - { id: in_wx_wind,  type: float, restore_value: false, initial_value: '0' }
   # Schalter (per MQTT)
   - { id: auto_enable,       type: bool, restore_value: false, initial_value: 'true' }
   - { id: ladesperre_enable, type: bool, restore_value: false, initial_value: 'true' }
@@ -459,6 +469,29 @@ mqtt:
             float v = atof(x.c_str());
             if (v > -40.0f && v < 55.0f) { id(in_aussen) = v; id(in_aussen_ms) = millis(); }
 
+    # ── Wetter-Tagesprognose Lenggries (wetter_prognose_mqtt.py, retained) ───
+    #   Tageslicht-Mittel der OWM-Vorhersage fuer HEUTE. fox::step rechnet nur,
+    #   wenn yday dem heutigen Tag entspricht — eine gestrige Prognose bleibt so
+    #   wirkungslos, bis der Pi die neue publiziert.
+    - topic: wetter/lenggries/heute
+      then:
+        - lambda: |-
+            auto num = [](const char* s, const char* k, float d) -> float {
+              const char* p = strstr(s, k); if (!p) return d;
+              p = strchr(p, ':'); if (!p) return d; return atof(p + 1);
+            };
+            const char* s = x.c_str();
+            int yd = (int) num(s, "\"yday\"", -1);
+            if (yd < 1 || yd > 366 || !strstr(s, "\"cloud\"") || !strstr(s, "\"hum\"")) return;
+            id(in_wx_cloud) = num(s, "\"cloud\"", 0);
+            id(in_wx_rain)  = num(s, "\"rain\"", 0);
+            id(in_wx_pop)   = num(s, "\"pop\"", 0);
+            id(in_wx_temp)  = num(s, "\"temp\"", 0);
+            id(in_wx_hum)   = num(s, "\"hum\"", 0);
+            id(in_wx_vis)   = num(s, "\"vis\"", 10000);
+            id(in_wx_wind)  = num(s, "\"wind\"", 0);
+            id(in_wx_yday)  = yd;
+
     # ── Soyo-Sollwert (W) ──────────────────────────────────────────────────
     #   akzeptiert {"W":350} oder nackte Zahl "350"
     - topic: soyo/set
@@ -589,6 +622,11 @@ interval:
           if (id(in_aussen_ms) != 0 && (millis() - (uint32_t) id(in_aussen_ms)) < 900000UL) {
             in.aussen_temp = id(in_aussen); in.aussen_valid = true;
           }
+          // Wetter-Tagesprognose durchreichen; fox::step prueft selbst, ob sie von heute ist
+          in.wx_yday = id(in_wx_yday);
+          in.wx_cloud = id(in_wx_cloud); in.wx_rain = id(in_wx_rain); in.wx_pop = id(in_wx_pop);
+          in.wx_temp = id(in_wx_temp); in.wx_hum = id(in_wx_hum);
+          in.wx_vis = id(in_wx_vis); in.wx_wind = id(in_wx_wind);
 
           int local_sec = t.hour * 3600 + t.minute * 60 + t.second;
           fox::Result r = fox::step(in, fox::g_state, (time_t) t.timestamp, local_sec,
@@ -615,11 +653,12 @@ interval:
                      | (id(relay_ch3).state ? 4 : 0);
           int conflict = (!auto_on && r.final_state != ext_st) ? 1 : 0;
 
-          char js[760];
+          char js[900];
           snprintf(js, sizeof(js),
             "{\"ip\":\"%s\",\"state\":%d,\"changed\":%d,\"pcc\":%.0f,\"bat1\":%.0f,"
             "\"soc2\":%.1f,\"soc1\":%.1f,\"ebox\":%.0f,\"excess\":%.0f,"
-            "\"dc_expected\":%.0f,\"dc_delta\":%.0f,\"ratio_ist\":%.2f,\"ratio_th\":%.2f,"
+            "\"dc_expected\":%.0f,\"dc_wx\":%.0f,\"wx_kt\":%.2f,\"wx_kwh\":%.1f,\"wx_clear_kwh\":%.1f,"
+            "\"dc_delta\":%.0f,\"ratio_ist\":%.2f,\"ratio_th\":%.2f,"
             "\"ratio_now\":%.2f,\"badwx\":%d,\"soc1_gate\":%d,\"soc1_gate_w\":%.0f,"
             "\"ladesperre\":%d,\"do4\":%d,"
             "\"peak_h\":%d,\"win_end_h\":%d,\"noon_h\":%.2f,"
@@ -627,7 +666,8 @@ interval:
             "\"auto\":%d,\"ext_st\":%d,\"conflict\":%d,"
             "\"trace\":\"%s\"}",
             id(dev_ip).c_str(), r.final_state, r.changed ? 1 : 0, in.pcc, in.bat1,
-            in.soc2, in.soc1, in.ebox_w, r.excess, r.dc_expected, r.dc_delta,
+            in.soc2, in.soc1, in.ebox_w, r.excess, r.dc_expected,
+            r.dc_wx, r.wx_kt, r.wx_kwh, r.wx_clear_kwh, r.dc_delta,
             r.ratio, id(ladesperre_ratio),
             r.ratio_now, fox::g_state.badweather_today ? 1 : 0,
             r.soc1_gate ? 1 : 0, r.soc1_gate_w,

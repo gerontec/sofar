@@ -181,6 +181,51 @@ inline double dc_temp_factor(double elev_deg, double ambient) {
   return fmax(0.85, fmin(1.0, f));                          // defensiv geklemmt
 }
 
+// ── Wetter-Tagesprognose (zusaetzlich zum Klarhimmel-Modell) ────────────────
+// Lineares kt-Modell aus wetter_pv_modell.py: Tagesernte der Sofar (Kunde1)
+// gegen die Tageslicht-Mittel der OWM-Vorhersage Lenggries desselben Tages
+// (227 Tage 28.01.-13.09.2026, Kreuzvalidierung R2 0,87, MAE 8 kWh/Tag).
+// Eingaenge kommen retained per MQTT wetter/lenggries/heute
+// (wetter_prognose_mqtt.py), nur fuer den HEUTIGEN Tag.
+//   kt          = Anteil der Klarhimmel-Tagesernte, den das Wetter heute zulaesst
+//   wx_clear_kwh = H0(Tag) * WX_K           (Klarhimmel-Tagesernte Sofar, kWh)
+//   wx_kwh      = kt * wx_clear_kwh          (Prognose Tagesernte Sofar, kWh)
+//   dc_wx       = dc_expected * kt           (Klarhimmel-Leistung jetzt, wetterbereinigt)
+// Reines Reporting: in keine Entscheidung eingebunden.
+constexpr double WX_K   = 9.8419485;   // kWh je kWh/m2 H0 = Klarhimmel-Tag der Sofar 2026
+constexpr double WX_LAT = 47.6833;     // Breite des OWM-Standorts Lenggries
+constexpr double WX_B0    =  0.88148703;
+constexpr double WX_CLOUD = -0.0027887033;   // je % Bewoelkung
+constexpr double WX_RAIN  = -0.0027742720;   // je mm Regen (Summe Tageslicht-Slots)
+constexpr double WX_POP   = -0.0655744400;   // je Regenwahrscheinlichkeit 0..1
+constexpr double WX_TEMP  =  0.0028976317;   // je degC
+constexpr double WX_HUM   = -0.0058142134;   // je % rel. Feuchte
+constexpr double WX_VIS   =  0.0000338368;   // je m Sichtweite
+constexpr double WX_WIND  =  0.0007884399;   // je m/s
+constexpr double WX_SIN   =  0.0434150265;   // Jahreszeit sin(2 pi doy/365)
+constexpr double WX_COS   =  0.0400069807;   // Jahreszeit cos(2 pi doy/365)
+constexpr double WX_KT_MIN = 0.03, WX_KT_MAX = 1.05;
+
+// Extraterrestrische Tagesstrahlung auf die Horizontale [kWh/m2] (FAO-56).
+inline double h0_daily(int doy, double lat_deg) {
+  double phi = d2r(lat_deg);
+  double dr  = 1.0 + 0.033 * cos(2.0 * M_PI * doy / 365.0);
+  double dec = 0.409 * sin(2.0 * M_PI * doy / 365.0 - 1.39);
+  double ws  = acos(fmax(-1.0, fmin(1.0, -tan(phi) * tan(dec))));
+  double mj  = 24.0 * 60.0 / M_PI * 0.0820 * dr
+             * (ws * sin(phi) * sin(dec) + cos(phi) * cos(dec) * sin(ws));
+  return mj / 3.6;
+}
+
+inline double wx_kt(int doy, double cloud, double rain, double pop, double temp,
+                    double hum, double vis, double wind) {
+  double kt = WX_B0 + WX_CLOUD * cloud + WX_RAIN * rain + WX_POP * pop
+            + WX_TEMP * temp + WX_HUM * hum + WX_VIS * vis + WX_WIND * wind
+            + WX_SIN * sin(2.0 * M_PI * doy / 365.0)
+            + WX_COS * cos(2.0 * M_PI * doy / 365.0);
+  return fmax(WX_KT_MIN, fmin(WX_KT_MAX, kt));
+}
+
 // ── ETA bis SOC 100 % (Port von expectsoc100.py, gleiche Formeln) ───────────
 // Trend statt Modell: SOC-Steigung und Ladeleistung kommen aus dem Messfenster,
 // der Restertrag aus dc_now() mal Bewoelkung. Teuer ist allein die Integration,
@@ -223,7 +268,12 @@ struct State {
 // Beide über dasselbe Fenster gemittelt → Akku-voll-Sprung (bat1→pcc) ist neutral.
 struct Inputs { float pcc, bat1, soc1, soc2, ebox_w, bat1_avg5, pcc_avg5;
                 float aussen_temp = 0; bool aussen_valid = false;
-                bool  pcc_valid = true; };   // false = PCC kam als null (Lesefehler)
+                bool  pcc_valid = true;      // false = PCC kam als null (Lesefehler)
+                // Wetter-Tagesprognose (wetter/lenggries/heute); gilt nur, wenn
+                // wx_yday dem heutigen lokalen Tag entspricht (-1 = keine Prognose)
+                int   wx_yday = -1;
+                float wx_cloud = 0, wx_rain = 0, wx_pop = 0, wx_temp = 0,
+                      wx_hum = 0, wx_vis = 10000, wx_wind = 0; };
 
 struct Result {
   int   final_state = 0;
@@ -240,6 +290,11 @@ struct Result {
   float exp_max_h = 0.0f;  // Uhrzeit dazu (lokale Dezimalstunde)
   bool  soc1_gate = false; // true = SOC1-Deckel aktiv (SOC1 heute noch nie >99 %)
   float soc1_gate_w = 0.0f; // wirksamer Deckel dieses Zyklus (Reporting)
+  // Wetter-Tagesprognose (Reporting, -1 = keine Prognose fuer heute)
+  float wx_kt = -1.0f;        // Anteil der Klarhimmel-Tagesernte
+  float wx_kwh = -1.0f;       // Prognose Tagesernte Sofar [kWh]
+  float wx_clear_kwh = -1.0f; // Klarhimmel-Tagesernte Sofar [kWh]
+  float dc_wx = -1.0f;        // dc_expected * wx_kt [W]
   char  trace[160] = "";
 };
 
@@ -465,6 +520,14 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
   if (in.aussen_valid && in.aussen_temp > -40.0f && in.aussen_temp < 55.0f && r.dc_expected > 0) {
     double elev, azN; sun_pos(now_utc, elev, azN);
     r.dc_expected *= dc_temp_factor(elev, in.aussen_temp);
+  }
+  // Wetter-Tagesprognose: nur mit Vorhersage fuer den heutigen Tag.
+  if (in.wx_yday == local_yday) {
+    r.wx_kt = (float)wx_kt(local_yday, in.wx_cloud, in.wx_rain, in.wx_pop, in.wx_temp,
+                           in.wx_hum, in.wx_vis, in.wx_wind);
+    r.wx_clear_kwh = (float)(h0_daily(local_yday, WX_LAT) * WX_K);
+    r.wx_kwh = r.wx_kt * r.wx_clear_kwh;
+    r.dc_wx  = r.dc_expected * r.wx_kt;
   }
 
   // Peak-Fenster immer berechnen (auch ohne ladesperre_enable) → für JSON-Reporting

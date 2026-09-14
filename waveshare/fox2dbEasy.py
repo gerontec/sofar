@@ -9,6 +9,7 @@
 # Inputs (wie ESP):  inverter/power_grid_exchange/json  (PCC, Bat1, SOC1)
 #                    pv_zaehl2/#                        (Z2 wirkleist, PCC-Fallback)
 #                    ebox/pwr  (retained)              (SOC2, EBox-Leistung)
+#                    wetter/lenggries/heute (retained)  (Wetter-Tagesprognose, nur Reporting)
 # Output:            fox2db/easy/state  (state + trace — Gründe als Debug-Feature!)
 #
 # Zustand (fox::State) wird über Cron-Zyklen in /tmp/fox2dbEasy_state.json gehalten
@@ -123,6 +124,7 @@ MQTT_CFG = {
     'topic':       'inverter/power_grid_exchange/json',
     'zaehl_topic': 'pv_zaehl2/#',
     'ebox_topic':  'ebox/pwr',
+    'wx_topic':    'wetter/lenggries/heute',
     'timeout':      43,
     'pub_topic':   'fox2db/easy/state',
 }
@@ -198,6 +200,49 @@ def calc_arrays(arrs, t_utc: float, month: int) -> float:
 def dc_now(t_utc: float, month: int) -> float:
     return calc_arrays(ARRAYS, t_utc, month) + calc_arrays(ARRAYS_EAST, t_utc, month)
 
+# ── Wetter-Tagesprognose (zusaetzlich zum Klarhimmel-Modell, 1:1 aus Header) ─
+# Lineares kt-Modell aus wetter_pv_modell.py: Tagesernte der Sofar (Kunde1)
+# gegen die Tageslicht-Mittel der OWM-Vorhersage Lenggries desselben Tages
+# (227 Tage 28.01.-13.09.2026, Kreuzvalidierung R2 0,87, MAE 8 kWh/Tag).
+# Eingaenge kommen retained per MQTT wetter/lenggries/heute
+# (wetter_prognose_mqtt.py), nur fuer den HEUTIGEN Tag.
+#   kt           = Anteil der Klarhimmel-Tagesernte, den das Wetter heute zulaesst
+#   wx_clear_kwh = H0(Tag) * WX_K           (Klarhimmel-Tagesernte Sofar, kWh)
+#   wx_kwh       = kt * wx_clear_kwh          (Prognose Tagesernte Sofar, kWh)
+#   dc_wx        = dc_expected * kt           (Klarhimmel-Leistung jetzt, wetterbereinigt)
+# Reines Reporting: in keine Entscheidung eingebunden.
+WX_K   = 9.8419485       # kWh je kWh/m2 H0 = Klarhimmel-Tag der Sofar 2026
+WX_LAT = 47.6833         # Breite des OWM-Standorts Lenggries
+WX_B0    =  0.88148703
+WX_CLOUD = -0.0027887033     # je % Bewoelkung
+WX_RAIN  = -0.0027742720     # je mm Regen (Summe Tageslicht-Slots)
+WX_POP   = -0.0655744400     # je Regenwahrscheinlichkeit 0..1
+WX_TEMP  =  0.0028976317     # je degC
+WX_HUM   = -0.0058142134     # je % rel. Feuchte
+WX_VIS   =  0.0000338368     # je m Sichtweite
+WX_WIND  =  0.0007884399     # je m/s
+WX_SIN   =  0.0434150265     # Jahreszeit sin(2 pi doy/365)
+WX_COS   =  0.0400069807     # Jahreszeit cos(2 pi doy/365)
+WX_KT_MIN, WX_KT_MAX = 0.03, 1.05
+
+def h0_daily(doy: int, lat_deg: float) -> float:
+    """Extraterrestrische Tagesstrahlung auf die Horizontale [kWh/m2] (FAO-56)."""
+    phi = _d2r(lat_deg)
+    dr  = 1.0 + 0.033 * math.cos(2.0 * math.pi * doy / 365.0)
+    dec = 0.409 * math.sin(2.0 * math.pi * doy / 365.0 - 1.39)
+    ws  = math.acos(max(-1.0, min(1.0, -math.tan(phi) * math.tan(dec))))
+    mj  = (24.0 * 60.0 / math.pi * 0.0820 * dr
+           * (ws * math.sin(phi) * math.sin(dec) + math.cos(phi) * math.cos(dec) * math.sin(ws)))
+    return mj / 3.6
+
+def wx_kt(doy: int, cloud: float, rain: float, pop: float, temp: float,
+          hum: float, vis: float, wind: float) -> float:
+    kt = (WX_B0 + WX_CLOUD * cloud + WX_RAIN * rain + WX_POP * pop
+          + WX_TEMP * temp + WX_HUM * hum + WX_VIS * vis + WX_WIND * wind
+          + WX_SIN * math.sin(2.0 * math.pi * doy / 365.0)
+          + WX_COS * math.cos(2.0 * math.pi * doy / 365.0))
+    return max(WX_KT_MIN, min(WX_KT_MAX, kt))
+
 # ═══════════════════════════════════════════════════════════════════════════
 #                         ZUSTAND (fox::State, persistent)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -257,9 +302,12 @@ def save_state(st: State):
     }))
 
 class Inputs:
-    def __init__(self, pcc, bat1, soc1, soc2, ebox_w, pcc_valid=True):
+    def __init__(self, pcc, bat1, soc1, soc2, ebox_w, pcc_valid=True, wx=None):
         self.pcc, self.bat1, self.soc1, self.soc2, self.ebox_w = pcc, bat1, soc1, soc2, ebox_w
         self.pcc_valid = pcc_valid            # False = PCC kam als null (Lesefehler)
+        # Wetter-Tagesprognose (wetter/lenggries/heute); gilt nur, wenn wx['yday']
+        # dem heutigen lokalen Tag entspricht (None = keine Prognose)
+        self.wx = wx
 
 class Result:
     def __init__(self):
@@ -276,6 +324,11 @@ class Result:
         self.win_end_h = -1
         self.soc1_gate = False   # True = SOC1-Deckel aktiv (SOC1 heute noch nie >99 %)
         self.soc1_gate_w = 0.0   # wirksamer Deckel dieses Zyklus (Reporting)
+        # Wetter-Tagesprognose (Reporting, -1 = keine Prognose fuer heute)
+        self.wx_kt = -1.0        # Anteil der Klarhimmel-Tagesernte
+        self.wx_kwh = -1.0       # Prognose Tagesernte Sofar [kWh]
+        self.wx_clear_kwh = -1.0 # Klarhimmel-Tagesernte Sofar [kWh]
+        self.dc_wx = -1.0        # dc_expected * wx_kt [W]
         self.trace = ""
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -395,6 +448,37 @@ def fetch_ebox() -> Tuple[float, float]:
     except Exception:
         pass
     return got.get('soc', -1.0), got.get('power', 0.0)
+
+
+def fetch_wx() -> Optional[Dict]:
+    """wetter/lenggries/heute (retained) → Dict mit yday/cloud/rain/pop/temp/hum/vis/wind.
+
+    None = keine gueltige Prognose (fehlt, unvollstaendig) → wx-Werte bleiben -1.
+    """
+    got = {}
+
+    def on_message(_c, _u, msg):
+        try:
+            j = json.loads(msg.payload.decode())
+            if 1 <= int(j.get('yday', -1)) <= 366 and 'cloud' in j and 'hum' in j and 'temp' in j:
+                got['wx'] = j
+        except Exception:
+            pass
+
+    client = mqtt.Client(client_id="fox2dbeasy_wx", clean_session=True)
+    client.on_message = on_message
+    try:
+        client.connect(MQTT_CFG['broker'], MQTT_CFG['port'], keepalive=10)
+        client.subscribe(MQTT_CFG['wx_topic'], qos=0)     # retained → kommt sofort
+        client.loop_start()
+        deadline = time.monotonic() + 3.0
+        while 'wx' not in got and time.monotonic() < deadline:
+            time.sleep(0.05)
+        client.loop_stop()
+        client.disconnect()
+    except Exception:
+        pass
+    return got.get('wx')
 
 # ═══════════════════════════════════════════════════════════════════════════
 #                         ENTSCHEIDUNGSLOGIK (1:1 aus fox2db_logic.h)
@@ -538,6 +622,15 @@ def step(in_: Inputs, st: State, now_local: dt.datetime,
         st.last_yday  = local_yday
 
     r.dc_expected = dc_now(now_utc, month)
+    # Wetter-Tagesprognose: nur mit Vorhersage fuer den heutigen Tag.
+    wx = in_.wx
+    if wx is not None and int(wx.get('yday', -1)) == local_yday:
+        r.wx_kt = wx_kt(local_yday, float(wx['cloud']), float(wx.get('rain', 0)),
+                        float(wx.get('pop', 0)), float(wx['temp']), float(wx['hum']),
+                        float(wx.get('vis', 10000)), float(wx.get('wind', 0)))
+        r.wx_clear_kwh = h0_daily(local_yday, WX_LAT) * WX_K
+        r.wx_kwh = r.wx_kt * r.wx_clear_kwh
+        r.dc_wx  = r.dc_expected * r.wx_kt
 
     st.pcc_buf[st.pcc_i] = in_.pcc
     st.pcc_i = (st.pcc_i + 1) % 10
@@ -707,6 +800,8 @@ def publish_state(r: Result, in_: Inputs, st: State):
         "soc1": round(in_.soc1, 1), "soc2": round(in_.soc2, 1),
         "ebox": round(in_.ebox_w), "excess": round(r.excess),
         "dc_expected": round(r.dc_expected), "dc_delta": round(r.dc_delta),
+        "dc_wx": round(r.dc_wx), "wx_kt": round(r.wx_kt, 2),
+        "wx_kwh": round(r.wx_kwh, 1), "wx_clear_kwh": round(r.wx_clear_kwh, 1),
         "ratio": round(r.ratio, 2), "ratio_now": round(r.ratio_now, 2),
         "badwx": st.badweather_today, "soc1_gate": r.soc1_gate,
         "soc1_gate_w": round(r.soc1_gate_w),
@@ -746,6 +841,7 @@ def main():
 
     z2       = fetch_z2()
     soc2, ebox_w = fetch_ebox()
+    wx       = fetch_wx()
 
     pcc  = mqtt_data['pcc']
     bat1 = mqtt_data['bat1']
@@ -757,7 +853,7 @@ def main():
 
     st = load_state()
     in_ = Inputs(pcc=pcc, bat1=bat1, soc1=soc1, soc2=soc2, ebox_w=ebox_w,
-                 pcc_valid=not mqtt_data['pcc_null'] or z2 != 0.0)
+                 pcc_valid=not mqtt_data['pcc_null'] or z2 != 0.0, wx=wx)
 
     _log(f"Data: PCC={pcc:.0f}W  Bat1={bat1:.0f}W  SOC1={soc1:.1f}%  SOC2={soc2:.1f}%  "
          f"EBox={ebox_w:.0f}W  State={st.relay_st}  Stable={st.stable}  Prot={st.prot}")
