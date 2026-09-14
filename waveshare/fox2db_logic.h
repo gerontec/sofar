@@ -268,6 +268,8 @@ struct State {
   float exp_max_h_cache = 0.0f;
   float exp_max_p_cache   = -1.0f;  // dito, reine Persistenz (ohne Wetter, Vergleich)
   float exp_max_p_h_cache = 0.0f;
+  float eta_k_cache    = -1.0f;     // kWh je SOC-Prozent der letzten Rechnung
+  float need_kwh_cache = -1.0f;     // Restbedarf bis 100 % [kWh]
 };
 
 // pcc_avg5 + bat1_avg5: 5-Min-Mittel aus pivot2db/MariaDB, nur für die Wetter-Ratio.
@@ -296,6 +298,8 @@ struct Result {
   float exp_max_h = 0.0f;  // Uhrzeit dazu (lokale Dezimalstunde)
   float exp_max_p   = -1.0f; // wie exp_max, aber nur Messung fortgeschrieben (alte Rechnung)
   float exp_max_p_h = 0.0f;
+  float eta_k    = -1.0f;    // kWh(AC) je SOC-Prozent: gemessen oder ETA_K_DEF (-1 = nicht gerechnet)
+  float need_kwh = -1.0f;    // Restbedarf bis 100 % = (100 - soc2) * eta_k [kWh]; 0 = voll
   bool  soc1_gate = false; // true = SOC1-Deckel aktiv (SOC1 heute noch nie >99 %)
   float soc1_gate_w = 0.0f; // wirksamer Deckel dieses Zyklus (Reporting)
   // Wetter-Tagesprognose (Reporting, -1 = keine Prognose fuer heute)
@@ -491,15 +495,18 @@ inline void predict_max_soc(State &st, const Inputs &in, Result &r,
 
   if (--st.eta_tick > 0) {                     // dazwischen: Cache, keine Rechnung
     r.exp_max = st.exp_max_cache; r.exp_max_h = st.exp_max_h_cache;
-    r.exp_max_p = st.exp_max_p_cache; r.exp_max_p_h = st.exp_max_p_h_cache; return;
+    r.exp_max_p = st.exp_max_p_cache; r.exp_max_p_h = st.exp_max_p_h_cache;
+    r.eta_k = st.eta_k_cache; r.need_kwh = st.need_kwh_cache; return;
   }
   st.exp_max_cache = -1.0f; st.exp_max_h_cache = 0.0f;   // -1 = nicht beurteilbar
   st.exp_max_p_cache = -1.0f; st.exp_max_p_h_cache = 0.0f;
+  st.eta_k_cache = -1.0f; st.need_kwh_cache = -1.0f;
   const float now_h = (float)local_sec_day / 3600.0f;
 
   if (in.soc2 >= MAX_SOC) {                    // schon voll: Maximum steht jetzt
     st.exp_max_cache = MAX_SOC; st.exp_max_h_cache = now_h;
     st.exp_max_p_cache = MAX_SOC; st.exp_max_p_h_cache = now_h;
+    st.need_kwh_cache = 0.0f;
   } else if (in.soc2 >= 0 && r.dc_expected > 0 && st.clear_ema > 0.02f) {
     // kWh je Prozent aus dem Messfenster; nur uebernehmen wenn plausibel.
     float k = ETA_K_DEF;
@@ -511,6 +518,8 @@ inline void predict_max_soc(State &st, const Inputs &in, Result &r,
         if (k_meas >= ETA_K_MIN && k_meas <= ETA_K_MAX) k = k_meas;
       }
     }
+    st.eta_k_cache    = k;                                               // Reporting
+    st.need_kwh_cache = (MAX_SOC - in.soc2) * k;
     float pmax = (st.ebox_max_today > 1000.0f) ? st.ebox_max_today
                                                : (float)state_power(7);  // Deckel
     float kt_wx = (r.wx_kt >= 0.0f) ? fminf(1.0f, r.wx_kt) : -1.0f;      // -1 = keine Prognose
@@ -525,6 +534,7 @@ inline void predict_max_soc(State &st, const Inputs &in, Result &r,
   st.eta_tick = (st.exp_max_cache < 0.0f) ? 1 : ETA_EVERY;
   r.exp_max = st.exp_max_cache; r.exp_max_h = st.exp_max_h_cache;
   r.exp_max_p = st.exp_max_p_cache; r.exp_max_p_h = st.exp_max_p_h_cache;
+  r.eta_k = st.eta_k_cache; r.need_kwh = st.need_kwh_cache;
 }
 
 // ── Gesamt-Pipeline (entspricht main()) ──────────────────────────────────────
@@ -548,6 +558,7 @@ inline Result step(const Inputs &in, State &st, time_t now_utc, int local_sec_da
     st.ebox_ema = -1.0f; st.clear_ema = -1.0f;
     st.eta_tick = 0; st.exp_max_cache = -1.0f; st.exp_max_h_cache = 0.0f;
     st.exp_max_p_cache = -1.0f; st.exp_max_p_h_cache = 0.0f;
+    st.eta_k_cache = -1.0f; st.need_kwh_cache = -1.0f;
   }
   r.dc_expected = dc_now(now_utc, month);
   // Temperatur-Derating nur bei gültiger, plausibler Außentemp; sonst unverändert.

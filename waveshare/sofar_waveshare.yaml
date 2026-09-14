@@ -37,7 +37,8 @@ substitutions:
   net_bad_timeout: "120000"     # ms ohne erreichbares Netz -> zurueck auf f24
   loop_wd_timeout: "180000"     # ms ohne Herzschlag der Hauptschleife -> Neustart
   soyo_wp_cap: "500"       # W: Soyo-Deckel bei laufender WP, nur Okt-Apr
-  fw_version: "3.14.0"     # SOC-Prognose exp_max mischt Messung und wx_kt nach Abstand (TAU 1,5 h); exp_max_p = alte Persistenz zum Vergleich
+  fw_version: "3.14.1"     # sofar/state: eta_k (kWh je SOC-%) und need_kwh (Restbedarf bis 100 %)
+  # 3.14.0: SOC-Prognose exp_max mischt Messung und wx_kt nach Abstand (TAU 1,5 h); exp_max_p = alte Persistenz zum Vergleich
   # 3.13.1: Wetter-Tagesprognose (wetter/lenggries/heute -> wx_kt/wx_kwh/dc_wx), nur Reporting; null/unvollstaendig -> verworfen
 
 esphome:
@@ -670,6 +671,7 @@ interval:
             "\"ladesperre\":%d,\"do4\":%d,"
             "\"peak_h\":%d,\"win_end_h\":%d,\"noon_h\":%.2f,"
             "\"exp_max\":%.1f,\"exp_max_h\":%.2f,\"exp_max_p\":%.1f,\"exp_max_p_h\":%.2f,"
+            "\"eta_k\":%.3f,\"need_kwh\":%.1f,"
             "\"auto\":%d,\"ext_st\":%d,\"conflict\":%d,"
             "\"trace\":\"%s\"}",
             id(dev_ip).c_str(), r.final_state, r.changed ? 1 : 0, in.pcc, in.bat1,
@@ -681,6 +683,7 @@ interval:
             r.ladesperre ? 1 : 0, r.do4_pulse ? 1 : 0,
             r.peak_h, r.win_end_h, r.noon_h, r.exp_max, r.exp_max_h,
             r.exp_max_p, r.exp_max_p_h,
+            r.eta_k, r.need_kwh,
             auto_on ? 1 : 0, ext_st, conflict, r.trace);
           id(mqtt_client).publish("sofar/state", js);
       - if:
