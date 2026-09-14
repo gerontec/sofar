@@ -623,14 +623,22 @@ def step(in_: Inputs, st: State, now_local: dt.datetime,
 
     r.dc_expected = dc_now(now_utc, month)
     # Wetter-Tagesprognose: nur mit Vorhersage fuer den heutigen Tag.
+    # Reines Reporting — kaputte Werte (null, Text) duerfen den Zyklus nie
+    # abbrechen, dann bleiben die wx-Werte einfach -1. Ein null in irgendeinem
+    # Feld verwirft die ganze Prognose — wie der ESP (strstr "null").
     wx = in_.wx
-    if wx is not None and int(wx.get('yday', -1)) == local_yday:
-        r.wx_kt = wx_kt(local_yday, float(wx['cloud']), float(wx.get('rain', 0)),
-                        float(wx.get('pop', 0)), float(wx['temp']), float(wx['hum']),
-                        float(wx.get('vis', 10000)), float(wx.get('wind', 0)))
-        r.wx_clear_kwh = h0_daily(local_yday, WX_LAT) * WX_K
-        r.wx_kwh = r.wx_kt * r.wx_clear_kwh
-        r.dc_wx  = r.dc_expected * r.wx_kt
+    try:
+        if (wx is not None and not any(v is None for v in wx.values())
+                and int(wx.get('yday', -1)) == local_yday):
+            kt = wx_kt(local_yday, float(wx['cloud']), float(wx.get('rain') or 0),
+                       float(wx.get('pop') or 0), float(wx['temp']), float(wx['hum']),
+                       float(wx.get('vis') or 10000), float(wx.get('wind') or 0))
+            clear = h0_daily(local_yday, WX_LAT) * WX_K
+            r.wx_kt, r.wx_clear_kwh = kt, clear
+            r.wx_kwh = kt * clear
+            r.dc_wx  = r.dc_expected * kt
+    except (TypeError, ValueError, KeyError, AttributeError):
+        pass
 
     st.pcc_buf[st.pcc_i] = in_.pcc
     st.pcc_i = (st.pcc_i + 1) % 10

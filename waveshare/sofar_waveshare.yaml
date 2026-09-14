@@ -37,7 +37,7 @@ substitutions:
   net_bad_timeout: "120000"     # ms ohne erreichbares Netz -> zurueck auf f24
   loop_wd_timeout: "180000"     # ms ohne Herzschlag der Hauptschleife -> Neustart
   soyo_wp_cap: "500"       # W: Soyo-Deckel bei laufender WP, nur Okt-Apr
-  fw_version: "3.13.0"     # Wetter-Tagesprognose (wetter/lenggries/heute -> wx_kt/wx_kwh/dc_wx), nur Reporting
+  fw_version: "3.13.1"     # Wetter-Tagesprognose (wetter/lenggries/heute -> wx_kt/wx_kwh/dc_wx), nur Reporting; null/unvollstaendig -> verworfen
 
 esphome:
   name: ${device_name}
@@ -482,7 +482,13 @@ mqtt:
             };
             const char* s = x.c_str();
             int yd = (int) num(s, "\"yday\"", -1);
-            if (yd < 1 || yd > 366 || !strstr(s, "\"cloud\"") || !strstr(s, "\"hum\"")) return;
+            // Unvollstaendig oder null → Prognose verwerfen (wx-Werte bleiben -1).
+            // Reines Reporting: an keiner Entscheidung beteiligt, darf also nie stoeren.
+            if (yd < 1 || yd > 366 || !strstr(s, "\"cloud\"") || !strstr(s, "\"hum\"")
+                || !strstr(s, "\"temp\"") || strstr(s, "null")) {
+              id(in_wx_yday) = -1;
+              return;
+            }
             id(in_wx_cloud) = num(s, "\"cloud\"", 0);
             id(in_wx_rain)  = num(s, "\"rain\"", 0);
             id(in_wx_pop)   = num(s, "\"pop\"", 0);
