@@ -37,7 +37,8 @@ substitutions:
   net_bad_timeout: "120000"     # ms ohne erreichbares Netz -> zurueck auf f24
   loop_wd_timeout: "180000"     # ms ohne Herzschlag der Hauptschleife -> Neustart
   soyo_wp_cap: "500"       # W: Soyo-Deckel bei laufender WP, nur Okt-Apr
-  fw_version: "3.13.1"     # Wetter-Tagesprognose (wetter/lenggries/heute -> wx_kt/wx_kwh/dc_wx), nur Reporting; null/unvollstaendig -> verworfen
+  fw_version: "3.14.0"     # SOC-Prognose exp_max mischt Messung und wx_kt nach Abstand (TAU 1,5 h); exp_max_p = alte Persistenz zum Vergleich
+  # 3.13.1: Wetter-Tagesprognose (wetter/lenggries/heute -> wx_kt/wx_kwh/dc_wx), nur Reporting; null/unvollstaendig -> verworfen
 
 esphome:
   name: ${device_name}
@@ -659,7 +660,7 @@ interval:
                      | (id(relay_ch3).state ? 4 : 0);
           int conflict = (!auto_on && r.final_state != ext_st) ? 1 : 0;
 
-          char js[900];
+          char js[1000];
           snprintf(js, sizeof(js),
             "{\"ip\":\"%s\",\"state\":%d,\"changed\":%d,\"pcc\":%.0f,\"bat1\":%.0f,"
             "\"soc2\":%.1f,\"soc1\":%.1f,\"ebox\":%.0f,\"excess\":%.0f,"
@@ -668,7 +669,7 @@ interval:
             "\"ratio_now\":%.2f,\"badwx\":%d,\"soc1_gate\":%d,\"soc1_gate_w\":%.0f,"
             "\"ladesperre\":%d,\"do4\":%d,"
             "\"peak_h\":%d,\"win_end_h\":%d,\"noon_h\":%.2f,"
-            "\"exp_max\":%.1f,\"exp_max_h\":%.2f,"
+            "\"exp_max\":%.1f,\"exp_max_h\":%.2f,\"exp_max_p\":%.1f,\"exp_max_p_h\":%.2f,"
             "\"auto\":%d,\"ext_st\":%d,\"conflict\":%d,"
             "\"trace\":\"%s\"}",
             id(dev_ip).c_str(), r.final_state, r.changed ? 1 : 0, in.pcc, in.bat1,
@@ -679,6 +680,7 @@ interval:
             r.soc1_gate ? 1 : 0, r.soc1_gate_w,
             r.ladesperre ? 1 : 0, r.do4_pulse ? 1 : 0,
             r.peak_h, r.win_end_h, r.noon_h, r.exp_max, r.exp_max_h,
+            r.exp_max_p, r.exp_max_p_h,
             auto_on ? 1 : 0, ext_st, conflict, r.trace);
           id(mqtt_client).publish("sofar/state", js);
       - if:
