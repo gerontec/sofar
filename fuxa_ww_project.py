@@ -203,6 +203,37 @@ value(141, 648, 'heat_pump_mode', '(3 = DHW)', None, 13, 'normal', fill=MUTED)
 text(135, 670, 'Kältemittel R290 (Propan)', 13, anchor='middle', fill=MUTED)
 text(135, 692, 'Durchfluss WP ungemessen', 13, anchor='middle', fill=MUTED)
 
+# power supply: CEE 400 V 3~ socket (5 pins L1 L2 L3 N + PE at 6 o'clock)
+shape('path', {'d': 'M296,160 L240,160', 'fill': 'none', 'stroke': '#78716c', 'stroke-width': 5, 'stroke-linecap': 'round'})
+shape('rect', {'x': 296, 'y': 128, 'width': 64, 'height': 64, 'rx': 8, 'fill': '#7f1d1d', 'stroke': STROKE, 'stroke-width': 1.2})
+shape('circle', {'cx': 328, 'cy': 160, 'r': 24, 'fill': '#dc2626', 'stroke': '#fca5a5', 'stroke-width': 1.2})
+for i, a in enumerate((90, 162, 234, 306, 18)):
+    r = 15
+    shape('circle', {'cx': round(328 + r * math.cos(math.radians(a)), 1), 'cy': round(160 + r * math.sin(math.radians(a)), 1),
+                     'r': 4.5 if i == 0 else 3.2, 'fill': '#1f0a0a'})
+text(372, 154, 'CEE 400 V', 14, 'bold')
+text(372, 172, '3~ L1 L2 L3 N PE', 11, fill=MUTED)
+
+# Modbus RTU: RS485 A/B from the heat pump (slave 1) and the SDM72D (slave 7) to the Raspi kellertreppe
+BUS_A, BUS_B = '#fde047', '#93c5fd'
+shape('rect', {'x': 212, 'y': 700, 'width': 26, 'height': 22, 'rx': 2, 'fill': '#0f1c2b', 'stroke': STROKE, 'stroke-width': 1.2})
+text(208, 712, 'ID 1', 11, anchor='end', fill=MUTED)
+text(222, 709, 'A', 8, 'bold', 'middle', BUS_A)
+text(230, 719, 'B', 8, 'bold', 'middle', BUS_B)
+shape('path', {'d': 'M238,706 L262,706 M250,706 L250,572 L262,572', 'fill': 'none', 'stroke': BUS_A, 'stroke-width': 2})
+shape('path', {'d': 'M238,714 L262,714 M254,714 L254,582 L262,582', 'fill': 'none', 'stroke': BUS_B, 'stroke-width': 2})
+shape('circle', {'cx': 250, 'cy': 706, 'r': 2.5, 'fill': BUS_A})
+shape('circle', {'cx': 254, 'cy': 714, 'r': 2.5, 'fill': BUS_B})
+text(322, 548, 'RS485 Modbus RTU', 11, anchor='middle', fill=MUTED)
+box(262, 558, 120, 40, '#1c1c2a', 6)
+text(322, 575, 'SDM72D', 13, 'bold', 'middle')
+text(322, 591, 'ID 7', 11, anchor='middle', fill=MUTED)
+box(262, 630, 120, 88, '#1c1c2a', 6)
+text(322, 652, 'Raspi', 14, 'bold', 'middle')
+text(322, 670, 'kellertreppe', 12, anchor='middle', fill=MUTED)
+text(322, 688, 'ttyUSB33 (Prolific)', 11, anchor='middle', fill=MUTED)
+text(322, 704, 'Poll 60 s → wagodb', 11, anchor='middle', fill=MUTED)
+
 # buffer
 tank(395, 240, 510, 75, 18, TANK, 'buffer_tank_temp')
 text(395, 350, 'Puffer', 16, 'bold', 'middle')
