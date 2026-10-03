@@ -54,7 +54,6 @@ tags['t_timestamp'] = {'id': 't_timestamp', 'name': 'timestamp', 'label': 'times
 svg, svg_top, items = [], [], {}
 IMG = 'https://heissa.de/web1/fuxa_img/'
 SHIFT_X, SHIFT_Y = -20, -60
-SCALE = 2  # whole drawing (canvas, shift group, image widgets) scaled by this factor
 n = [0]
 
 
@@ -111,7 +110,7 @@ def image(x, y, w, h, base_url, key, states):
     """FUXA image widget; states = [(min, max, url)] as loadImage actions. Unmatched values show base_url
     (needs the loadImage fallback of gerontec/FUXA feature/load-image-default). Placed outside the shift group."""
     gid, did = nid('OXC_'), nid('OXC_')
-    x, y, w, h = (x + SHIFT_X) * SCALE, (y + SHIFT_Y) * SCALE, w * SCALE, h * SCALE
+    x, y = x + SHIFT_X, y + SHIFT_Y
     svg_top.append(f'<g id="{gid}" type="svg-ext-own_ctrl-image" style="pointer-events:none" stroke-width="0">'
                    f'<rect x="{x}" y="{y}" width="{w}" height="{h}" stroke-width="0" fill="none" id="{nid()}"/>'
                    f'<foreignObject x="{x}" y="{y}" width="{w}" height="{h}" id="H-{did}">'
@@ -202,8 +201,7 @@ shape('path', {'d': 'M226,385 L219,380 L219,390 Z', 'fill': STROKE})
 text(135, 648, 'Modus', 13, anchor='end', fill=MUTED)
 value(141, 648, 'heat_pump_mode', '(3 = DHW)', None, 13, 'normal', fill=MUTED)
 text(135, 670, 'Kältemittel R290 (Propan)', 13, anchor='middle', fill=MUTED)
-text(100, 692, 'Flow set', 13, anchor='end', fill=MUTED)
-value(105, 692, 'heat_pump_flow_set_pct', '% of 3800l/h', None, 13, 'normal', fill=MUTED)
+text(135, 692, 'Flow set 80% of 3800l/h', 13, anchor='middle', fill=MUTED)
 
 # power supply: CEE 400 V 3~ socket (5 pins L1 L2 L3 N + PE at 6 o'clock)
 shape('path', {'d': 'M296,160 L240,160', 'fill': 'none', 'stroke': '#78716c', 'stroke-width': 5, 'stroke-linecap': 'round'})
@@ -213,19 +211,6 @@ for i, a in enumerate((90, 162, 234, 306, 18)):
     r = 15
     shape('circle', {'cx': round(328 + r * math.cos(math.radians(a)), 1), 'cy': round(160 + r * math.sin(math.radians(a)), 1),
                      'r': 4.5 if i == 0 else 3.2, 'fill': '#1f0a0a'})
-# small 6 h chart tile above the CEE socket: click opens the Grafana public dashboard (no login) as popup;
-# Grafana has allow_embedding=false, so no FUXA iframe
-GRAFANA_6H = ('https://heissa.de:2999/public-dashboards/da615a84e4af45caa6127c4fbec05824'
-              '?from=now-6h&to=now&timezone=browser&refresh=1m&viewPanel=panel-1')
-box(296, 92, 250, 30, '#111827', 6)
-shape('path', {'d': 'M304,116 L316,110 L326,113 L338,102 L350,106 L362,98', 'fill': 'none', 'stroke': '#f87171', 'stroke-width': 1.5})
-shape('path', {'d': 'M304,118 L318,116 L330,117 L342,112 L354,114 L362,111', 'fill': 'none', 'stroke': '#60a5fa', 'stroke-width': 1.5})
-text(372, 112, 'Heizung 6 h (Grafana) ▸', 13, 'bold')
-sid = shape('rect', {'x': 296, 'y': 92, 'width': 250, 'height': 30, 'rx': 6, 'fill': '#ffffff', 'fill-opacity': 0.001, 'stroke': 'none'})
-items[sid] = {'id': sid, 'type': 'svg-ext-shapes-rect', 'name': 'grafana_6h', 'label': 'Shapes',
-              'property': {'variableId': '', 'events': [{'type': 'click', 'action': 'oncard', 'actparam': GRAFANA_6H,
-                                                         'actoptions': {'width': 900, 'height': 520, 'newTab': False}}],
-                           'actions': [], 'ranges': []}}
 text(372, 154, 'CEE 400 V', 14, 'bold')
 text(372, 172, '3~ L1 L2 L3 N PE', 11, fill=MUTED)
 
@@ -240,11 +225,9 @@ shape('path', {'d': 'M238,714 L262,714 M254,714 L254,582 L262,582', 'fill': 'non
 shape('circle', {'cx': 250, 'cy': 706, 'r': 2.5, 'fill': BUS_A})
 shape('circle', {'cx': 254, 'cy': 714, 'r': 2.5, 'fill': BUS_B})
 text(322, 548, 'RS485 Modbus RTU', 11, anchor='middle', fill=MUTED)
-box(262, 558, 120, 58, '#1c1c2a', 6)
+box(262, 558, 120, 40, '#1c1c2a', 6)
 text(322, 575, 'SDM72D', 13, 'bold', 'middle')
 text(322, 591, 'ID 7', 11, anchor='middle', fill=MUTED)
-text(318, 609, 'JAZ', 12, anchor='end', fill=MUTED)
-value(324, 609, 'jaz', '', 2, 13)
 box(262, 626, 120, 98, '#1c1c2a', 6)
 text(322, 645, 'Raspi', 14, 'bold', 'middle')
 text(322, 661, 'kellertreppe', 12, anchor='middle', fill=MUTED)
@@ -342,15 +325,15 @@ text(1015, 155, 'Zenner gesamt')
 value(1124, 155, 'power_total', 'kW', 1, 15, 'normal')
 text(1205, 155, '· Heizkreise')
 value(1290, 155, 'power_heating', 'kW (Ø 10 min)', 1, 15, 'normal')
-text(1015, 177, 'WW = Zenner gesamt × (VL − Kessel) / (VL − RL) · Puffer + Solar = WW + HK', 13, fill=MUTED)
+text(1015, 177, 'WW = Flow × 1,163 × (Zenner-VL − Kessel) · Puffer + Solar = WW + HK', 13, fill=MUTED)
 text(1015, 199, 'Flow Ø 30 Tage', 13, fill=MUTED)
 value(1112, 199, 'zenner_flow_avg30d', 'l/min', 1, 13, 'normal', fill=MUTED)
 
-W, H = 1460 * SCALE, 690 * SCALE
+W, H = 1460, 690
 svgcontent = (f'<svg width="{W}" height="{H}" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg">'
               '<defs><marker id="arr" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">'
               '<path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker></defs>'
-              f'<g><title>Layer 1</title><g id="svg_shift" transform="scale({SCALE}) translate({SHIFT_X},{SHIFT_Y})">' + ''.join(svg) + '</g>' + ''.join(svg_top) + '</g></svg>')
+              '<g><title>Layer 1</title><g id="svg_shift" transform="translate(-20,-60)">' + ''.join(svg) + '</g>' + ''.join(svg_top) + '</g></svg>')
 
 view = {'id': 'v_ww_hydraulik', 'name': 'WW-Hydraulik', 'profile': {'width': W, 'height': H, 'bkcolor': '#000000ff', 'margin': 0},
         'items': items, 'variables': {}, 'svgcontent': svgcontent, 'type': 'svg'}
