@@ -8,7 +8,9 @@ Cron: alle 30s (MQTT), DB-Write intern auf 1×/min gedrosselt
   * * * * * sleep 30 && /usr/bin/python3 /home/pi/python/ebox_mqtt.py >>/tmp/ebox_mqtt.log 2>&1
 
 MQTT topic: ebox/pwr (retained)
-JSON: {"soc": 84.3, "power_w": 5400, "current_a": 102.4, "packs": 3, "ts": "2026-06-07T12:00:00"}
+JSON: {"soc": 84.3, "power_w": 5400, "current_a": 102.4, "voltage_v": 53.1, "vhigh_mv": 3420, "vlow_mv": 3301,
+       "volt_st": "Normal", "packs": 3, "ts": "2026-06-07T12:00:00"}
+Also published to the Venus broker on this host (VENUS_MQTT_HOST), read there by dbus-ebox-battery.
 """
 
 import subprocess
@@ -21,6 +23,7 @@ EBOX_BIN        = "/home/pi/sofar/ebox"
 DB_SCRIPT       = "/home/pi/python/pv_ebox2.py"
 MQTT_HOST       = "192.168.178.218"
 MQTT_TOPIC      = "ebox/pwr"
+VENUS_MQTT_HOST = "127.0.0.1"   # Venus OS subsystem (nspawn, host network)
 EBOX_MULT = 2.0   # zweite unsichtbare 15kWh EBox (parallel, kein Datenausgang)
 
 def run_ebox() -> list[str]:
@@ -58,6 +61,9 @@ def parse_packs(lines: list[str]) -> list[dict]:
                 'volt_mv': volt_mv,
                 'curr_ma': curr_ma,
                 'soc':     coulomb,
+                'vlow_mv':  float(parts[6]),
+                'vhigh_mv': float(parts[7]),
+                'volt_st':  parts[9],
                 'fields':  parts[0:13],
             })
         except (ValueError, IndexError):
@@ -74,13 +80,13 @@ def write_db(pack_fields: list[str]):
     except Exception as e:
         print(f"DB write error: {e}")
 
-def publish_mqtt(payload: dict):
+def publish_mqtt(payload: dict, host: str = MQTT_HOST):
     """Publiziert JSON-Payload als retained Message an ebox/pwr."""
     import paho.mqtt.publish as publish
     publish.single(
         MQTT_TOPIC,
         json.dumps(payload),
-        hostname=MQTT_HOST,
+        hostname=host,
         retain=True,
         port=1883,
     )
@@ -113,11 +119,21 @@ def main():
         'soc':      round(avg_soc, 1),
         'power_w':  round(total_w, 1),
         'current_a': round(total_a, 2),
+        'voltage_v': round(sum(p['volt_mv'] for p in packs) / len(packs) / 1000.0, 2),
+        'vhigh_mv': max(p['vhigh_mv'] for p in packs),
+        'vlow_mv':  min(p['vlow_mv'] for p in packs),
+        'volt_st':  next((p['volt_st'] for p in packs if p['volt_st'] != 'Normal'), 'Normal'),
         'packs':    len(packs),
         'ts':       datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
     }
 
     print(f"EBox: SOC={avg_soc:.1f}%  P={total_w:.0f}W  I={total_a:.2f}A  ({len(packs)} Packs, ×{EBOX_MULT})")
+
+    try:
+        publish_mqtt(payload, VENUS_MQTT_HOST)
+        print(f"MQTT {VENUS_MQTT_HOST} {MQTT_TOPIC}: ok")
+    except Exception as e:
+        print(f"MQTT publish error ({VENUS_MQTT_HOST}): {e}")
 
     try:
         publish_mqtt(payload)
