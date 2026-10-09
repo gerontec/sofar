@@ -9,15 +9,19 @@ Cron: alle 30s (MQTT), DB-Write intern auf 1×/min gedrosselt
 
 MQTT topic: ebox/pwr (retained)
 JSON: {"soc": 84.3, "power_w": 5400, "current_a": 102.4, "voltage_v": 53.1, "voltage_mv": 53100, "vhigh_mv": 3420, "vlow_mv": 3301,
-       "volt_st": "Normal", "packs": 3, "ts": "2026-06-07T12:00:00"}
+       "volt_st": "Normal", "packs": 3, "cycles": [686, 672, 695], "ts": "2026-06-07T12:00:00"}
 Also published to the Venus broker on this host (VENUS_MQTT_HOST), read there by dbus-ebox-battery.
 Factor ("mult"): x1 = EBox values (normal case). Fallbacks for the two 15 kWh stacks (approximation):
   CAN BMS of Stack1 silent  -> EBox power/current x2 ("source": "ebox", "mult": 2)
   EBox reader fails         -> CAN BMS (0x355/0x356/0x373) power/current x2 ("source": "can_bms", "mult": 2)
+Cycle counts: `ebox stat <n>` per pack (read-only console command, "CYCLE Times"), refreshed every STAT_REFRESH_S
+in the 30 s run, cached in STAT_FILE (also read by victron2db.py); "cycles" in the payload only while the cache is
+younger than STAT_MAX_AGE_S.
 """
 
 import subprocess
 import json
+import os
 import sys
 import time
 from datetime import datetime
@@ -32,6 +36,12 @@ VENUS_MQTT_HOST = "127.0.0.1"   # Venus OS subsystem (nspawn, host network)
 CAN_IF          = "can0"
 CAN_SOC_FILTER  = "355:7FF"      # SoC/SoH frame of the CAN BMS, sent about every second
 CAN_TIMEOUT_MS  = 3000
+STAT_FILE       = "/home/pi/sofar/ebox_stat.json"
+STAT_REFRESH_S  = 6 * 3600
+STAT_MAX_AGE_S  = 2 * 86400
+STAT_GAP_S      = 3      # pause before each stat: back to back the packs answer late (the previous pack's text)
+STAT_KEYS       = {'CYCLE Times': 'cycles', 'Dsg Cap': 'dsg_cap', 'Pwr Percent': 'pwr_percent',
+                   'LifeWarn Times': 'life_warn', 'LifeAlarm Times': 'life_alarm'}
 
 def can_bms_alive() -> bool:
     """True if the CAN BMS sent its SoC frame within CAN_TIMEOUT_MS."""
@@ -54,6 +64,54 @@ def run_ebox() -> list[str]:
     except Exception as e:
         print(f"ebox binary error: {e}")
         return []
+
+def read_stat(n: int) -> dict | None:
+    """`ebox stat n`: counters of pack n; None unless the answer carries "Device address n" (a late answer of the
+    previous pack can come first) and a cycle count."""
+    try:
+        out = subprocess.run([EBOX_BIN, "stat", str(n)], capture_output=True, text=True, timeout=15).stdout
+    except Exception as e:
+        print(f"ebox stat {n} error: {e}")
+        return None
+    addr, vals = None, {}
+    for line in out.splitlines():
+        if line.startswith('Device address'):
+            addr = int(line.split()[-1])
+        key, sep, val = line.partition(':')
+        if sep and key.strip() in STAT_KEYS and val.strip().isdigit():
+            vals[STAT_KEYS[key.strip()]] = int(val.strip())
+    return vals if addr == n and 'cycles' in vals else None
+
+def load_stat() -> dict | None:
+    try:
+        with open(STAT_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def refresh_stat(n_packs: int) -> dict | None:
+    """re-read the pack counters if the cache is older than STAT_REFRESH_S; returns the (new) cache"""
+    st = load_stat()
+    if st and time.time() - st.get('ts', 0) < STAT_REFRESH_S:
+        return st
+    packs = {}
+    for n in range(1, n_packs + 1):
+        v = None
+        for _ in range(2):
+            time.sleep(STAT_GAP_S)
+            v = read_stat(n)
+            if v is not None:
+                break
+        if v is None:
+            print(f"ebox stat {n}: no valid answer, cache kept")
+            return st
+        packs[str(n)] = v
+    st = {'ts': int(time.time()), 'packs': packs}
+    with open(STAT_FILE + '.tmp', 'w') as f:
+        json.dump(st, f)
+    os.replace(STAT_FILE + '.tmp', STAT_FILE)
+    print(f"ebox stat: cycles {[p['cycles'] for p in packs.values()]}")
+    return st
 
 def parse_packs(lines: list[str]) -> list[dict]:
     """Parst Zeilen aus ebox pwr, gibt Liste mit Pack-Dicts zurück."""
@@ -195,8 +253,14 @@ def main():
         'vlow_mv':  int(min(p['vlow_mv'] for p in packs)),
         'volt_st':  next((p['volt_st'] for p in packs if p['volt_st'] != 'Normal'), 'Normal'),
         'packs':    len(packs),
+        'cycles':   None,
         'ts':       datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
     }
+
+    # pack counters only in the 30 s run (the :00 run also writes the DB)
+    st = refresh_stat(len(packs)) if datetime.now().second >= 30 else load_stat()
+    if st and time.time() - st.get('ts', 0) < STAT_MAX_AGE_S:
+        payload['cycles'] = [p['cycles'] for _, p in sorted(st['packs'].items())]
 
     print(f"EBox: SOC={avg_soc:.1f}%  P={total_w:.0f}W  I={total_a:.2f}A  ({len(packs)} Packs, ×{ebox_mult})")
 
