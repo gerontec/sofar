@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-temp_alarm.py - emergency mail when any single temperature sensor in the house reads above THRESHOLD_C (98 °C).
+temp_alarm.py - emergency mail when any single temperature sensor in the house reads above its threshold: batteries
+(Pytes ebox/..., MUST venus:battery/...) above BAT_THRESHOLD_C (60 °C, BMS alarm range; Pytes board max so far 41 °C),
+every other sensor above THRESHOLD_C (98 °C).
 
 Runs as a systemd service on the Pi .119 (Venus host): from there it reaches the Venus MQTT broker (local only,
 the BMS of Stack1 MUST) and the house broker .218 (everything else).
@@ -29,6 +31,9 @@ import paho.mqtt.client as mqtt
 
 THRESHOLD_C = 98.0
 RELEASE_C = 90.0
+BAT_THRESHOLD_C = 60.0          # batteries: early warning (user 2026-10-10)
+BAT_RELEASE_C = 55.0
+BATTERY = re.compile(r"^(ebox/|venus:battery/)")
 PLAUSIBLE_C = (-40.0, 250.0)
 CONFIRM = 2
 REMIND_S = 3600
@@ -75,32 +80,38 @@ def hottest(n=12):
     return "\n".join("  %6.1f °C  %s" % (val, name) for val, name in items)
 
 
+def limits(name):
+    """(alarm threshold, all-clear) of a sensor: batteries earlier"""
+    return (BAT_THRESHOLD_C, BAT_RELEASE_C) if BATTERY.match(name) else (THRESHOLD_C, RELEASE_C)
+
+
 def reading(name, value):
     """one plausible reading of one sensor: confirm, alarm, remind, all-clear"""
     if not (PLAUSIBLE_C[0] <= value <= PLAUSIBLE_C[1]):
         return
+    threshold, release = limits(name)
     now = time.time()
     mail = None
     with lock:
         s = sensors.setdefault(name, {"value": value, "ts": now, "over": 0, "alarm": False, "mailed": 0.0})
         s["value"], s["ts"] = value, now
-        if value > THRESHOLD_C:
+        if value > threshold:
             s["over"] += 1
             if s["over"] >= CONFIRM and (not s["alarm"] or now - s["mailed"] >= REMIND_S):
                 mail = ("ALARM" if not s["alarm"] else "STILL HOT", value)
                 s["alarm"], s["mailed"] = True, now
         else:
             s["over"] = 0
-            if s["alarm"] and value < RELEASE_C:
+            if s["alarm"] and value < release:
                 s["alarm"] = False
                 mail = ("all clear", value)
     if mail:
         kind, v = mail
-        subject = "%s Lenggries: %s %.1f °C (threshold %.0f °C)" % (kind, name, v, THRESHOLD_C)
+        subject = "%s Lenggries: %s %.1f °C (threshold %.0f °C)" % (kind, name, v, threshold)
         body = ("%s\n\nSensor:  %s\nValue:   %.1f °C\nTime:    %s\nRule:    above %.0f °C in %d consecutive readings; "
                 "reminder every %d min; all clear below %.0f °C\n\nHottest sensors now:\n%s\n"
-                % (subject, name, v, time.strftime("%Y-%m-%d %H:%M:%S"), THRESHOLD_C, CONFIRM, REMIND_S // 60,
-                   RELEASE_C, hottest()))
+                % (subject, name, v, time.strftime("%Y-%m-%d %H:%M:%S"), threshold, CONFIRM, REMIND_S // 60,
+                   release, hottest()))
         log(subject)
         send_mail(subject, body)
 
@@ -168,8 +179,8 @@ def house_on_connect(c, userdata, flags, rc, props):
 
 
 def main():
-    log("temp_alarm: threshold %.0f °C, confirm %d, release %.0f °C, mail %s%s"
-        % (THRESHOLD_C, CONFIRM, RELEASE_C, MAIL_TO, " (dry run)" if DRY else ""))
+    log("temp_alarm: threshold %.0f °C (batteries %.0f °C), confirm %d, release %.0f / %.0f °C, mail %s%s"
+        % (THRESHOLD_C, BAT_THRESHOLD_C, CONFIRM, RELEASE_C, BAT_RELEASE_C, MAIL_TO, " (dry run)" if DRY else ""))
     connect(HOUSE_BROKER, on_house_message, house_on_connect)
     venus = connect(VENUS_BROKER, on_venus_message, venus_on_connect)
     if "--test" in sys.argv:
@@ -177,8 +188,9 @@ def main():
         with lock:
             n = len(sensors)
         ok = send_mail("[TEST] temp_alarm Lenggries: %d sensors watched" % n,
-                       "Test mail of temp_alarm.py on the Pi .119. An alarm goes out when a sensor reads above %.0f °C "
-                       "in %d consecutive readings.\n\nHottest sensors now:\n%s\n" % (THRESHOLD_C, CONFIRM, hottest(25)))
+                       "Test mail of temp_alarm.py on the Pi .119. An alarm goes out when a battery sensor reads above "
+                       "%.0f °C or any other sensor above %.0f °C in %d consecutive readings.\n\nHottest sensors now:\n%s\n"
+                       % (BAT_THRESHOLD_C, THRESHOLD_C, CONFIRM, hottest(25)))
         return 0 if ok else 1
     last_summary = time.time()
     while True:
