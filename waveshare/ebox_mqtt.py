@@ -9,7 +9,10 @@ Cron: alle 30s (MQTT), DB-Write intern auf 1×/min gedrosselt
 
 MQTT topic: ebox/pwr (retained)
 JSON: {"soc": 84.3, "power_w": 5400, "current_a": 102.4, "voltage_v": 53.1, "voltage_mv": 53100, "vhigh_mv": 3420, "vlow_mv": 3301,
-       "volt_st": "Normal", "packs": 3, "cycles": [686, 672, 695], "ts": "2026-06-07T12:00:00"}
+       "volt_st": "Normal", "temp_max_c": 26.0, "temp_min_c": 22.0, "temps_c": [[26.0, 23.0, 24.0], ...], "temp_st": "Normal",
+       "packs": 3, "cycles": [686, 672, 695], "ts": "2026-06-07T12:00:00"}
+Temperatures (2026-10-10) from `ebox pwr` per pack: Tempr (BMS board), Tlow / Thigh (cells), in m°C; temps_c = [Tempr, Tlow,
+Thigh] per pack, temp_max_c / temp_min_c over all of them, temp_st = the first Temp.St / B.T.St that is not Normal.
 Also published to the Venus broker on this host (VENUS_MQTT_HOST), read there by dbus-ebox-battery.
 Factor ("mult"): x1 = EBox values (normal case). Fallbacks for the two 15 kWh stacks (approximation):
   CAN BMS of Stack1 silent  -> EBox power/current x2 ("source": "ebox", "mult": 2)
@@ -139,6 +142,12 @@ def parse_packs(lines: list[str]) -> list[dict]:
                 'vlow_mv':  float(parts[6]),
                 'vhigh_mv': float(parts[7]),
                 'volt_st':  parts[9],
+                'tempr_c':  float(parts[3]) / 1000.0,     # BMS board
+                'tlow_c':   float(parts[4]) / 1000.0,     # coolest cell
+                'thigh_c':  float(parts[5]) / 1000.0,     # warmest cell
+                # Temp.St and B.T.St (the date / time column is two fields: B.V.St = 15, B.T.St = 16)
+                'temp_st':  next((x for x in (parts[11], parts[16] if len(parts) > 16 else 'Normal')
+                                  if x != 'Normal'), 'Normal'),
                 'fields':  parts[0:13],
             })
         except (ValueError, IndexError):
@@ -172,6 +181,7 @@ def can_bms_payload() -> dict | None:
     if '355' not in f or '356' not in f:
         return None
     soc = int.from_bytes(f['355'][0:2], 'little')
+    temp = int.from_bytes(f['356'][4:6], 'little', signed=True) / 10.0     # BMS temperature [0.1 °C]
     volt = int.from_bytes(f['356'][0:2], 'little') / 100.0
     curr = int.from_bytes(f['356'][2:4], 'little', signed=True) / 10.0
     cells = f.get('373')
@@ -186,6 +196,10 @@ def can_bms_payload() -> dict | None:
         'vhigh_mv': int.from_bytes(cells[2:4], 'little') if cells else None,
         'vlow_mv': int.from_bytes(cells[0:2], 'little') if cells else None,
         'volt_st': 'Normal',
+        'temp_max_c': temp,
+        'temp_min_c': temp,
+        'temps_c': None,
+        'temp_st': 'Normal',
         'packs': 0,
         'ts': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
     }
@@ -252,6 +266,10 @@ def main():
         'vhigh_mv': int(max(p['vhigh_mv'] for p in packs)),
         'vlow_mv':  int(min(p['vlow_mv'] for p in packs)),
         'volt_st':  next((p['volt_st'] for p in packs if p['volt_st'] != 'Normal'), 'Normal'),
+        'temp_max_c': max(max(p['tempr_c'], p['thigh_c']) for p in packs),
+        'temp_min_c': min(min(p['tempr_c'], p['tlow_c']) for p in packs),
+        'temps_c':  [[p['tempr_c'], p['tlow_c'], p['thigh_c']] for p in packs],
+        'temp_st':  next((p['temp_st'] for p in packs if p['temp_st'] != 'Normal'), 'Normal'),
         'packs':    len(packs),
         'cycles':   None,
         'ts':       datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
@@ -262,7 +280,8 @@ def main():
     if st and time.time() - st.get('ts', 0) < STAT_MAX_AGE_S:
         payload['cycles'] = [p['cycles'] for _, p in sorted(st['packs'].items())]
 
-    print(f"EBox: SOC={avg_soc:.1f}%  P={total_w:.0f}W  I={total_a:.2f}A  ({len(packs)} Packs, ×{ebox_mult})")
+    print(f"EBox: SOC={avg_soc:.1f}%  P={total_w:.0f}W  I={total_a:.2f}A  T={payload['temp_min_c']:.0f}..{payload['temp_max_c']:.0f}°C "
+          f"({len(packs)} Packs, ×{ebox_mult})")
 
     try:
         publish_mqtt(payload, VENUS_MQTT_HOST)
