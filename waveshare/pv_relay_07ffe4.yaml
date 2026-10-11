@@ -1,6 +1,6 @@
 # pv_relay: Waveshare ESP32-S3-Relay-6CH (MAC ..07ffe4), relay output for MQTT pv_relay/DOx (2026-10-10).
-# Replaces the Sofar/fox2db firmware (sofar_waveshare_07ffe4.yaml): no logic on the ESP any more, the controllers
-# decide (batmonitor 0.46-c sends the DO4 pulse), the ESP only switches.
+# Replaces the Sofar/fox2db firmware (sofar_waveshare_07ffe4.yaml). The relays follow the controllers
+# (batmonitor 0.46-c sends the DO4 pulse); batmonitor itself runs alongside as a fallback (see below).
 #   CH1 (GPIO1)  = DO1  immersion heater stage 1
 #   CH2 (GPIO2)  = DO2  immersion heater stage 2
 #   CH3 (GPIO41) = DO3  immersion heater stage 3
@@ -11,9 +11,14 @@
 #   pv_relay/DO1..DO4/state   "1" / "0" (retained)
 #   pv_relay/status           online / offline (birth / will, retained)
 # Safety: all relays off at boot and when MQTT is lost; DO4 off after DO4_MAX_ON even without "0".
-# batmonitor shadow (0.47-c): bm_step from the victron repo (bm_logic.c, bm_wire.c) on the inputs Venus publishes on
-#   batmonitor/shadow_in (+ parameters batmonitor/shadow_cfg); result and comparison on batmonitor_esp/out.
-#   Shadow only: it writes nothing to the Multis.
+# batmonitor on the ESP (bm_esp.h, 2026-10-11): the C logic of the victron repo unchanged (bm_logic.c bm_step +
+#   bm_full_forecast, bm_parse.c), every 5 s like Venus, all inputs from the house broker .218 (inverter, R290, em0,
+#   aussen, season, forecast, Pytes ebox/pwr as dbus-ebox-battery; Stack1 MUST and vebus are not on .218).
+#   Parameters = /data/batmonitor/env on Venus (substitution bm_params), at runtime batmonitor_esp/cfg (retained,
+#   "NAME=value ..."). Results: batmonitor_esp/state, batmonitor_esp/peak_model, batmonitor_esp/params.
+#   Setpoints are only published (no second controller on the Multis). DO4: the ESP pulses its own relay when
+#   bm_step says so and batmonitor is silent (batmonitor/peak_model older than 180 s), then batmonitor/do4_last.
+#   RS485 (GPIO17/18, DE GPIO3) unused.
 
 substitutions:
   device_name: pv-relay-07ffe4
@@ -23,6 +28,7 @@ substitutions:
   wifi_password: "9876543210"
   ota_password: waveshare2026
   do4_max_on: 10s
+  bm_params: "CHARGE_EFF=0.90 SOC_MIN=8 SOC_MIN_RELEASE=10"   # /data/batmonitor/env on Venus (2026-10-11)
 
 esphome:
   name: ${device_name}
@@ -30,15 +36,25 @@ esphome:
   includes:
     - ../../victron/venus-addons/batmonitor/c/bm_logic.h
     - ../../victron/venus-addons/batmonitor/c/bm_logic.c
-    - ../../victron/venus-addons/batmonitor/c/bm_wire.h
-    - ../../victron/venus-addons/batmonitor/c/bm_wire.c
+    - ../../victron/venus-addons/batmonitor/c/bm_parse.c
     - bm_esp.h
+  includes_c:
+    - ../../victron/venus-addons/batmonitor/c/bm_parse.h
+  platformio_options:
+    build_flags:
+      - -I/home/gh/python/waveshare/bm_esp_inc     # <cjson/cJSON.h> of bm_parse.c -> ESP-IDF json component
+  on_boot:
+    priority: 600
+    then:
+      - lambda: 'bmesp::set_params("${bm_params}");'
 
 esp32:
   board: esp32-s3-devkitc-1
   variant: esp32s3
   framework:
     type: arduino
+    advanced:
+      include_builtin_idf_components: [json]   # cJSON for bm_parse.c / bm_esp.h
 
 network:
   enable_ipv6: true
@@ -108,6 +124,15 @@ script:
       - delay: ${do4_max_on}
       - logger.log: {format: "DO4 guard: off after max on time", level: WARN}
       - switch.turn_off: do4
+  # local DO4 pulse (batmonitor silent): DO4_PULSE_S = 3 s as batmonitor, then tell r290_boost / hantech
+  - id: do4_local_pulse
+    mode: single
+    then:
+      - logger.log: {format: "DO4 local pulse: batmonitor silent, PCC above 20 kW", level: WARN}
+      - mqtt.publish: {topic: batmonitor/do4_last, payload: !lambda 'return bmesp::do4_last_json();', retain: true}
+      - switch.turn_on: do4
+      - delay: 3s
+      - switch.turn_off: do4
   - id: all_off
     then:
       - switch.turn_off: do1
@@ -133,6 +158,7 @@ mqtt:
           bool v[4] = {id(do1).state, id(do2).state, id(do3).state, id(do4).state};
           for (int i = 0; i < 4; i++)
             id(mqtt_client).publish(t[i], v[i] ? "1" : "0", 1, 0, true);
+          id(mqtt_client).publish("batmonitor_esp/params", bmesp::params_json(), 1, true);
   on_disconnect:
     then:
       - script.execute: all_off
@@ -148,12 +174,48 @@ mqtt:
         - lambda: 'if (x == "1") id(do3).turn_on(); else if (x == "0") id(do3).turn_off();'
     - topic: pv_relay/DO4
       then:
-        - lambda: 'if (x == "1") id(do4).turn_on(); else if (x == "0") id(do4).turn_off();'
-    - topic: batmonitor/shadow_cfg
-      then:
-        - lambda: 'bmshadow::on_cfg(x);'
-    - topic: batmonitor/shadow_in
+        - lambda: |-
+            bmesp::on_do4_cmd(x);
+            if (x == "1") id(do4).turn_on(); else if (x == "0") id(do4).turn_off();
+    # batmonitor inputs from .218 (as batmonitor.c on Venus)
+    - topic: inverter/power_grid_exchange/json
+      then: [lambda: 'bmesp::on_inverter(x);']
+    - topic: r290/heatpump/all
+      then: [lambda: 'bmesp::on_r290(x);']
+    - topic: em0/power
+      then: [lambda: 'bmesp::on_wp(x);']
+    - topic: aussen/temp
+      then: [lambda: 'bmesp::on_aussen(x);']
+    - topic: batmonitor/season
+      then: [lambda: 'bmesp::on_season(x);']
+    - topic: batmonitor/forecast
+      then: [lambda: 'bmesp::on_forecast(x);']
+    - topic: ebox/pwr
+      then: [lambda: 'bmesp::on_ebox(x);']
+    - topic: batmonitor/peak_model
+      then: [lambda: 'bmesp::on_bm_peak(x);']
+    - topic: batmonitor_esp/cfg
       then:
         - lambda: |-
-            std::string r = bmshadow::on_in(x);
-            id(mqtt_client).publish("batmonitor_esp/out", r);
+            bmesp::set_params(x);
+            id(mqtt_client).publish("batmonitor_esp/params", bmesp::params_json(), 1, true);
+
+interval:
+  # one batmonitor cycle every CYCLE_SECONDS (5 s), once SNTP has the wall clock
+  - interval: 5s
+    then:
+      - lambda: |-
+          auto now = id(sntp_time).now();
+          if (!now.is_valid())
+            return;
+          if (bmesp::cycle(now.timestamp) && id(mqtt_client).is_connected())
+            id(do4_local_pulse).execute();
+          std::string s = bmesp::state_json();
+          if (!s.empty())
+            id(mqtt_client).publish("batmonitor_esp/state", s, 0, true);
+  - interval: 60s
+    then:
+      - lambda: |-
+          std::string s = bmesp::peak_model_json();
+          if (!s.empty())
+            id(mqtt_client).publish("batmonitor_esp/peak_model", s, 1, true);
