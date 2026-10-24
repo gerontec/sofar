@@ -31,8 +31,8 @@ extern "C" {                                 // bm_parse.h has no extern "C" of 
 
 namespace bmesp {
 
-static const char *BM_VERSION = "0.53-c";   // batmonitor.c VERSION whose bm_logic.c / bm_parse.c this build carries
-static const char *ESP_VERSION = "1.0";
+static const char *BM_VERSION = "0.54-c";   // batmonitor.c VERSION whose bm_logic.c / bm_parse.c this build carries
+static const char *ESP_VERSION = "1.1";
 static const int PYTES = 1;                  // BM_BANKS[1] = STACK2_PYTES
 static const double EBOX_STALE_S = 120.0;    // dbus-ebox-battery STALE_SECONDS
 static const double BM_ALIVE_S = 180.0;      // batmonitor/peak_model comes every 60 s
