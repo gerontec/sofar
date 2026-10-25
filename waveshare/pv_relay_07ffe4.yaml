@@ -28,7 +28,7 @@ substitutions:
   wifi_password: "9876543210"
   ota_password: waveshare2026
   do4_max_on: 10s
-  bm_params: "CHARGE_EFF=0.90 SOC_MIN=8 SOC_MIN_RELEASE=10 SOC_FORCE=0 CELL_FORCE_V=3.05 WP_SOC_MIN=21"   # /data/batmonitor/env on Venus (2026-10-24)
+  bm_params: "CHARGE_EFF=0.90 SOC_MIN=8 SOC_MIN_RELEASE=10 SOC_FORCE=0 CELL_FORCE_V=3.05 WP_SOC_MIN=49"   # /data/batmonitor/env on Venus (2026-10-25)
 
 esphome:
   name: ${device_name}
