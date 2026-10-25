@@ -11,7 +11,8 @@
 #   rule chg  changes of that triple from one minute to the next
 # Rows before the first matrix version show as "-" (no bm_d1_id, rule texts only); a version whose
 # bm_d1_id values were deleted (dim_bm_matrix.rows_kept = 0) has no cells either.
-# --cells lists every D1 cell per day with its minutes and the set bits (names from dim_bm_matrix).
+# --cells lists every D1 cell per day: its integer value, the bitmask as a sum of powers of 2 (e.g. 94 =
+# 2+4+8+16+64), the 8 bits (bit 7 left), its minutes and the set bits (names from dim_bm_matrix).
 #
 # rep_rulematrix.py [--days 7] [--cells]
 # Needs pymysql.
@@ -49,6 +50,10 @@ def version_of(ts, versions):
 
 def rule_state(r):
     return tuple(MEASURED.sub(r'\1', r[k] or '') for k in ('r1', 'r2', 'r3'))
+
+
+def powers_of_2(d1):
+    return '+'.join(str(1 << i) for i in range(8) if d1 >> i & 1) or '0'
 
 
 def bits_text(d1, v):
@@ -90,8 +95,9 @@ def main():
         print('%-10s %-7s %5d %13s %7s %6d %8d  %s (%d)' % (day, ver, len(g), cell_txt, d1_chg if d1 else '-',
                                                           len(sc), rule_chg, ' | '.join(top), n))
         if a.cells and cells:
+            print('%11s %5s  %-20s %-8s %5s  %s' % ('', 'state', 'bitmask', 'bits', 'min', 'set bits'))
             for c, m in sorted(cells.items(), key=lambda x: -x[1]):
-                print('%31s %3d %5d min  %s' % ('', c, m, bits_text(c, v)))
+                print('%11s %5d  %-20s %08d %5d  %s' % ('', c, powers_of_2(c), int(bin(c)[2:]), m, bits_text(c, v)))
 
     print('\nmatrix versions (dim_bm_matrix):')
     for v in versions:
