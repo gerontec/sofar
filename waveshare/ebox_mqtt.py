@@ -13,6 +13,9 @@ JSON: {"soc": 84.3, "power_w": 5400, "current_a": 102.4, "voltage_v": 53.1, "vol
        "packs": 3, "cycles": [686, 672, 695], "ts": "2026-06-07T12:00:00"}
 Temperatures (2026-10-10) from `ebox pwr` per pack: Tempr (BMS board), Tlow / Thigh (cells), in m°C; temps_c = [Tempr, Tlow,
 Thigh] per pack, temp_max_c / temp_min_c over all of them, temp_st = the first Temp.St / B.T.St that is not Normal.
+Pack states (2026-10-27): "pack_st" = per present pack all status columns of `ebox pwr` ({"n", "base", "volt", "curr",
+"temp", "bvolt", "btemp"} = Base.St, Volt.St, Curr.St, Temp.St, B.V.St, B.T.St), "curr_st" = the first Curr.St that is
+not Normal; dbus-ebox-battery turns them into Venus alarms. CAN fallback: "pack_st": null.
 Also published to the Venus broker on this host (VENUS_MQTT_HOST), read there by dbus-ebox-battery.
 Factor ("mult"): x1 = EBox values (normal case). Fallbacks for the two 15 kWh stacks (approximation):
   CAN BMS of Stack1 silent  -> EBox power/current x2 ("source": "ebox", "mult": 2)
@@ -148,6 +151,10 @@ def parse_packs(lines: list[str]) -> list[dict]:
                 # Temp.St and B.T.St (the date / time column is two fields: B.V.St = 15, B.T.St = 16)
                 'temp_st':  next((x for x in (parts[11], parts[16] if len(parts) > 16 else 'Normal')
                                   if x != 'Normal'), 'Normal'),
+                # all status columns of the pack as the console prints them (pack_st in the payload)
+                'st': {'base': base_st, 'volt': parts[9], 'curr': parts[10], 'temp': parts[11],
+                       'bvolt': parts[15] if len(parts) > 15 else None,
+                       'btemp': parts[16] if len(parts) > 16 else None},
                 'fields':  parts[0:13],
             })
         except (ValueError, IndexError):
@@ -201,6 +208,7 @@ def can_bms_payload() -> dict | None:
         'temps_c': None,
         'temp_st': 'Normal',
         'packs': 0,
+        'pack_st': None,           # console not readable: pack states unknown
         'ts': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
     }
 
@@ -270,7 +278,9 @@ def main():
         'temp_min_c': min(min(p['tempr_c'], p['tlow_c']) for p in packs),
         'temps_c':  [[p['tempr_c'], p['tlow_c'], p['thigh_c']] for p in packs],
         'temp_st':  next((p['temp_st'] for p in packs if p['temp_st'] != 'Normal'), 'Normal'),
+        'curr_st':  next((p['st']['curr'] for p in packs if p['st']['curr'] != 'Normal'), 'Normal'),
         'packs':    len(packs),
+        'pack_st':  [dict(n=p['num'], **p['st']) for p in packs],
         'cycles':   None,
         'ts':       datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
     }
