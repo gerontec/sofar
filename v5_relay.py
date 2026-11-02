@@ -6,7 +6,8 @@ logger (Server A = 192.168.178.218:10000) -> this relay -> data1.solarmanpv.com:
 
 up   (logger -> cloud): passed unchanged (hello 0x4110, data 0x4210, 0x4310, heartbeat 0x4710, 0x4810, ...)
 down (cloud -> logger): only these are passed
-     - acknowledgements 0x1110 0x1210 0x1310 0x1710 0x1810
+     - acknowledgements 0x1110 0x1210 0x1310 0x1710 0x1810, checked against the known layout and REBUILT here
+       (own clock and counter), so no byte from the cloud reaches the logger; an unknown ack is dropped
      - 0x4510 Modbus pass-through requests with a READ function code (1, 2, 3, 4)
      everything else is dropped and logged: 0x4510 with write codes (5, 6, 15, 16, 22, 23, ...), and every other
      command (logger configuration, firmware update, unknown).
@@ -39,6 +40,9 @@ DOWN_ACKS = {0x1110, 0x1210, 0x1310, 0x1710, 0x1810}
 CTRL_MODBUS_REQUEST = 0x4510
 READ_FUNCTION_CODES = {1, 2, 3, 4}
 MODBUS_OFFSET = 11 + 15          # V5 header (11) + request payload header (15) -> Modbus RTU frame (slave, fc, ...)
+LOGGER_SN_LE = (2110777838).to_bytes(4, 'little')
+ACK_TYPE_BYTE = {0x1110: 0x02, 0x1210: 0x01, 0x1310: 0x04, 0x1710: 0x00, 0x1810: 0x01}   # payload byte 0 per ack
+ACK_TAIL = bytes.fromhex('3c000000')
 
 # alert mail on every dropped cloud frame (as r290mb.py: smtplib to heissa over the VPN), at most one per hour;
 # drops during the quiet hour are counted and reported with the next mail
@@ -270,8 +274,35 @@ def split_frames(buf):
     return frames
 
 
+def v5_checksum(frame_wo_tail):
+    """V5 checksum: sum of all bytes after the start byte, low 8 bits"""
+    return sum(frame_wo_tail[1:]) & 0xFF
+
+
+def rebuild_ack(frame, session):
+    """(new_frame, None) or (None, anomaly): the ack the logger gets is built here, not taken from the cloud.
+    Known ack (captured 2026-11-02): 23 bytes, payload = [type byte per ctrl] 01 [unix time u32 LE] 3c 00 00 00.
+    seq byte 6 = echo of the logger's request, byte 5 = own per-session counter; time = local clock."""
+    ctrl = ctrl_of(frame)
+    p = frame[11:-2]
+    if len(frame) != 23 or frame[-1] != 0x15 or len(p) != 10:
+        return None, 'ack 0x%04X with unknown length %d' % (ctrl, len(frame))
+    if frame[7:11] != LOGGER_SN_LE:
+        return None, 'ack 0x%04X for foreign logger SN %s' % (ctrl, frame[7:11].hex())
+    if p[0] != ACK_TYPE_BYTE[ctrl] or p[1] != 0x01 or p[6:10] != ACK_TAIL:
+        return None, 'ack 0x%04X with unknown content %s' % (ctrl, p.hex())
+    req_seq = session['up_seq'].get(ctrl + 0x3000)
+    if req_seq is None:
+        return None, 'ack 0x%04X without a request from the logger' % ctrl
+    session['ack_counter'] = (session['ack_counter'] + 1) & 0xFF
+    payload = bytes([ACK_TYPE_BYTE[ctrl], 0x01]) + int(time.time()).to_bytes(4, 'little') + ACK_TAIL
+    body = (b'\xa5' + len(payload).to_bytes(2, 'little') + ctrl.to_bytes(2, 'little')
+            + bytes([session['ack_counter'], req_seq[1]]) + LOGGER_SN_LE + payload)
+    return body + bytes([v5_checksum(body), 0x15]), None
+
+
 async def pump(reader, writer, direction, session):
-    """forward whole frames; the down direction is filtered"""
+    """forward whole frames; the down direction is filtered, acks are rebuilt (no cloud byte reaches the logger)"""
     buf = bytearray()
     try:
         while True:
@@ -280,13 +311,19 @@ async def pump(reader, writer, direction, session):
                 break
             buf += data
             for fr in split_frames(buf):
+                out = fr
                 if direction == 'down':
                     ok, reason = down_allowed(fr)
+                    if ok and ctrl_of(fr) in DOWN_ACKS:
+                        out, anomaly = rebuild_ack(fr, session)
+                        ok, reason = (True, 'ack rebuilt') if out else (False, anomaly)
                 else:
                     ok, reason = True, ''
+                    if ctrl_of(fr) is not None:
+                        session['up_seq'][ctrl_of(fr)] = fr[5:7]
                 record(direction, fr, 'pass' if ok else 'drop', reason, session)
                 if ok:
-                    writer.write(fr)
+                    writer.write(out)
             await writer.drain()
     except (ConnectionError, asyncio.CancelledError):
         pass
@@ -307,7 +344,8 @@ async def handle(lreader, lwriter):
     session = {'info': {'id': datetime.now().strftime('%Y%m%dT%H%M%S'), 'logger': '%s:%s' % peer[:2],
                         'cloud': '%s:%s' % cpeer[:2] if cpeer else CLOUD_HOST,
                         'started': datetime.now().isoformat(timespec='seconds')},
-               'history': collections.deque(maxlen=FORENSIC_BEFORE), 'after_until': 0.0}
+               'history': collections.deque(maxlen=FORENSIC_BEFORE), 'after_until': 0.0,
+               'up_seq': {}, 'ack_counter': 0}
     log.info('session %s: logger %s <-> cloud %s', session['info']['id'], session['info']['logger'],
              session['info']['cloud'])
     tasks = [asyncio.create_task(pump(lreader, cwriter, 'up', session)),
