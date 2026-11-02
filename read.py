@@ -1,5 +1,9 @@
 #!/usr/bin/python3
 
+# 2026-11-02: switched from RS485 (/dev/ttyUSB32) to Modbus TCP via the LSE-3 LAN logger
+#   192.168.178.108:8899 (TRANSPORT below). Pre-switch backup: read.py.bak-20261102-rs485-vor-tcp-umstellung
+#   sofar_fast.service still reads via RS485 (mbread) on /dev/ttyUSB32.
+#
 # Kette am Wechselrichter-Bus /dev/ttyUSB32 (Sofar, Slave 1, 9600 8N1):
 #
 #   Cron jede Minute: sofar.sh  (haelt /tmp/sofar.lock fuer den ganzen Lauf)
@@ -21,6 +25,8 @@ import sys
 import csv
 import time
 from pymodbus.client.serial import ModbusSerialClient
+from pymodbus.client import ModbusTcpClient
+from pymodbus import FramerType
 import logging
 from typing import Dict, List, Any, Optional
 import struct
@@ -37,6 +43,27 @@ logging.basicConfig(filename='sofar_inverter.log', level=logging.ERROR,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Configuration
+TRANSPORT = 'tcp'  # 'tcp' = LSE-3 logger (Modbus TCP gateway), 'rtu' = RS485 /dev/ttyUSB32
+TCP_HOST = '192.168.178.108'
+TCP_PORT = 8899
+# TCP_FRAMER: 'rtu' = logger in Transparency mode (raw RTU over TCP, set 2026-11-02),
+#             'socket' = logger in Data collection mode (Modbus TCP gateway)
+TCP_FRAMER = 'socket'  # since 2026-11-02 17:22: logger in Data collection mode, cloud via v5_relay.py
+
+
+def parse_transport(argv):
+    """--transport tcp|rtu (also --transport=...); default is the TRANSPORT constant"""
+    for i, a in enumerate(argv):
+        if a == '--transport' and i + 1 < len(argv):
+            v = argv[i + 1]
+        elif a.startswith('--transport='):
+            v = a.split('=', 1)[1]
+        else:
+            continue
+        if v not in ('tcp', 'rtu'):
+            raise SystemExit(f"--transport must be tcp or rtu, not {v!r}")
+        return v
+    return TRANSPORT
 SERIAL_PORT = '/dev/ttyUSB32'
 BAUD_RATE = 9600
 UNIT_ID = 1
@@ -148,7 +175,37 @@ def should_read_register(unit: str, name: str = '') -> bool:
     # Check for kW, kWh, or % (for SOC)
     return unit_lower in ['kw', 'kwh', '%']
 
+# 2026-11-02 prefetch: one block read per section instead of one request per register
+# (~120 requests -> ~20; matters on TCP via the logger at ~250 ms per request)
+PREFETCH_MAX = 64          # registers per block read (a section is 0x40 long)
+REG_CACHE: Dict[int, int] = {}
+PREFETCH_STATS = {'blocks': 0, 'failed': 0}
+
+
+def prefetch_block(client, start_address: int, end_address: int) -> None:
+    """read start..end in chunks of <= PREFETCH_MAX into REG_CACHE; a failed chunk is just not cached"""
+    address = start_address
+    while address <= end_address:
+        count = min(PREFETCH_MAX, end_address - address + 1)
+        PREFETCH_STATS['blocks'] += 1
+        try:
+            result = client.read_holding_registers(address, count=count, slave=UNIT_ID)
+            if not result.isError() and len(result.registers) == count:
+                for i, v in enumerate(result.registers):
+                    REG_CACHE[address + i] = v
+            else:
+                PREFETCH_STATS['failed'] += 1
+                logging.info(f"Prefetch 0x{address:04X}+{count} failed: {result}")
+        except Exception as e:
+            PREFETCH_STATS['failed'] += 1
+            logging.info(f"Prefetch 0x{address:04X}+{count} exception: {e}")
+        address += count
+
+
 def read_register_block(client: ModbusSerialClient, start_address: int, count: int) -> Optional[List[int]]:
+    cached = [REG_CACHE.get(a) for a in range(start_address, start_address + count)]
+    if None not in cached:
+        return cached
     try:
         result = client.read_holding_registers(start_address, count=count, slave=UNIT_ID)
         if not result.isError():
@@ -233,9 +290,14 @@ def pivot_registers(register_data):
     return pivoted
 
 def main():
-    global TIMEOUT
-    client = ModbusSerialClient(port=SERIAL_PORT, baudrate=BAUD_RATE,
-                                parity='N', stopbits=1, bytesize=8, timeout=TIMEOUT)
+    global TIMEOUT, TRANSPORT
+    TRANSPORT = parse_transport(sys.argv[1:])
+    print(f"Transport: {TRANSPORT}")
+    if TRANSPORT == 'tcp':
+        client = ModbusTcpClient(TCP_HOST, port=TCP_PORT, timeout=TIMEOUT, framer=FramerType(TCP_FRAMER))
+    else:
+        client = ModbusSerialClient(port=SERIAL_PORT, baudrate=BAUD_RATE,
+                                    parity='N', stopbits=1, bytesize=8, timeout=TIMEOUT)
 
     if not client.connect():
         logging.error("Failed to connect to the inverter")
@@ -277,6 +339,16 @@ def main():
     ]
 
     for start, end, mask_address in sections:
+        # prefetch: the mask (4 registers at mask_address) plus every register this run would read in the section
+        span_end = mask_address + 3
+        for a, inf in register_info.items():
+            if start <= a <= end and inf['name'] and should_read_register(inf['unit'], inf['name']):
+                n = 4 if inf['type'] == 'U64' else (2 if inf['type'] in ['U32', 'I32'] else 1)
+                span_end = max(span_end, a + n - 1)
+        for a in FORCED_REGISTERS:
+            if start <= a <= end:
+                span_end = max(span_end, a)
+        prefetch_block(client, min(start, mask_address), span_end)
         mask = read_address_mask(client, mask_address)
         valid_registers = get_valid_registers(mask, start, end)
         forced = sorted(a for a in FORCED_REGISTERS if start <= a <= end and a not in valid_registers)
@@ -315,6 +387,7 @@ def main():
                     print(f"0x{address:04X}: {info['name']} ({info['type']}) - {info['unit']} : Unable to read register")
 
     client.close()
+    print(f"Prefetch: {PREFETCH_STATS['blocks']} block reads, {PREFETCH_STATS['failed']} failed (fallback per register)")
     logging.info("Finished reading inverter data")
     
     # Save register_data to raw.csv before pivoting

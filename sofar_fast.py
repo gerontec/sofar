@@ -5,6 +5,9 @@ the controllers need, published in the format of pivot2db.py on inverter/power_g
 dbus-pcc-grid / batmonitor (Venus) and the Waveshare ESP see the PCC every 4 s instead of once a minute.
 read.py + pivot2db.py (sofar.sh) keep writing the full register set into inverter_data, now every 5 min.
 
+2026-11-02: switched to Modbus TCP via the LSE-3 LAN logger 192.168.178.108:8899 (TRANSPORT below, as read.py);
+TRANSPORT = 'rtu' goes back to mbread on /dev/ttyUSB32. Pre-switch backup: sofar_fast.py.bak-20261102-rs485-vor-tcp-umstellung
+
 Registers (sofarregister.csv), FC3, slave 1, /dev/ttyUSB32 9600 8N1, read with the C reader mbread:
   0x0488 ActivePower_PCC_Total  I16 x0.01 kW (+ export)
   0x04AF ActivePower_Load_Sys   U16 x0.01 kW
@@ -38,13 +41,37 @@ import logging
 import os
 import socket
 import subprocess
+import sys
 import time
 from collections import deque
 from datetime import datetime
 
 import paho.mqtt.client as mqtt
+from pymodbus.client import ModbusTcpClient
+from pymodbus import FramerType
 
 POLL_SECONDS = 4
+TRANSPORT = 'tcp'          # 'tcp' = LSE-3 logger (Modbus TCP gateway), 'rtu' = mbread on /dev/ttyUSB32
+TCP_HOST, TCP_PORT, TCP_TIMEOUT = '192.168.178.108', 8899, 1.5
+TCP_BLOCK_RETRIES, TCP_RETRY_PAUSE = 1, 1.0   # one retry per block, 1 s apart (logger poll > 0.3 s)
+# TCP_FRAMER: 'rtu' = logger in Transparency mode (raw RTU over TCP, set 2026-11-02),
+#             'socket' = logger in Data collection mode (Modbus TCP gateway)
+TCP_FRAMER = 'socket'  # since 2026-11-02 17:22: logger in Data collection mode, cloud via v5_relay.py
+
+
+def parse_transport(argv):
+    """--transport tcp|rtu (also --transport=...); default is the TRANSPORT constant"""
+    for i, a in enumerate(argv):
+        if a == '--transport' and i + 1 < len(argv):
+            v = argv[i + 1]
+        elif a.startswith('--transport='):
+            v = a.split('=', 1)[1]
+        else:
+            continue
+        if v not in ('tcp', 'rtu'):
+            raise SystemExit(f"--transport must be tcp or rtu, not {v!r}")
+        return v
+    return TRANSPORT
 MBREAD = ['/home/pi/python/mbread', '-p', '/dev/ttyUSB32', '-b', '9600', '-s', '1', '-f', '3', '-t', '300', '-r', '2']
 BLOCKS = ['0x0488:1', '0x04AF:1', '0x0586:4', '0x0606:3']
 LOCK_FILE = '/tmp/sofar.lock'
@@ -84,6 +111,8 @@ def read_registers():
         except BlockingIOError:
             return None                      # read.py / sofar.sh is on the bus
         try:
+            if TRANSPORT == 'tcp':
+                return read_registers_tcp()
             out = subprocess.run(MBREAD + BLOCKS, capture_output=True, text=True, timeout=5).stdout
         finally:
             fcntl.flock(lf, fcntl.LOCK_UN)
@@ -96,6 +125,41 @@ def read_registers():
                 regs[base + i] = int(v)
         elif p and p[0] == 'ERR':
             log.warning('read failed: %s', line)
+    return regs
+
+
+def read_registers_tcp():
+    """the BLOCKS over a fresh Modbus TCP connection to the logger (opened and closed per cycle, like mbread)"""
+    regs = {}
+    client = ModbusTcpClient(TCP_HOST, port=TCP_PORT, timeout=TCP_TIMEOUT, retries=0,
+                             framer=FramerType(TCP_FRAMER))
+    try:
+        if not client.connect():
+            log.warning('read failed: no TCP connection to %s:%s', TCP_HOST, TCP_PORT)
+            return regs
+        for blk in BLOCKS:
+            base, count = (int(x, 0) for x in blk.split(':'))
+            r, err = None, None
+            for attempt in range(1 + TCP_BLOCK_RETRIES):   # the logger's own poll can swallow a request
+                if attempt:
+                    time.sleep(TCP_RETRY_PAUSE)
+                try:
+                    r = client.read_holding_registers(base, count=count, slave=1)
+                    if not r.isError():
+                        break
+                    err = r
+                except Exception as e:
+                    err = e
+                r = None
+            if r is None:
+                log.warning('read failed: %s %s', blk, err)
+                continue
+            if err is not None:
+                log.info('read ok on retry: %s', blk)
+            for i, v in enumerate(r.registers):
+                regs[base + i] = v
+    finally:
+        client.close()
     return regs
 
 
@@ -168,7 +232,10 @@ def cycle(client, state):
 
 
 def main():
+    global TRANSPORT
     logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
+    TRANSPORT = parse_transport(sys.argv[1:])
+    log.info('transport %s', TRANSPORT)
     state = {'hist_pcc': deque(), 'hist_bat': deque(), 'last4': deque(maxlen=4), 'last_soc': None,
              'verified': time.monotonic()}         # start grace: DATA_MAX_AGE to the first verified value
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id='sofar_fast', userdata=state)

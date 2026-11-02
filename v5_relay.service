@@ -1,0 +1,14 @@
+[Unit]
+Description=Solarman V5 relay logger<->cloud, cloud may read but never write (v5_relay.py)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+ExecStart=/usr/bin/python3 /home/pi/python/v5_relay.py
+Restart=always
+RestartSec=5
+MemoryMax=100M
+
+[Install]
+WantedBy=multi-user.target
