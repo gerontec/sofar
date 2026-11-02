@@ -1,5 +1,22 @@
 #!/usr/bin/python3
 
+# Kette am Wechselrichter-Bus /dev/ttyUSB32 (Sofar, Slave 1, 9600 8N1):
+#
+#   Cron jede Minute: sofar.sh  (haelt /tmp/sofar.lock fuer den ganzen Lauf)
+#     1. read.py      -> /tmp/raw.csv, /tmp/pivoted_registers.csv
+#     2. pivot2db.py  -> wagodb.inverter_data (1 Zeile/min) + MQTT inverter/power_grid_exchange/json
+#     3. PV-Ueberschuss -> /tmp/r.txt
+#
+#   Parallel als Dienst: sofar_fast.service (/home/pi/python/sofar_fast.py)
+#     liest alle 4 s per mbread nur PCC (0x0488), Load (0x04AF), PV1/PV2 (0x0586:4),
+#     Bat1/SOC (0x0606:3) und publiziert auf dasselbe MQTT-Topic wie pivot2db.py.
+#     Jeder Lesevorgang nimmt /tmp/sofar.lock fuer ~150 ms (LOCK_NB); laeuft gerade
+#     sofar.sh, faellt der 4-s-Zyklus aus. Umgekehrt: sofar.sh nutzt flock -n und
+#     ueberspringt seinen Minutenlauf, wenn es genau in so ein 150-ms-Fenster faellt.
+#
+#   Wer hier direkt (ausserhalb sofar.sh) liest, muss ebenfalls /tmp/sofar.lock halten,
+#   sonst kollidiert er mit sofar_fast.service auf dem Bus.
+
 import sys
 import csv
 import time
@@ -7,9 +24,13 @@ from pymodbus.client.serial import ModbusSerialClient
 import logging
 from typing import Dict, List, Any, Optional
 import struct
+import re
 import pandas as pd
 
 TIMEOUT = 1
+
+# Configuration switch: Set to False to read only kW, kWh, and % (SOC) registers
+ALLREG = False
 
 # Set up logging
 logging.basicConfig(filename='sofar_inverter.log', level=logging.ERROR,
@@ -18,10 +39,28 @@ logging.basicConfig(filename='sofar_inverter.log', level=logging.ERROR,
 # Configuration
 SERIAL_PORT = '/dev/ttyUSB32'
 BAUD_RATE = 9600
-UNIT_ID = 3
+UNIT_ID = 1
 CSV_FILE = '/home/pi/python/sofarregister.csv'
-MAX_REGISTER = 0x1324
+MAX_REGISTER = 0x203F
 BLOCK_SIZE = 32  # Read 32 registers at a time
+FORCED_REGISTERS = {0x0586, 0x0589}  # Power_PV1, Power_PV2 — bypass address mask
+# Grid voltages + frequency for ortsnetz-auslastung.de (read despite unit V/Hz)
+GRID_REGISTERS = {'Voltage_Phase_R', 'Voltage_Phase_S', 'Voltage_Phase_T', 'Frequency_Grid'}
+# Leakage current (FI, 0x06C4 mA) + insulation resistance (0x042B kOhm) for inverter_data
+SAFETY_REGISTERS = {'GFCI', 'InsulationResistance', 'DCI_R', 'DCI_S', 'DCI_T'}  # DCI = DC component of the output current (mA)
+# PCC current per phase (0.01 A) for the reactive power at Z1 on venus.heissa.de: the Sofar masks out
+# ReactivePower_PCC_* and PowerFactor_PCC_* (always 0), so |Q| = sqrt((U*I)^2 - P^2) is derived in victron_api.php
+PCC_CURRENT_REGISTERS = {'Current_PCC_R', 'Current_PCC_S', 'Current_PCC_T'}
+# EPS (off-grid output) voltages/currents/frequency, run state, fault words and EPS switch for inverter_data
+# (2026-11-02). Fault1-30 = fault tables 0x0405-0x0416 + 0x0432-0x043D, bit n of FaultK = Sofar ID (K-1)*16+n+1.
+FAULT_REGISTERS = {f'Fault{i}' for i in range(1, 31)}
+EPS_REGISTERS = FAULT_REGISTERS | {'SysState', 'EPS_Control', 'Frequency_Output',
+                 'Voltage_Output_R', 'Voltage_Output_S', 'Voltage_Output_T',
+                 'Voltage_Load_R', 'Voltage_Load_S', 'Voltage_Load_T',
+                 'Current_Load_R', 'Current_Load_S', 'Current_Load_T'}
+
+INDEXED_NAME = re.compile(r'(.*?\D)(\d+)\s*--\s*(\d+)')
+REG_SIZE = {'U64': 4, 'U32': 2, 'I32': 2}
 
 def read_register_info_from_csv(csv_file: str) -> Dict[int, Dict[str, Any]]:
     register_info = {}
@@ -48,9 +87,27 @@ def read_register_info_from_csv(csv_file: str) -> Dict[int, Dict[str, Any]]:
                         else:
                             start = end = int(address_range, 16)
 
-                        for address in range(start, end + 1):
+                        # Indexed ranges such as "0405 -- 0416" / "Fault1 -- 18" (2026-11-02): one register per index,
+                        # named Fault1..Fault18. Only expanded if the address span matches index count x register size,
+                        # otherwise (U32/U64 spans, strided blocks like "0604 -- 0635" / "Voltage_Bat1 -- 8")
+                        # keep the old behaviour: only the start address carries the name.
+                        reg_name = row[2].strip()
+                        reg_type = row[3].strip().upper() if row[3].strip() else 'U16'
+                        targets = [(a, reg_name) for a in range(start, end + 1)]
+                        m = INDEXED_NAME.fullmatch(reg_name)
+                        if m and '-' in address_range and end == start:
+                            span_end = int(address_range.split('-')[-1], 16)
+                            first, last = int(m.group(2)), int(m.group(3))
+                            size = REG_SIZE.get(reg_type, 1)
+                            if last >= first and span_end - start + 1 == (last - first + 1) * size:
+                                targets = [(start + i * size, f"{m.group(1)}{first + i}")
+                                           for i in range(last - first + 1)]
+
+                        for address, name in targets:
                             if address <= MAX_REGISTER:
-                                accuracy_str = row[4].replace(',', '.')
+                                # Mehrzeilige Accuracy-Felder (z.B. "1\n1" fuer Stunde/Minute) nur in der ersten Zeile
+                                # auswerten - sonst wird aus "1\n1" die Zahl 11 (Zeit-/Datumsregister x11 verfaelscht).
+                                accuracy_str = row[4].replace(',', '.').splitlines()[0] if row[4].strip() else ''
                                 try:
                                     accuracy = float(''.join(filter(lambda x: x.isdigit() or x == '.', accuracy_str)))
                                 except ValueError:
@@ -58,8 +115,8 @@ def read_register_info_from_csv(csv_file: str) -> Dict[int, Dict[str, Any]]:
 
                                 register_info[address] = {
                                     'section': current_section,
-                                    'name': row[2].strip(),
-                                    'type': row[3].strip().upper() if row[3].strip() else 'U16',
+                                    'name': name,
+                                    'type': reg_type,
                                     'accuracy': accuracy,
                                     'unit': row[5].strip() if len(row) > 5 else ''
                                 }
@@ -68,9 +125,32 @@ def read_register_info_from_csv(csv_file: str) -> Dict[int, Dict[str, Any]]:
 
     return register_info
 
+def should_read_register(unit: str, name: str = '') -> bool:
+    """
+    Determines if a register should be read based on the ALLREG flag and unit.
+    Returns True if ALLREG is True, if the unit is kW, kWh, or %, or if the
+    register name starts with 'TOU' (Time of Use registers).
+    """
+    if ALLREG:
+        return True
+
+    if (name in GRID_REGISTERS or name in SAFETY_REGISTERS or name in PCC_CURRENT_REGISTERS
+            or name in EPS_REGISTERS):
+        return True
+
+    # Always include all TOU registers
+    if name.startswith('TOU'):
+        return True
+
+    # Normalize unit for comparison
+    unit_lower = unit.lower().strip()
+
+    # Check for kW, kWh, or % (for SOC)
+    return unit_lower in ['kw', 'kwh', '%']
+
 def read_register_block(client: ModbusSerialClient, start_address: int, count: int) -> Optional[List[int]]:
     try:
-        result = client.read_holding_registers(start_address, count, slave=UNIT_ID)
+        result = client.read_holding_registers(start_address, count=count, slave=UNIT_ID)
         if not result.isError():
             return result.registers
         logging.error(f"Error reading registers at address 0x{start_address:04X}: {result}")
@@ -154,7 +234,7 @@ def pivot_registers(register_data):
 
 def main():
     global TIMEOUT
-    client = ModbusSerialClient(method='rtu', port=SERIAL_PORT, baudrate=BAUD_RATE,
+    client = ModbusSerialClient(port=SERIAL_PORT, baudrate=BAUD_RATE,
                                 parity='N', stopbits=1, bytesize=8, timeout=TIMEOUT)
 
     if not client.connect():
@@ -166,7 +246,9 @@ def main():
     register_info = read_register_info_from_csv(CSV_FILE)
     logging.info(f"Read {len(register_info)} register definitions from CSV")
 
-    print("Registers with specified names:")
+    filter_mode = "all registers" if ALLREG else "filtered (kW, kWh, % only)"
+    print(f"Reading mode: {filter_mode}")
+    print("\nRegisters with specified names:")
     current_section = ""
     register_data = []
 
@@ -179,14 +261,17 @@ def main():
         (0x0580, 0x05BF, 0x0580),  # Realtime Input PV1
         (0x0600, 0x063F, 0x0600),  # Realtime Input Bat1
         (0x0680, 0x06BF, 0x0680),  # Realtime ElectricityStatistics1
+        (0x06C0, 0x06FF, 0x06C0),  # Realtime ClassifiedInfo1 (GFCI 0x06C4)
         (0x0700, 0x073F, 0x0700),  # Realtime CombinerInfo1
         (0x0800, 0x083F, 0x0800),  # Voltage Config
         (0x0900, 0x093F, 0x0900),  # Remote Config
-        (0x1000, 0x103F, 0x1000),  # Config Basic1
+        (0x1000, 0x105A, 0x1000),  # Config Basic1
         (0x1100, 0x113F, 0x1100),  # Remote Config (includes Power Export Limit)
-        (0x1300, 0x133F, 0x1300),  # Config ReadOnly Result1
         (0x2000, 0x203F, 0x2000),  # Config Core1
-        (0x5000, 0x503F, 0x5000),  # DCDC SysInfo
+        # (0x5000, 0x503F, 0x5000),  # DCDC SysInfo -- deaktiviert 2026-09-10:
+        # dieses Modell kennt den Block nicht und antwortet auf jede Abfrage mit
+        # Modbus-Exception 0x83/Status 1 (Illegal Data Address) -> 120 Logzeilen/Stunde,
+        # keine Daten. Wieder aktivieren, falls ein Geraet mit DCDC-Teil angeschlossen wird.
         (0x6000, 0x603F, 0x6000),  # PCU1
         (0x9000, 0x903F, 0x9000),  # BMS1 System
     ]
@@ -194,10 +279,18 @@ def main():
     for start, end, mask_address in sections:
         mask = read_address_mask(client, mask_address)
         valid_registers = get_valid_registers(mask, start, end)
+        forced = sorted(a for a in FORCED_REGISTERS if start <= a <= end and a not in valid_registers)
+        if forced:
+            valid_registers = sorted(set(valid_registers) | set(forced))
 
         for address in valid_registers:
             if address in register_info and register_info[address]['name']:
                 info = register_info[address]
+                
+                # Skip register if filtering is enabled and unit doesn't match
+                if not should_read_register(info['unit'], info['name']):
+                    continue
+                
                 if info['section'] != current_section:
                     current_section = info['section']
                     print(f"\n--- {current_section} ---")
@@ -223,6 +316,11 @@ def main():
 
     client.close()
     logging.info("Finished reading inverter data")
+    
+    # Save register_data to raw.csv before pivoting
+    raw_df = pd.DataFrame(register_data)
+    raw_df.to_csv('/tmp/raw.csv', index=False, quoting=csv.QUOTE_NONNUMERIC)
+    print(f"\nRaw register data saved to '/tmp/raw.csv' ({len(register_data)} registers)")
 
     pivoted_data = pivot_registers(register_data)
     pivoted_data.to_csv('/tmp/pivoted_registers.csv', index=False, quoting=csv.QUOTE_NONNUMERIC)
