@@ -5,9 +5,14 @@
              at = minute of the daily house max, L1 / L2 / L3 % = share of each phase in the house load at that
              minute (100 / 3 = balanced)
              L1 / L2 / L3 max W = daily max of each phase on its own (planning aid: the limit is per MultiPlus = per
-             phase, not the 12 kW sum); the footer gives the max per phase over the whole period, when it happened
-             and the reserve up to --phase-limit (default 4000 W continuous per MultiPlus-II 48/5000 at 25 C, check
-             the datasheet). Only loads lasting > 60 s matter (start-up peaks do not): victron2db.py stores a
+             phase, not the 12 kW sum). Two limits apply (2026-11-02): with grid the AC-out load passes the
+             transfer switch and the inverter only covers AC-out - AC-in; in island mode AC-in is 0 and the
+             inverter covers all of AC-out. inv L1 / L2 / L3 = daily max of AC-out - AC-in per phase (the inverter's
+             own share, from the battery; island included). The footer gives per phase over the whole period:
+             AC-out max against --transfer-limit (default 35 A x 230 V = 8050 W = AC input current limit
+             ac_in_limit_a set on the Multis, what the grid delivers continuously per phase without PowerAssist;
+             the transfer switch itself is 50 A = 11500 W, MultiPlus-II 48/5000/70-50, check the datasheet) and
+             the inverter max against --phase-limit (default 4000 W continuous at 25 C). Only loads lasting > 60 s matter (start-up peaks do not): victron2db.py stores a
              snapshot once a minute (not a mean), so every load lasting > 60 s is in at least one sample; a shorter
              peak may be caught by chance, which only makes the max more conservative. ovl = minutes with the
              VE.Bus overload LED on or blinking
@@ -48,7 +53,7 @@ START = date(2026, 10, 27)
 SQL_VICTRON = """
 SELECT DATE_FORMAT(ts, '%%Y-%%m-%%d %%H:%%i'),
        ac_out_l1_w, ac_out_l2_w, ac_out_l3_w,
-       ac_in_l1_w + ac_in_l2_w + ac_in_l3_w, led_overload
+       ac_in_l1_w + ac_in_l2_w + ac_in_l3_w, led_overload, ac_in_l1_w, ac_in_l2_w, ac_in_l3_w
 FROM pv_victron WHERE ts >= %s AND ts < %s
 """
 SQL_SOFAR = """
@@ -63,11 +68,11 @@ FROM pv_Z1 WHERE ts >= %s AND ts < %s GROUP BY DATE(ts)
 
 def load(cur, first, end):
     """{day: {'house': [W, ...], 'peak': (W, minute, L1, L2, L3) at the house max, 'total': [W, ...], 'z1': kWh}}"""
-    days = defaultdict(lambda: {"house": [], "peak": None, "pmax": [None] * 3, "overload": 0,
+    days = defaultdict(lambda: {"house": [], "peak": None, "pmax": [None] * 3, "imax": [None] * 3, "overload": 0,
                                 "total": [], "z1": None})
     cur.execute(SQL_VICTRON, (first, end))
     victron = {}
-    for m, l1, l2, l3, inp, ovl in cur.fetchall():
+    for m, l1, l2, l3, inp, ovl, i1, i2, i3 in cur.fetchall():
         out = None if None in (l1, l2, l3) else l1 + l2 + l3
         victron[m] = (out, inp)
         day = days[m[:10]]
@@ -75,6 +80,9 @@ def load(cur, first, end):
         for i, x in enumerate((l1, l2, l3)):
             if x is not None and (day["pmax"][i] is None or x > day["pmax"][i][0]):
                 day["pmax"][i] = (x, m)
+        for i, (x, y) in enumerate(((l1, i1), (l2, i2), (l3, i3))):
+            if x is not None and y is not None and (day["imax"][i] is None or x - y > day["imax"][i][0]):
+                day["imax"][i] = (x - y, m)   # inverter share = AC-out - AC-in
         if out is not None:
             day["house"].append(out)
             if day["peak"] is None or out > day["peak"][0]:
@@ -123,7 +131,11 @@ def main():
     ap.add_argument("--from", dest="date_from", type=date.fromisoformat)
     ap.add_argument("--to", dest="date_to", type=date.fromisoformat)
     ap.add_argument("--csv", action="store_true", help="CSV output (;)")
-    ap.add_argument("--phase-limit", type=float, default=4000, help="continuous W per phase for the reserve")
+    ap.add_argument("--phase-limit", type=float, default=4000,
+                    help="continuous inverter W per phase (AC-out - AC-in) for the reserve")
+    ap.add_argument("--transfer-limit", type=float, default=35 * 230,
+                    help="AC-out W per phase from the grid (default 35 A x 230 V = AC input current limit; "
+                         "transfer switch 50 A = 11500 W)")
     a = ap.parse_args()
 
     if a.date_from or a.date_to:
@@ -146,37 +158,44 @@ def main():
     rows = []
     for d in sorted(days):
         pm = [x[0] if x else None for x in days[d]["pmax"]]
-        rows.append((d, *stats(days[d]["house"]), *peak(days[d]["peak"]), pm, days[d]["overload"],
+        im = [x[0] if x else None for x in days[d]["imax"]]
+        rows.append((d, *stats(days[d]["house"]), *peak(days[d]["peak"]), pm, im, days[d]["overload"],
                      *stats(days[d]["total"]), days[d]["z1"]))
 
     if a.csv:
         out = csv.writer(sys.stdout, delimiter=";")
         out.writerow(["day", "house_max_w", "house_avg_w", "house_kwh", "house_n",
                       "house_max_at", "max_l1_pct", "max_l2_pct", "max_l3_pct",
-                      "l1_max_w", "l2_max_w", "l3_max_w", "overload_min", "total_max_w", "total_avg_w", "total_kwh", "total_n", "z1_net_kwh"])
-        for d, hm, ha, hn, at, sh, pm, ovl, tm, ta, tn, z1 in rows:
-            out.writerow([d, w(hm), w(ha), kwh(ha), hn, at, *map(pct, sh), *map(w, pm), ovl, w(tm), w(ta), kwh(ta), tn, w(z1)])
+                      "l1_max_w", "l2_max_w", "l3_max_w", "inv_l1_max_w", "inv_l2_max_w", "inv_l3_max_w", "overload_min", "total_max_w", "total_avg_w", "total_kwh", "total_n", "z1_net_kwh"])
+        for d, hm, ha, hn, at, sh, pm, im, ovl, tm, ta, tn, z1 in rows:
+            out.writerow([d, w(hm), w(ha), kwh(ha), hn, at, *map(pct, sh), *map(w, pm), *map(w, im), ovl, w(tm), w(ta), kwh(ta), tn, w(z1)])
         return
 
-    print(f"{'':10}  {' house (AC-out1) ':-^79}  {' total (behind Z1) ':-^36}")
-    print(f"{'day':10}  {'max W':>7} {'avg W':>6} {'kWh':>6} {'n':>6}  {'at':>5} {'L1 %':>5} {'L2 %':>5} {'L3 %':>5}  {'L1 max':>6} {'L2 max':>6} {'L3 max':>6} {'ovl':>3}  "
+    print(f"{'':10}  {' house (AC-out1) ':-^100}  {' total (behind Z1) ':-^36}")
+    print(f"{'day':10}  {'max W':>7} {'avg W':>6} {'kWh':>6} {'n':>6}  {'at':>5} {'L1 %':>5} {'L2 %':>5} {'L3 %':>5}  {'L1 max':>6} {'L2 max':>6} {'L3 max':>6}  {'inv L1':>6} {'inv L2':>6} {'inv L3':>6} {'ovl':>3}  "
           f"{'max W':>7} {'avg W':>6} {'kWh':>6} {'n':>6}  {'Z1 kWh':>6}")
-    for d, hm, ha, hn, at, sh, pm, ovl, tm, ta, tn, z1 in rows:
+    for d, hm, ha, hn, at, sh, pm, im, ovl, tm, ta, tn, z1 in rows:
         print(f"{d}  {w(hm):>7} {w(ha):>6} {kwh(ha):>6} {hn:>6}  {at:>5} {pct(sh[0]):>5} {pct(sh[1]):>5} {pct(sh[2]):>5}  "
-              f"{w(pm[0]):>6} {w(pm[1]):>6} {w(pm[2]):>6} {ovl:>3}  "
+              f"{w(pm[0]):>6} {w(pm[1]):>6} {w(pm[2]):>6}  {w(im[0]):>6} {w(im[1]):>6} {w(im[2]):>6} {ovl:>3}  "
               f"{w(tm):>7} {w(ta):>6} {kwh(ta):>6} {tn:>6}  {w(z1):>6}")
     if not rows:
         print("no rows")
         return
 
-    print(f"\nper phase over {rows[0][0]} .. {rows[-1][0]}, reserve to {a.phase_limit:.0f} W continuous:")
+    print(f"\nper phase over {rows[0][0]} .. {rows[-1][0]}: AC-out against the AC-in limit "
+          f"({a.transfer_limit:.0f} W), inverter (AC-out - AC-in) against {a.phase_limit:.0f} W continuous:")
     for i in range(3):
         best = max((days[d]["pmax"][i] for d in days if days[d]["pmax"][i]), default=None)
+        inv = max((days[d]["imax"][i] for d in days if days[d]["imax"][i]), default=None)
         if best is None:
             print(f"   L{i + 1}  -")
             continue
-        print(f"   L{i + 1}  max {best[0]:>5.0f} W  at {best[1]}  ({best[0] * 100 / a.phase_limit:3.0f} %)"
-              f"  reserve {a.phase_limit - best[0]:>5.0f} W")
+        line = (f"   L{i + 1}  AC-out max {best[0]:>5.0f} W  at {best[1]}  ({best[0] * 100 / a.transfer_limit:3.0f} %)"
+                f"  reserve {a.transfer_limit - best[0]:>5.0f} W")
+        if inv is not None:
+            line += (f"   inverter max {inv[0]:>5.0f} W  at {inv[1]}  ({inv[0] * 100 / a.phase_limit:3.0f} %)"
+                     f"  reserve {a.phase_limit - inv[0]:>5.0f} W")
+        print(line)
 
 
 if __name__ == "__main__":
