@@ -37,14 +37,19 @@ Steps (each printed with its numbers)
 5. structure: strongly connected components of the reachable graph (states that reach each other); one single
    component means no state is a trap, every state leads back to s0 (R[j, s0] = 1 for all reachable j).
 
-usage: python3 rep_max_state.py [--bm DIR] [--set NAME=value ...] [--matrix]
+usage: python3 rep_max_state.py [--bm DIR] [--set NAME=value ...] [--matrix] [--pdf FILE | --no-pdf]
   --set SOC_FORCE=0   explore another parameter value (as the editor would set it), e.g. 66 instead of 78 states
   --matrix            print the reachable part of T as a 0/1 matrix
+  --pdf FILE          the report as a LaTeX PDF (default ./rep_max_state.pdf, pdflatex); --no-pdf: text only
 """
 import argparse
 import itertools
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
+import time
 
 import numpy as np
 
@@ -213,6 +218,8 @@ def main():
     ap.add_argument("--bm", default=DEFAULT_BM, help="batmonitor directory (bm_logic.py, bm_decisions.dmn, bm_tables.h)")
     ap.add_argument("--set", action="append", default=[], metavar="NAME=value", help="parameter override")
     ap.add_argument("--matrix", action="store_true", help="print the reachable part of T")
+    ap.add_argument("--pdf", default="rep_max_state.pdf", help="LaTeX PDF report (default ./rep_max_state.pdf)")
+    ap.add_argument("--no-pdf", action="store_true", help="text only")
     a = ap.parse_args()
     overrides = {}
     for kv in a.set:
@@ -302,7 +309,158 @@ def main():
     both = [states[j] for j in reach if states[j][3] and states[j][4]]
     print("   chg_prev and prop_prev at once (charging and proportional discharging): %s"
           % ("never" if not both else "%d states!" % len(both)))
+    if not a.no_pdf:
+        write_pdf(a.pdf, dict(
+            bm=a.bm, overrides=overrides, n_tables=len(L.TABLES), n_rules=sum(len(r) for _, r in L.TABLES.values()),
+            th=th, nonlin=nonlin, nb=nb, n_bank=len(bank), n_surplus=len(surplus), n_states=len(states), n_in=n_in,
+            t_ones=int(T.sum()), k=k, reach=[states[j] for j in reach], never=never,
+            sub=T[np.ix_(reach, reach)].astype(int), n_a=n_a, n_c=n_c, n_d=n_d, house_mode=mode, nph=L.NPH,
+            total=total, cells=cells, comps=sorted((len(c) for c in comps), reverse=True), back=back, both=len(both),
+            params={p.name: getattr(cfg, p.field) for p in L.BM_PARAMS}))
     return 0 if back and not both else 1
+
+
+# ---- LaTeX report --------------------------------------------------------------------------------------------
+
+def tx(s):
+    """text for LaTeX: escape _ % & #"""
+    return str(s).replace("\\", "\\textbackslash{}").replace("_", "\\_").replace("%", "\\%").replace("&", "\\&").replace("#", "\\#")
+
+
+def tt(s):
+    return "\\texttt{%s}" % tx(s)
+
+
+def write_pdf(path, r):
+    """the report as LaTeX -> pdflatex -> path"""
+    p = r["params"]
+    ov = (" with the overrides " + ", ".join("%s = %g" % (tt(k), v) for k, v in r["overrides"].items())) if r["overrides"] else ""
+    throws = "\n".join("%s & %s & %d & $\\le %d$ \\\\" % (tt(q), ", ".join("$%g$" % t for t in r["th"][q]), len(r["th"][q]),
+                                                         2 * len(r["th"][q]) + 1) for q in sorted(r["th"]))
+    strows = "\n".join("%d & %s \\\\" % (i + 1, " & ".join(str(v) for v in s)) for i, s in enumerate(r["reach"]))
+    mat = " \\\\\n".join(" & ".join(str(x) for x in row) for row in r["sub"])
+    n = len(r["reach"])
+    doc = r"""\documentclass[a4paper,10pt]{article}
+\usepackage[margin=2cm]{geometry}
+\usepackage{amsmath,amssymb,booktabs,longtable}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\setlength{\parindent}{0pt}\setlength{\parskip}{4pt}
+\title{batmonitor: reachable decision states}
+\author{rep\_max\_state.py}
+\date{%(date)s}
+\begin{document}
+\maketitle
+Logic read from \texttt{%(bm)s}: %(nt)d DMN decision tables with %(nr)d rules (\texttt{bm\_decisions.dmn}), site
+parameters of \texttt{bm\_tables.h}%(ov)s. The transition function below is the one batmonitor runs: the real
+decision functions of \texttt{bm\_logic.py} are called, nothing is re-implemented.
+
+\section{Model}
+batmonitor is a finite automaton on its persistent decision state $x$, the latches that survive one 5\,s cycle:
+\[ x_{k+1} = f(x_k, u_k), \qquad x_k \in S \text{ (finite)}, \quad u_k \in U \text{ (the measured inputs of one cycle)}. \]
+The state splits into components that do not influence each other:
+\[ S = A \times B \times C \times D, \qquad
+\begin{aligned}
+A &= \{0,1\} && \text{\texttt{bat1\_first}, D1 latch ``Sofar first''}\\
+B &= \{0,1\}^6 && (\text{\texttt{prot}}, \text{\texttt{force}}, \text{\texttt{low}}, \text{\texttt{chg\_prev}}, \text{\texttt{prop\_prev}}, \text{\texttt{split\_all}})\\
+C &= \{L_1, L_2, L_3\} && \text{\texttt{rot}, the rotating single MultiPlus}\\
+D &= \{0,1\} && \text{\texttt{house\_on}, D7 house on AC-out1}
+\end{aligned} \]
+$A$ acts on $B$ only through the S3 source of the discharge (\texttt{prop\_hold} in D3), which is possible with
+either value of $A$; so it is a free input of $B$ and the reachable set of $S$ is the Cartesian product of the
+reachable sets of the components.
+
+\section{Consistent inputs: feasibility of $A x \le b$}
+Each column of a decision table compares one measured quantity with a threshold, e.g.\ \texttt{soc < SOC\_MIN}.
+A column bit vector $\beta$ can occur iff the system of its comparisons,
+\[ a_i^\top x \le b_i \ (\beta_i = 1), \qquad a_i^\top x > b_i \ (\beta_i = 0), \]
+has a solution $x$. By Farkas' lemma $\{x : A x \le b\} = \emptyset$ iff
+\[ \exists\, y \ge 0 : \quad y^\top A = 0, \quad y^\top b < 0, \]
+and the support of $y$ names the comparisons that exclude each other. Here every comparison is in one quantity
+only (comparisons in several quantities: %(nonlin)s), so $A$ has one column per quantity and feasibility reduces to
+sorting the thresholds: $n$ thresholds cut the line into at most $2n+1$ cells (the thresholds themselves count,
+because of $\le$ / $\ge$). One representative per cell, $t - \varepsilon$, $t$, $t + \varepsilon$, yields every feasible
+bit vector and nothing else.
+
+\begin{center}\begin{tabular}{lrrr}\toprule
+quantity & thresholds & $n$ & cells \\\midrule
+%(throws)s
+\bottomrule\end{tabular}\end{center}
+Example \texttt{soc}: the five bank columns on the SoC alone allow $2^5 = 32$ bit vectors, the sorted thresholds only
+%(soccells)d cells. All bank columns together: $2^{%(nb)d} = %(nb2)d$ bit vectors, feasible $%(nbank)d$; the two
+surplus columns: $4$, feasible $%(nsur)d$ (surplus $> 200$\,W implies surplus $> 20$\,W).
+
+\section{Transition matrix}
+On component $B$ with $|B| = 2^6 = %(ns)d$ candidate states:
+\[ T \in \{0,1\}^{%(ns)d \times %(ns)d}, \qquad T_{ij} = 1 \iff \exists\, u \in U_{\text{feasible}} : f(x_i, u) = x_j . \]
+%(nin)s (state, input) pairs were evaluated; $T$ has %(tones)d ones of %(tsize)d entries.
+
+\section{Reachability matrix}
+With boolean addition $\vee$ and multiplication $\wedge$,
+\[ R = (I + T)^{n}, \qquad \bigl((I+T)^k\bigr)_{ij} = 1 \iff x_j \text{ is reachable from } x_i \text{ in at most } k \text{ steps}. \]
+A shortest path never needs more than $|B|-1$ steps, so the powers become constant; repeated squaring
+$(I+T) \to (I+T)^2 \to (I+T)^4 \to \dots$ reaches the fixpoint after at most $\lceil \log_2 %(ns)d \rceil = %(lg)d$ squarings,
+here after $%(k)d$: $(I+T)^{%(p2k)d} = (I+T)^{%(p2k1)d}$. The reachable states are row $s_0$ (power-on state, all $0$) of $R$:
+\[ \mathcal{R}_B = \{\, x_j : R_{s_0 j} = 1 \,\}, \qquad |\mathcal{R}_B| = %(nr_b)d \text{ of } %(ns)d. \]
+
+\begin{center}\begin{tabular}{rcccccc}\toprule
+& \texttt{prot} & \texttt{force} & \texttt{low} & \texttt{chg\_prev} & \texttt{prop\_prev} & \texttt{split\_all} \\\midrule
+%(strows)s
+\bottomrule\end{tabular}\end{center}
+Bits that never become $1$: %(never)s.
+
+$T$ restricted to $\mathcal{R}_B$ (rows: from, columns: to, numbered as in the table):
+\[ T\big|_{\mathcal{R}_B} = \left[\begin{array}{*{%(n)d}{c}} %(mat)s \end{array}\right] \]
+It is nearly full because the model allows any jump of the measured values between two cycles (SoC 5 to 100\,\%%
+in 5\,s). That only over-approximates: the real number of states is at most the one computed here. The zeros are
+real logic, e.g.\ from a LOW state there is no step into a state with PROT but without LOW: LOW ends only from
+\texttt{SOC\_MIN\_RELEASE} $= %(smr)g\,\%%$, PROT begins only below \texttt{SOC\_MIN} $= %(sm)g\,\%%$, both cannot
+happen in the same cycle.
+
+\section{Product of the components}
+\[ |\mathcal{R}_S| = |\mathcal{R}_A| \cdot |\mathcal{R}_B| \cdot |\mathcal{R}_C| \cdot |\mathcal{R}_D|
+ = %(na)d \cdot %(nr_b)d \cdot %(nc)d \cdot %(nd)d = \mathbf{%(total)d}
+ \qquad \text{of } |S| = 2 \cdot %(ns)d \cdot %(nph)d \cdot 2 = %(sall)d . \]
+$|\mathcal{R}_D| = %(nd)d$ because \texttt{HOUSE\_ACOUT} $= %(hm)d$. With the mode chosen in the cycle that leaves a
+state there are %(cells)d (state, mode) cells.
+
+\section{Structure}
+Strongly connected components of the reachable graph ($x_i \sim x_j \iff R_{ij} = R_{ji} = 1$): number %(ncomp)d, size(s) %(comps)s.
+Every reachable state leads back to $s_0$ ($R_{j s_0} = 1$ for all $x_j \in \mathcal{R}_B$): %(back)s.
+Charging and proportional discharging at once (\texttt{chg\_prev} $\wedge$ \texttt{prop\_prev}): %(both)s.
+
+\section{Parameters used}
+\begin{longtable}{lr}\toprule parameter & value\\\midrule
+%(prows)s
+\bottomrule\end{longtable}
+\end{document}
+""" % dict(
+        date=time.strftime("%Y-%m-%d %H:%M"), bm=tx(r["bm"]), nt=r["n_tables"], nr=r["n_rules"], ov=ov,
+        nonlin=(", ".join(tt("%s: %s" % c) for c in r["nonlin"]) or "none"), throws=throws,
+        soccells=2 * len(r["th"].get("soc", [])) + 1, nb=r["nb"], nb2=2 ** r["nb"], nbank=r["n_bank"], nsur=r["n_surplus"],
+        ns=r["n_states"], nin="{:,}".format(r["n_in"]).replace(",", "\\,"), tones=r["t_ones"], tsize=r["n_states"] ** 2,
+        lg=int(np.ceil(np.log2(r["n_states"]))), k=r["k"], p2k=2 ** r["k"], p2k1=2 ** (r["k"] - 1), nr_b=n,
+        strows=strows, never=(", ".join(tt(x) for x in r["never"]) or "none"), n=n, mat=mat,
+        smr=p["SOC_MIN_RELEASE"], sm=p["SOC_MIN"], na=r["n_a"], nc=r["n_c"], nd=r["n_d"], total=r["total"],
+        nph=r["nph"], sall=2 * r["n_states"] * r["nph"] * 2, hm=r["house_mode"], cells=r["cells"],
+        ncomp=len(r["comps"]), comps=", ".join(str(c) for c in r["comps"]),
+        back="yes, no trap state" if r["back"] else "\\textbf{no, trap states exist}",
+        both="never" if not r["both"] else "\\textbf{%d states}" % r["both"],
+        prows="\n".join("%s & %g \\\\" % (tt(k), v) for k, v in p.items()))
+    d = tempfile.mkdtemp(prefix="rep_max_state_")
+    try:
+        with open(os.path.join(d, "r.tex"), "w") as f:
+            f.write(doc)
+        res = subprocess.run(["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "r.tex"], cwd=d,
+                             capture_output=True, text=True, timeout=120)
+        if res.returncode != 0:
+            shutil.copy(os.path.join(d, "r.tex"), path + ".tex")
+            print("pdflatex failed, source kept as %s.tex:\n%s" % (path, res.stdout[-1500:]))
+            return
+        shutil.copy(os.path.join(d, "r.pdf"), path)
+        print("\nPDF: %s" % os.path.abspath(path))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 if __name__ == "__main__":
