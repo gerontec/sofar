@@ -370,6 +370,47 @@ $A$ acts on $B$ only through the S3 source of the discharge (\texttt{prop\_hold}
 either value of $A$; so it is a free input of $B$ and the reachable set of $S$ is the Cartesian product of the
 reachable sets of the components.
 
+\section{Type of state machine}
+batmonitor is a \textbf{synchronous, deterministic Mealy machine}, composed of several automata that run in
+parallel; the reachability computation below treats it as a \textbf{nondeterministic finite transition system}.
+
+\begin{center}\begin{tabular}{p{0.25\textwidth}p{0.68\textwidth}}\toprule
+property & in batmonitor \\\midrule
+synchronous, clocked & one step every 5\,s: $x_{k+1} = f(x_k, u_k)$ \\
+deterministic & the same state and the same measured values always give the same next state; the DMN hit policy
+FIRST (the first matching rule wins) makes every table unambiguous \\
+Mealy, not Moore & the output (setpoint per phase, rule text) depends on the state \emph{and} the current input:
+$y_k = g(x_k, u_k)$; in mode DIS the amount is proportional to the current PCC \\
+finite & the persistent decision state has %(sall)d candidates, %(total)d of them reachable \\
+composed & $S = A \times B \times C \times D$: independent automata that switch at the same time (in statechart terms:
+orthogonal regions) \\\bottomrule
+\end{tabular}\end{center}
+
+\textbf{Building blocks.}
+\begin{itemize}
+\item \texttt{prot}, \texttt{force}, \texttt{low}: set/reset flip-flops with hysteresis on the SoC, like a Schmitt
+trigger: set below the lower threshold, reset from the upper one, KEEP in between (\texttt{prot}
+$%(sm)g \to %(smr)g\,\%%$, \texttt{force} $%(sf)g \to %(sfr)g\,\%%$). Because lower $<$ upper, set and reset are never
+true at the same time; for \texttt{low} the set rule comes first, so set dominates.
+\item \texttt{split\_all}: a hysteresis flip-flop on the amount: all three MultiPlus above %(smax)g\,W, back to one
+below %(soff)g\,W.
+\item rotation $C$: a modulo-%(nph)d counter, advanced by a %(rot)g\,s timer.
+\item the DMN tables themselves: the combinational logic between the memory elements (the transition function $f$
+and the mode); they have no memory of their own, only the latches store.
+\end{itemize}
+
+\textbf{Three views of the same machine.}
+\begin{enumerate}
+\item \emph{Physically} a hybrid system (a switched control system): discrete modes (CHARGE, DIS, FORCE, \dots) each
+select a continuous control law, e.g.\ the proportional controller on the PCC ($K_P = 1.01$); plus timed parts
+(%(rot)g\,s rotation, 60\,s house rule, DO4 grace time), strictly speaking elements of a timed automaton.
+\item \emph{In the code} the deterministic, clocked Mealy machine of the table above.
+\item \emph{In this report} the measured values are reduced to their threshold cells and the timers become free bits
+(expired yes / no). Since it is then open which input comes next, the machine becomes a
+\textbf{nondeterministic finite transition system} (a Kripke structure). This abstraction is what reachability
+matrices and model checkers work on: it may count states that never occur, but it never misses one.
+\end{enumerate}
+
 \section{Consistent inputs: feasibility of $A x \le b$}
 Each column of a decision table compares one measured quantity with a threshold, e.g.\ \texttt{soc < SOC\_MIN}.
 A column bit vector $\beta$ can occur iff the system of its comparisons,
@@ -441,7 +482,8 @@ Charging and proportional discharging at once (\texttt{chg\_prev} $\wedge$ \text
         ns=r["n_states"], nin="{:,}".format(r["n_in"]).replace(",", "\\,"), tones=r["t_ones"], tsize=r["n_states"] ** 2,
         lg=int(np.ceil(np.log2(r["n_states"]))), k=r["k"], p2k=2 ** r["k"], p2k1=2 ** (r["k"] - 1), nr_b=n,
         strows=strows, never=(", ".join(tt(x) for x in r["never"]) or "none"), n=n, mat=mat,
-        smr=p["SOC_MIN_RELEASE"], sm=p["SOC_MIN"], na=r["n_a"], nc=r["n_c"], nd=r["n_d"], total=r["total"],
+        smr=p["SOC_MIN_RELEASE"], sm=p["SOC_MIN"], sf=p["SOC_FORCE"], sfr=p["SOC_FORCE_RELEASE"],
+        smax=p["SINGLE_MAX_W"], soff=p["SINGLE_MAX_W"] - p["SINGLE_HYST_W"], rot=p["ROTATE_S"], na=r["n_a"], nc=r["n_c"], nd=r["n_d"], total=r["total"],
         nph=r["nph"], sall=2 * r["n_states"] * r["nph"] * 2, hm=r["house_mode"], cells=r["cells"],
         ncomp=len(r["comps"]), comps=", ".join(str(c) for c in r["comps"]),
         back="yes, no trap state" if r["back"] else "\\textbf{no, trap states exist}",
