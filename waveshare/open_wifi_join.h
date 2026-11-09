@@ -171,7 +171,8 @@ inline std::string ow_current_ssid() {
   auto *wc = esphome::wifi::global_wifi_component;
   if (wc == nullptr || !wc->is_connected())
     return "";
-  return wc->wifi_ssid();
+  char ssid_buf[esphome::wifi::SSID_BUFFER_SIZE];
+  return wc->wifi_ssid_to(ssid_buf);   // wifi_ssid() was removed in newer ESPHome
 }
 
 // Gefundene offene APs dieses Durchlaufs (SSID -> bester RSSI).

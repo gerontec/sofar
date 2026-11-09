@@ -1,0 +1,354 @@
+# waveshare_do4: Waveshare ESP32-S3-Relay-6CH (MAC 30:ED:A0:D8:FD:44), reduced firmware (2026-11-09).
+# Only two functions remain: the automatic WiFi driver (open_wifi_join.h) and relay DO4.
+# Replaces sofar_waveshare.yaml on this board: no controller logic, no Soyo output, no rs485_mux, no UART.
+#   CH4 (GPIO42) = DO4  FoxESS shedding: batmonitor sends "1", 3 s later "0"
+#   CH1-3, CH5-6 = unused, held off
+# MQTT (broker ${mqtt_broker}):
+#   pv_relay/DO4              command "1" / "0" (not retained)
+#   pv_relay/DO4/state        "1" / "0" (retained)
+#   sofar/waveshare/status    status JSON every 30 s (ip, ssid, net_*, do4, fw, fw_date)
+#   sofar/waveshare/survey    WiFi survey (retained), sofar/waveshare/netfail events
+#   sofar/openwifi            {"ENABLE":0} forces f24 (needed for OTA if the open AP is not bridged)
+#   sofar/openwifi/scan       scan for open APs now
+# USB (usb_mux.h, /dev/ttyACM0): "do4 1", "do4 0", "do4", "ping"; replies "#K1# ..." and "#K1# +OK". Works without WiFi.
+#   inverter/power_grid_exchange/json   PCC input of the safety net (kW, positive = export)
+#   waveshare_do4/test_pcc    test only: PCC in kW through the same check, does not announce batmonitor/do4_last
+# Safety: all relays off at boot and when MQTT is lost; DO4 off after do4_max_on even without "0".
+# Safety net: PCC export above do4_pcc_w -> local 3 s DO4 pulse, then batmonitor/do4_last. Lockout do4_lockout_ms
+#   after any pulse, including a "1" from batmonitor. No grace time, unlike batmonitor (120 s between 20 and 23 kW).
+# Build: esphome compile waveshare_do4.yaml, then esphome upload waveshare_do4.yaml --device <ip>.
+
+substitutions:
+  device_name: waveshare-do4
+  mqtt_broker: 192.168.178.218
+  wifi_ssid: f24
+  wifi_password: !secret wifi_password
+  ota_password: !secret ota_password
+  ap_ssid: Sofar-Waveshare-AP
+  open_mqtt_timeout: "300000"   # ms without MQTT on an open AP -> blacklist it
+  ping_host: 192.168.178.218    # ICMP target of the network check (= MQTT broker)
+  net_bad_timeout: "120000"     # ms without a reachable network -> back to f24
+  loop_wd_timeout: "180000"     # ms without a main-loop heartbeat -> restart
+  do4_max_on: 10s
+  do4_pcc_w: "21000"            # W export: above this the ESP pulses DO4 itself
+  do4_lockout_ms: "300000"      # ms between two pulses (DO4_LOCKOUT of batmonitor)
+  fw_version: "4.1.0"           # USB command channel for DO4 (no WiFi needed)
+  # 4.0.0: WiFi driver + DO4 only, PCC safety net, network flash dump
+
+esphome:
+  name: ${device_name}
+  friendly_name: Waveshare DO4
+  includes:
+    - open_wifi_join.h
+    - flash_dump.h
+    - usb_mux.h
+  on_boot:
+    priority: -100
+    then:
+      - lambda: |-
+          ow_hold_init();                    // adopt or drop the RTC hold (before scan_open)
+          ow_wd_start(${loop_wd_timeout});   // watchdog outside the main loop
+      - wait_until:
+          condition:
+            wifi.connected:
+      - lambda: fd_start("${ota_password}");   # flash backup over the network, see esp_flash_dump.py
+      - delay: 10s
+      - script.execute: scan_open
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: arduino
+
+network:
+  enable_ipv6: true
+
+logger:
+  level: INFO
+  hardware_uart: USB_SERIAL_JTAG     # logs over the USB port on the Pi
+
+ota:
+  - platform: esphome
+    password: ${ota_password}
+    # The flash runs in the main loop and suspends the 30 s heartbeat, so silence the loop watchdog.
+    on_begin:
+      then:
+        - lambda: ow_wd_pause(true);
+    on_error:
+      then:
+        - lambda: ow_wd_pause(false);
+
+wifi:
+  id: wifi_comp
+  ssid: ${wifi_ssid}
+  password: ${wifi_password}
+  reboot_timeout: 5min
+  ap:
+    ssid: ${ap_ssid}
+    password: ${ota_password}
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: "CET-1CEST,M3.5.0,M10.5.0/3"
+
+globals:
+  - { id: open_ap_ssid,  type: std::string, restore_value: false, initial_value: '""' }
+  - { id: open_ap_rssi,  type: int,  restore_value: false, initial_value: '-127' }
+  - { id: open_ap_count, type: int,  restore_value: false, initial_value: '0' }
+  - { id: open_enabled,  type: bool, restore_value: false, initial_value: 'true' }
+  - { id: do4_lock_set,  type: bool, restore_value: false, initial_value: 'false' }
+  - { id: do4_lock_ms,   type: uint32_t, restore_value: false, initial_value: '0' }
+  - { id: do4_local_n,   type: uint32_t, restore_value: false, initial_value: '0' }
+  - { id: last_pcc_w,    type: float, restore_value: false, initial_value: '0' }
+
+switch:
+  - platform: gpio
+    id: do4
+    name: DO4 FoxESS shedding
+    pin: GPIO42
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - mqtt.publish: {topic: pv_relay/DO4/state, payload: "1", retain: true}
+      - script.execute: do4_guard
+    on_turn_off:
+      - script.stop: do4_guard
+      - mqtt.publish: {topic: pv_relay/DO4/state, payload: "0", retain: true}
+  - { platform: gpio, id: ch1, name: CH1 unused, pin: GPIO1,  restore_mode: ALWAYS_OFF, internal: true }
+  - { platform: gpio, id: ch2, name: CH2 unused, pin: GPIO2,  restore_mode: ALWAYS_OFF, internal: true }
+  - { platform: gpio, id: ch3, name: CH3 unused, pin: GPIO41, restore_mode: ALWAYS_OFF, internal: true }
+  - { platform: gpio, id: ch5, name: CH5 unused, pin: GPIO45, restore_mode: ALWAYS_OFF, internal: true }
+  - { platform: gpio, id: ch6, name: CH6 unused, pin: GPIO46, restore_mode: ALWAYS_OFF, internal: true }
+
+script:
+  # DO4 never stays on: off after do4_max_on even if the "0" is lost
+  - id: do4_guard
+    mode: restart
+    then:
+      - delay: ${do4_max_on}
+      - logger.log: {format: "DO4 guard: off after max on time", level: WARN}
+      - switch.turn_off: do4
+
+  # Safety net: decides on one PCC value, the only place that starts a local pulse
+  - id: pcc_check
+    mode: queued
+    max_runs: 4
+    parameters:
+      pcc_w: float
+      announce: bool
+    then:
+      - lambda: |-
+          id(last_pcc_w) = pcc_w;
+          if (pcc_w <= ${do4_pcc_w}.0f || id(do4).state || !id(mqtt_client).is_connected())
+            return;
+          if (id(do4_lock_set) && (uint32_t) (millis() - id(do4_lock_ms)) < ${do4_lockout_ms}UL)
+            return;
+          id(do4_lock_set) = true;
+          id(do4_lock_ms) = millis();
+          id(do4_local_n)++;
+          id(do4_local_pulse).execute(pcc_w, announce);
+
+  # Local DO4 pulse: DO4_PULSE_S = 3 s as batmonitor, then tell r290_boost / hantech
+  - id: do4_local_pulse
+    mode: single
+    parameters:
+      pcc_w: float
+      announce: bool
+    then:
+      - logger.log: {format: "DO4 local pulse: PCC above threshold", level: WARN}
+      - lambda: |-
+          auto t = id(sntp_time).now();
+          if (!announce || !t.is_valid())
+            return;
+          char js[64];
+          snprintf(js, sizeof(js), "{\"ts\":%ld,\"pcc_w\":%.0f}", (long) t.timestamp, pcc_w);
+          id(mqtt_client).publish(std::string("batmonitor/do4_last"), std::string(js), 1, true);
+      - switch.turn_on: do4
+      - delay: 3s
+      - switch.turn_off: do4
+
+  # Look for open APs and prefer the best one (f24 stays the fallback)
+  - id: scan_open
+    mode: single
+    then:
+      - lambda: |-
+          if (!id(open_enabled))
+            return;
+          OpenApResult r = ow_find_open("${ap_ssid}");
+          id(open_ap_ssid)  = r.ssid;
+          id(open_ap_rssi)  = r.rssi;
+          id(open_ap_count) = r.count;
+          ow_prefer(r.ssid, "${wifi_ssid}", "${wifi_password}");
+
+  - id: pub_status
+    mode: single
+    then:
+      - lambda: |-
+          char ip4[16] = "", ip6[41] = "";
+          bool got4 = false, got6 = false;
+          for (auto &a : id(wifi_comp).get_ip_addresses()) {
+            if (!a.is_set()) continue;
+            char ip_buf[esphome::network::IP_ADDRESS_BUFFER_SIZE];
+            std::string s = a.str_to(ip_buf);
+            if (s.find(':') == std::string::npos && !got4) { strncpy(ip4, s.c_str(), 15); got4 = true; }
+            else if (s.find(':') != std::string::npos && !got6) { strncpy(ip6, s.c_str(), 40); got6 = true; }
+          }
+          char json[640];
+          snprintf(json, sizeof(json),
+            "{\"ip\":\"%s\",\"ip6\":\"%s\",\"ssid\":\"%s\",\"open_ap\":\"%s\",\"open_rssi\":%d,\"open_count\":%d,"
+            "\"do4\":%d,\"do4_local\":%lu,\"pcc_w\":%.0f,\"net_ok\":%d,\"net_bad_s\":%lu,\"ping_ms\":%lu,\"net_acts\":%d,\"hold\":\"%s\",\"hold_left\":%u,"
+            "\"wd_reboots\":%u,\"uptime\":%lu,\"mem_free\":%lu,\"fw\":\"%s\",\"fw_date\":\"" __DATE__ "T" __TIME__ "\"}",
+            ip4, ip6, json_escape(ow_current_ssid()).c_str(),
+            id(open_ap_ssid).c_str(), id(open_ap_rssi), id(open_ap_count),
+            id(do4).state ? 1 : 0, (unsigned long) id(do4_local_n), id(last_pcc_w),
+            ow_net_ok ? 1 : 0, (unsigned long) ow_net_bad_s(), (unsigned long) ow_ping_rtt,
+            (int) ow_net_actions, json_escape(ow_hold.ssid).c_str(),
+            (unsigned) (ow_hold.magic == OW_HOLD_MAGIC ? ow_hold.cycles : 0),
+            (unsigned) ow_wd_reboots(),
+            (unsigned long) (millis() / 1000), (unsigned long) ESP.getFreeHeap(),
+            "${fw_version}");
+          id(mqtt_client).publish("sofar/waveshare/status", json);
+
+mqtt:
+  id: mqtt_client
+  broker: ${mqtt_broker}
+  port: 1883
+  client_id: waveshare_do4
+  keepalive: 60s
+  reboot_timeout: 15min
+  discovery: false
+  on_connect:
+    then:
+      - delay: 2s                      # the client only publishes a moment after the trigger
+      - script.execute: pub_status
+      - lambda: 'id(mqtt_client).publish("pv_relay/DO4/state", id(do4).state ? "1" : "0", 1, 0, true);'
+  on_disconnect:
+    then:
+      - switch.turn_off: do4
+  on_message:
+    - topic: pv_relay/DO4
+      qos: 1
+      then:
+        - lambda: |-
+            if (x == "1") {
+              id(do4_lock_set) = true;      // batmonitor pulsed: no local pulse on top of it
+              id(do4_lock_ms) = millis();
+              id(do4).turn_on();
+            } else if (x == "0") {
+              id(do4).turn_off();
+            }
+    # Safety net input, same field and limits as batmonitor (bm_parse): kW, null or out of range is ignored
+    - topic: inverter/power_grid_exchange/json
+      then:
+        - lambda: |-
+            const char *p = strstr(x.c_str(), "ActivePower_PCC_Total");
+            if (p == nullptr || (p = strchr(p, ':')) == nullptr)
+              return;
+            p++;
+            while (*p == ' ')
+              p++;
+            if (*p == 'n' || *p == 'N')
+              return;
+            float kw = atof(p);
+            if (kw < -100.0f || kw > 100.0f)
+              return;
+            id(pcc_check).execute(kw * 1000.0f, true);
+    - topic: waveshare_do4/test_pcc
+      then:
+        - lambda: 'id(pcc_check).execute(atof(x.c_str()) * 1000.0f, false);'
+    - topic: sofar/openwifi/scan
+      then:
+        - script.execute: scan_open
+    # {"ENABLE":0} brings the board back to f24
+    - topic: sofar/openwifi
+      then:
+        - lambda: |-
+            bool en = x.find("1") != std::string::npos;
+            id(open_enabled) = en;
+            ESP_LOGI("open_wifi", "Open WiFi %s", en ? "enabled" : "disabled -> f24");
+            if (en) {
+              id(scan_open).execute();
+            } else {
+              id(open_ap_ssid)  = "";
+              id(open_ap_rssi)  = -127;
+              id(open_ap_count) = 0;
+              ow_prefer("", "${wifi_ssid}", "${wifi_password}");
+            }
+
+interval:
+  # USB command channel: DO4 without WiFi (non-blocking, see usb_mux.h)
+  - interval: 50ms
+    then:
+      - lambda: |-
+          std::string line;
+          while (um_read_line(line)) {
+            auto a = um_split(line);
+            if (a.empty())
+              continue;
+            if (a[0] == "ping") {
+              um_reply("pong fw=${fw_version} uptime=%u", (unsigned) (millis() / 1000));
+              um_ok();
+            } else if (a[0] == "do4") {
+              if (a.size() >= 2 && a[1] == "1") {
+                id(do4_lock_set) = true;      // same as a "1" from batmonitor: no local pulse on top
+                id(do4_lock_ms) = millis();
+                id(do4).turn_on();
+              } else if (a.size() >= 2 && a[1] == "0") {
+                id(do4).turn_off();
+              } else if (a.size() >= 2) {
+                um_err("usage: do4 [0|1]");
+                continue;
+              }
+              um_reply("do4 %d", id(do4).state ? 1 : 0);
+              um_ok();
+            } else {
+              um_err("unknown command");
+            }
+          }
+
+  # Look for open APs again every 5 min
+  - interval: 5min
+    then:
+      - script.execute: scan_open
+
+  # Network check: "connected" is not "reachable" (see open_wifi_join.h)
+  - interval: 30s
+    then:
+      - lambda: |-
+          ow_beat_tick();   // heartbeat for the loop watchdog
+          int act = ow_net_check("${ping_host}", id(mqtt_client).is_connected(),
+                                 ${net_bad_timeout}, "${wifi_ssid}", "${wifi_password}");
+          if (act == 1 && id(mqtt_client).is_connected()) {
+            char js[192];
+            snprintf(js, sizeof(js),
+                     "{\"event\":\"netfail\",\"ssid\":\"%s\",\"bad_s\":%lu,\"acts\":%d}",
+                     json_escape(ow_current_ssid()).c_str(), (unsigned long) ow_net_bad_s(),
+                     (int) ow_net_actions);
+            id(mqtt_client).publish("sofar/waveshare/netfail", js);
+          }
+          if (act == 2) {
+            ESP_LOGE("net", "Network dead -> safe_reboot");
+            App.safe_reboot();
+          }
+
+  # On an open AP without MQTT: blacklist it and return to f24
+  - interval: 30s
+    then:
+      - lambda: |-
+          ow_watchdog(id(mqtt_client).is_connected(), ${open_mqtt_timeout},
+                      "${wifi_ssid}", "${wifi_password}");
+
+  # Report the WiFi survey once the broker is there (retained; both arguments std::string for the retain overload)
+  - interval: 10s
+    then:
+      - lambda: |-
+          if (!ow_survey_pending || !id(mqtt_client).is_connected())
+            return;
+          if (id(mqtt_client).publish(std::string("sofar/waveshare/survey"),
+                                      ow_survey_json(), 0, true))
+            ow_survey_pending = false;
+
+  - interval: 30s
+    then:
+      - script.execute: pub_status
